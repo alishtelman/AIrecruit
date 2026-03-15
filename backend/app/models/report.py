@@ -20,6 +20,7 @@ class AssessmentReport(Base):
     hard_skills_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     soft_skills_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     communication_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    problem_solving_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Qualitative arrays
     strengths: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
@@ -32,6 +33,17 @@ class AssessmentReport(Base):
 
     # Short summary for candidate marketplace card
     interview_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Scientific assessment fields (nullable for backward compat)
+    competency_scores: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # [{competency, category, score, weight, evidence, reasoning}]
+    per_question_analysis: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # [{question_number, targeted_competencies, answer_quality, evidence, skills_mentioned, red_flags, specificity, depth}]
+    skill_tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # [{skill, proficiency, mentions_count}]
+    red_flags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # [{flag, evidence, severity}]
+    response_consistency: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Audit trail
     full_report_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)

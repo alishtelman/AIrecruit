@@ -74,12 +74,17 @@ async def get_candidate_detail(
             hard_skills_score=report.hard_skills_score,
             soft_skills_score=report.soft_skills_score,
             communication_score=report.communication_score,
+            problem_solving_score=report.problem_solving_score,
             strengths=report.strengths,
             weaknesses=report.weaknesses,
             recommendations=report.recommendations,
             hiring_recommendation=report.hiring_recommendation,
             interview_summary=report.interview_summary,
             created_at=report.created_at,
+            competency_scores=report.competency_scores,
+            skill_tags=report.skill_tags,
+            red_flags=report.red_flags,
+            response_consistency=report.response_consistency,
         )
         for report, interview in rows
     ]

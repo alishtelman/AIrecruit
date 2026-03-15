@@ -46,6 +46,31 @@ cd backend && python3 -m pytest tests/test_auth.py -v
 
 20 integration tests: auth (7), interview flow (7), templates (6).
 
+## Assessment system
+
+Scientific competency-based assessment. Two LLM passes per interview:
+- **Pass 1** — per-question evidence extraction (answer quality, skills, red flags)
+- **Pass 2** — competency scoring with weighted aggregation → 5 score dimensions
+
+**5 score dimensions** (replacing old hard/soft/communication):
+- `overall_score` — weighted sum of all competencies
+- `hard_skills_score` — technical_core + technical_breadth
+- `soft_skills_score` — behavioral
+- `communication_score` — communication
+- `problem_solving_score` — problem_solving (new)
+
+**Key files:**
+- `backend/app/ai/competencies.py` — role competency matrices (8 roles × 10 competencies, pure data)
+- `backend/app/ai/assessor.py` — two-pass LLM assessment pipeline
+- `backend/app/models/skill.py` — `candidate_skills` table (queryable skill index)
+
+**New DB columns on `assessment_reports`** (all nullable, backward-compat):
+`problem_solving_score`, `competency_scores` (JSON), `per_question_analysis` (JSON),
+`skill_tags` (JSON), `red_flags` (JSON), `response_consistency` (Float)
+
+**Adding a new role:** add entry to `ROLE_COMPETENCIES` dict in `ai/competencies.py`
+and a mock question list in `ai/interviewer.py`.
+
 ## Structure
 
 ```
@@ -65,7 +90,7 @@ frontend/src/
   hooks/useAuth.ts  — auth state
 ```
 
-Key files: `backend/app/services/interview_service.py` (state machine), `backend/app/core/config.py`, `backend/app/api/v1/deps.py` (JWT dep).
+Key files: `backend/app/services/interview_service.py` (state machine + competency planning), `backend/app/core/config.py`, `backend/app/api/v1/deps.py` (JWT dep), `backend/app/ai/competencies.py` (competency matrices).
 
 ## Code rules
 

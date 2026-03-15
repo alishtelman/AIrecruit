@@ -186,12 +186,17 @@ export interface ReportWithRole {
   hard_skills_score: number | null;
   soft_skills_score: number | null;
   communication_score: number | null;
+  problem_solving_score: number | null;
   strengths: string[];
   weaknesses: string[];
   recommendations: string[];
   hiring_recommendation: HiringRecommendation;
   interview_summary: string | null;
   created_at: string;
+  competency_scores: CompetencyScore[] | null;
+  skill_tags: SkillTag[] | null;
+  red_flags: RedFlag[] | null;
+  response_consistency: number | null;
 }
 
 export interface CandidateDetail {
@@ -205,6 +210,38 @@ export interface CandidateDetail {
 
 export type HiringRecommendation = "strong_yes" | "yes" | "maybe" | "no";
 
+export interface CompetencyScore {
+  competency: string;
+  category: string;
+  score: number;
+  weight: number;
+  evidence: string;
+  reasoning?: string;
+}
+
+export interface QuestionAnalysis {
+  question_number: number;
+  targeted_competencies: string[];
+  answer_quality: number;
+  evidence: string;
+  skills_mentioned: { skill: string; proficiency: string }[];
+  red_flags: string[];
+  specificity: string;
+  depth: string;
+}
+
+export interface SkillTag {
+  skill: string;
+  proficiency: string;
+  mentions_count: number;
+}
+
+export interface RedFlag {
+  flag: string;
+  evidence: string;
+  severity: string;
+}
+
 export interface AssessmentReport {
   id: string;
   interview_id: string;
@@ -213,6 +250,7 @@ export interface AssessmentReport {
   hard_skills_score: number | null;
   soft_skills_score: number | null;
   communication_score: number | null;
+  problem_solving_score: number | null;
   strengths: string[];
   weaknesses: string[];
   recommendations: string[];
@@ -220,4 +258,9 @@ export interface AssessmentReport {
   interview_summary: string | null;
   model_version: string;
   created_at: string;
+  competency_scores: CompetencyScore[] | null;
+  per_question_analysis: QuestionAnalysis[] | null;
+  skill_tags: SkillTag[] | null;
+  red_flags: RedFlag[] | null;
+  response_consistency: number | null;
 }

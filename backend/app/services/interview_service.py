@@ -12,11 +12,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.assessor import AssessmentResult, assessor
+from app.ai.competencies import build_question_plan
 from app.ai.interviewer import MAX_QUESTIONS, InterviewContext, interviewer
 from app.models.candidate import Candidate
 from app.models.interview import Interview, InterviewMessage
 from app.models.report import AssessmentReport
 from app.models.resume import Resume
+from app.models.skill import CandidateSkill
 from app.models.template import InterviewTemplate
 from app.schemas.interview import (
     FinishInterviewResponse,
@@ -89,6 +91,45 @@ def _to_history(messages: list[InterviewMessage]) -> list[dict]:
     return [{"role": m.role, "content": m.content} for m in messages]
 
 
+def _to_timestamps(messages: list[InterviewMessage]) -> list[dict]:
+    return [
+        {"role": m.role, "content": m.content, "created_at": m.created_at.isoformat()}
+        for m in messages
+    ]
+
+
+def _get_competency_targets(
+    interview: Interview,
+    question_number: int,
+) -> list[str] | None:
+    """Get competency targets for the given question number from the stored plan."""
+    plan = getattr(interview, '_competency_plan', None)
+    if plan and 0 < question_number <= len(plan):
+        return plan[question_number - 1]
+    return None
+
+
+def _save_skills(
+    db: AsyncSession,
+    candidate_id: uuid.UUID,
+    report_id: uuid.UUID,
+    skill_tags: list[dict],
+) -> None:
+    """Persist extracted skills to candidate_skills table."""
+    for tag in skill_tags:
+        skill_name = tag.get("skill", "").strip().lower()
+        if not skill_name:
+            continue
+        db.add(CandidateSkill(
+            id=uuid.uuid4(),
+            candidate_id=candidate_id,
+            report_id=report_id,
+            skill_name=skill_name,
+            proficiency=tag.get("proficiency", "intermediate"),
+            evidence_summary=None,
+        ))
+
+
 # ---------------------------------------------------------------------------
 # Public service functions
 # ---------------------------------------------------------------------------
@@ -118,6 +159,9 @@ async def start_interview(
 
     max_q = len(template.questions) if template else MAX_QUESTIONS
 
+    # Build competency question plan
+    question_plan = build_question_plan(target_role, max_q)
+
     # Create interview — store resume_id snapshot at start time
     interview = Interview(
         id=uuid.uuid4(),
@@ -133,6 +177,16 @@ async def start_interview(
     db.add(interview)
     await db.flush()  # get interview.id
 
+    # Store competency plan as system message for persistence
+    import json
+    plan_content = json.dumps({"competency_plan": question_plan}, ensure_ascii=False)
+    db.add(InterviewMessage(
+        id=uuid.uuid4(),
+        interview_id=interview.id,
+        role="system",
+        content=plan_content,
+    ))
+
     # Generate and persist first question (always via LLM, template is guidance)
     ctx = InterviewContext(
         target_role=target_role,
@@ -141,6 +195,7 @@ async def start_interview(
         message_history=[],
         resume_text=active_resume.raw_text,
         template_questions=template.questions if template else None,
+        competency_targets=question_plan[0] if question_plan else None,
     )
     first_question = await interviewer.get_next_question(ctx)
 
@@ -210,6 +265,21 @@ async def add_candidate_message(
             )
             template_questions = template.questions if template else None
 
+        # Load competency plan from system message
+        competency_targets = None
+        import json
+        for msg in messages:
+            if msg.role == "system":
+                try:
+                    plan_data = json.loads(msg.content)
+                    plan = plan_data.get("competency_plan", [])
+                    q_idx = interview.question_count  # next question (0-based)
+                    if q_idx < len(plan):
+                        competency_targets = plan[q_idx]
+                    break
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
         resume = await db.scalar(select(Resume).where(Resume.id == interview.resume_id))
         ctx = InterviewContext(
             target_role=interview.target_role,
@@ -218,6 +288,7 @@ async def add_candidate_message(
             message_history=history,
             resume_text=resume.raw_text if resume else None,
             template_questions=template_questions,
+            competency_targets=competency_targets,
         )
         next_q = await interviewer.get_next_question(ctx)
 
@@ -271,6 +342,7 @@ async def finish_interview(
         result: AssessmentResult = await assessor.assess(
             target_role=interview.target_role,
             message_history=_to_history(messages),
+            message_timestamps=_to_timestamps(messages),
         )
 
         report = AssessmentReport(
@@ -281,6 +353,7 @@ async def finish_interview(
             hard_skills_score=result.hard_skills_score,
             soft_skills_score=result.soft_skills_score,
             communication_score=result.communication_score,
+            problem_solving_score=result.problem_solving_score,
             strengths=result.strengths,
             weaknesses=result.weaknesses,
             recommendations=result.recommendations,
@@ -288,8 +361,19 @@ async def finish_interview(
             interview_summary=result.interview_summary,
             model_version=result.model_version,
             full_report_json=result.full_report_json,
+            competency_scores=result.competency_scores or None,
+            per_question_analysis=result.per_question_analysis or None,
+            skill_tags=result.skill_tags or None,
+            red_flags=result.red_flags or None,
+            response_consistency=result.response_consistency,
         )
         db.add(report)
+        await db.flush()
+
+        # Persist extracted skills to candidate_skills table
+        if result.skill_tags:
+            _save_skills(db, interview.candidate_id, report.id, result.skill_tags)
+
         interview.status = "report_generated"
         await db.commit()
         await db.refresh(report)

@@ -56,12 +56,17 @@ class ReportWithRoleResponse(BaseModel):
     hard_skills_score: float | None
     soft_skills_score: float | None
     communication_score: float | None
+    problem_solving_score: float | None = None
     strengths: list[str]
     weaknesses: list[str]
     recommendations: list[str]
     hiring_recommendation: str
     interview_summary: str | None
     created_at: datetime
+    competency_scores: list[dict] | None = None
+    skill_tags: list[dict] | None = None
+    red_flags: list[dict] | None = None
+    response_consistency: float | None = None
 
 
 class CandidateDetailResponse(BaseModel):
