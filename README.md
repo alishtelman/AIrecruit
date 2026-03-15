@@ -8,20 +8,23 @@ A platform where candidates complete structured AI interviews and receive verifi
 
 **For Candidates**
 1. Register and upload your resume (PDF or DOCX)
-2. Complete a structured AI text interview for your target role
-3. Receive a detailed assessment report with scores, strengths, and weaknesses
-4. Join the verified candidate database
+2. Choose a target role — optionally use a company's custom interview template
+3. Complete a structured AI text interview (8 questions, ~15–20 min)
+4. Receive a detailed assessment report with scores, strengths, and weaknesses
+5. Retake any interview to improve your score
+6. Join the verified candidate database
 
 **For Companies**
-1. Browse AI-verified candidates
-2. View detailed assessment reports
-3. Make data-driven hiring decisions
+1. Register and browse AI-verified candidates
+2. Filter by role, search by name/email, paginate through results
+3. View detailed assessment reports for each candidate
+4. Create custom interview templates (public or private) with your own question sets
+5. Make data-driven hiring decisions
 
 **Roadmap (post-MVP)**
 - Voice and video AI interviews
 - In-company employee assessment
 - Multi-user company accounts
-- Custom interview templates per company
 
 ---
 
@@ -49,13 +52,14 @@ A platform where candidates complete structured AI interviews and receive verifi
 │   │   │   └── assessor.py      # Report generation (mock → LLM)
 │   │   ├── api/v1/              # REST endpoints
 │   │   │   ├── auth.py          # Register, login, /me
-│   │   │   ├── candidates.py    # Resume upload
-│   │   │   ├── interviews.py    # Interview flow
+│   │   │   ├── candidates.py    # Resume upload + profile stats
+│   │   │   ├── interviews.py    # Interview flow + public templates
+│   │   │   ├── company.py       # Candidate browsing + templates CRUD
 │   │   │   └── reports.py       # Assessment reports
 │   │   ├── core/                # Config, DB, security (JWT/bcrypt)
-│   │   ├── models/              # SQLAlchemy ORM models
-│   │   ├── schemas/             # Pydantic request/response schemas
-│   │   └── services/            # Business logic layer
+│   │   ├── models/              # SQLAlchemy ORM models (+ template.py)
+│   │   ├── schemas/             # Pydantic request/response schemas (+ template.py)
+│   │   └── services/            # Business logic layer (+ template_service.py)
 │   ├── alembic/                 # Database migrations
 │   │   └── versions/
 │   │       └── 001_initial_schema.py
@@ -75,7 +79,7 @@ A platform where candidates complete structured AI interviews and receive verifi
 │       │   │       │   ├── start/
 │       │   │       │   └── [id]/
 │       │   │       └── reports/[id]/
-│       │   └── (company)/       # Company-facing pages
+│       │   └── (company)/       # Company-facing pages (dashboard, templates, candidates)
 │       ├── hooks/               # useAuth hook
 │       └── lib/                 # API client, types, auth helpers
 ├── docker-compose.yml
@@ -88,13 +92,14 @@ A platform where candidates complete structured AI interviews and receive verifi
 ## Database Schema
 
 ```
-users              — unified auth (role: candidate | company_admin)
-candidates         — candidate profile (1:1 with users)
-companies          — company profile (owner_user_id → users)
-resumes            — uploaded CVs with extracted text (is_active flag)
-interviews         — interview sessions with state machine
-interview_messages — full dialogue history (system/assistant/candidate)
-assessment_reports — structured AI assessment with scores
+users               — unified auth (role: candidate | company_admin)
+candidates          — candidate profile (1:1 with users)
+companies           — company profile (owner_user_id → users)
+resumes             — uploaded CVs with extracted text (is_active flag)
+interview_templates — custom question sets per company (is_public flag)
+interviews          — interview sessions with state machine (optional template_id FK)
+interview_messages  — full dialogue history (system/assistant/candidate)
+assessment_reports  — structured AI assessment with scores
 ```
 
 **Interview state machine:**
@@ -124,6 +129,11 @@ created → in_progress → completed → report_generated
 | GET | `/api/v1/reports/{id}` | Bearer | Assessment report |
 | GET | `/api/v1/company/candidates` | Bearer (company) | List verified candidates |
 | GET | `/api/v1/company/candidates/{id}` | Bearer (company) | Candidate profile + all reports |
+| GET | `/api/v1/candidate/resume` | Bearer | Active resume info |
+| GET | `/api/v1/interviews/templates/public` | — | List public interview templates |
+| GET | `/api/v1/company/templates` | Bearer (company) | List company's own templates |
+| POST | `/api/v1/company/templates` | Bearer (company) | Create interview template |
+| DELETE | `/api/v1/company/templates/{id}` | Bearer (company) | Delete interview template |
 
 Full interactive docs: **http://localhost:8001/docs**
 
@@ -242,7 +252,8 @@ curl -s -X POST http://localhost:8001/api/v1/interviews/$INTERVIEW_ID/finish \
 | Phase 4.5 | ✅ Done | Working frontend UI (full candidate flow) |
 | Phase 5 | ✅ Done | Real LLM integration (Groq — Llama 3.3 70B) |
 | Phase 6 | ✅ Done | Company dashboard, candidate browsing |
-| Phase 7 | 🔜 Next | Voice/video interviews, custom templates |
+| Phase 7 | ✅ Done | Custom interview templates, retry UX, profile page, pagination, 404/error pages |
+| Phase 8 | 🔜 Next | Voice/video interviews, multi-user company accounts |
 
 ---
 

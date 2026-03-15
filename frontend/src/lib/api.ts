@@ -1,5 +1,6 @@
 import { getToken } from "./auth";
 import type {
+  ActiveResume,
   AssessmentReport,
   CandidateDetail,
   CandidateListItem,
@@ -10,6 +11,7 @@ import type {
   FinishInterviewResponse,
   InterviewDetail,
   InterviewListItem,
+  InterviewTemplate,
   LoginRequest,
   ResumeUploadResponse,
   SendMessageRequest,
@@ -84,6 +86,25 @@ export const companyApi = {
 
   getCandidate: (candidateId: string) =>
     request<CandidateDetail>(`/api/v1/company/candidates/${candidateId}`),
+
+  listTemplates: () =>
+    request<InterviewTemplate[]>("/api/v1/company/templates"),
+
+  createTemplate: (data: Omit<InterviewTemplate, "template_id" | "company_id" | "created_at">) =>
+    request<InterviewTemplate>("/api/v1/company/templates", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  deleteTemplate: (templateId: string) =>
+    request<void>(`/api/v1/company/templates/${templateId}`, { method: "DELETE" }),
+};
+
+// ── Public Templates ──────────────────────────────────────────────────────────
+
+export const templateApi = {
+  listPublic: () =>
+    request<InterviewTemplate[]>("/api/v1/interviews/templates/public"),
 };
 
 // ── Candidate ─────────────────────────────────────────────────────────────────
@@ -93,6 +114,9 @@ export const candidateApi = {
     request<{ has_resume: boolean; interview_count: number; completed_count: number; latest_report_id: string | null }>(
       "/api/v1/candidate/stats"
     ),
+
+  getResume: () =>
+    request<ActiveResume | null>("/api/v1/candidate/resume"),
 };
 
 // ── Resume ────────────────────────────────────────────────────────────────────

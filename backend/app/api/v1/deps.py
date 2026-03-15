@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import decode_access_token
 from app.models.candidate import Candidate
+from app.models.company import Company
 from app.models.user import User
 
 bearer_scheme = HTTPBearer()
@@ -52,7 +53,16 @@ async def get_current_candidate(
 async def get_current_company_admin(
     current_user: User = Depends(get_current_user),
 ) -> User:
-    """Placeholder dependency for future company_admin routes."""
     if current_user.role != "company_admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Company admin access required")
     return current_user
+
+
+async def get_current_company(
+    current_user: User = Depends(get_current_company_admin),
+    db: AsyncSession = Depends(get_db),
+) -> tuple[User, Company]:
+    company = await db.scalar(select(Company).where(Company.owner_user_id == current_user.id))
+    if company is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company profile not found")
+    return current_user, company

@@ -111,14 +111,22 @@ export default function ReportsPage() {
                     {item.question_count}/{item.max_questions} questions
                   </div>
 
-                  <div className="shrink-0">
+                  <div className="shrink-0 flex flex-col gap-2 items-end">
                     {item.status === "report_generated" && item.report_id ? (
-                      <Link
-                        href={`/candidate/reports/${item.report_id}`}
-                        className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
-                      >
-                        View Report
-                      </Link>
+                      <>
+                        <Link
+                          href={`/candidate/reports/${item.report_id}`}
+                          className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+                        >
+                          View Report
+                        </Link>
+                        <Link
+                          href={`/candidate/interview/start?role=${item.target_role}`}
+                          className="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors"
+                        >
+                          Retake
+                        </Link>
+                      </>
                     ) : item.status === "in_progress" ? (
                       <Link
                         href={`/candidate/interview/${item.interview_id}`}

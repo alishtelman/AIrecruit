@@ -31,6 +31,7 @@ from app.schemas.interview import (
     StartInterviewRequest,
     StartInterviewResponse,
 )
+from app.schemas.template import TemplateResponse
 from app.services.interview_service import (
     InterviewAlreadyFinishedError,
     InterviewNotActiveError,
@@ -44,6 +45,7 @@ from app.services.interview_service import (
     list_interviews,
     start_interview,
 )
+from app.services.template_service import list_public_templates
 
 router = APIRouter(prefix="/interviews", tags=["interviews"])
 
@@ -53,6 +55,28 @@ def _candidate(
 ) -> Candidate:
     _, candidate = user_and_candidate
     return candidate
+
+
+@router.get(
+    "/templates/public",
+    response_model=list[TemplateResponse],
+    summary="List all public interview templates",
+)
+async def get_public_templates(db: AsyncSession = Depends(get_db)):
+    templates = await list_public_templates(db)
+    return [
+        TemplateResponse(
+            template_id=t.id,
+            company_id=t.company_id,
+            name=t.name,
+            target_role=t.target_role,
+            questions=t.questions,
+            description=t.description,
+            is_public=t.is_public,
+            created_at=t.created_at,
+        )
+        for t in templates
+    ]
 
 
 @router.get(
@@ -79,7 +103,7 @@ async def start(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await start_interview(db, candidate, body.target_role)
+        return await start_interview(db, candidate, body.target_role, body.template_id)
     except NoActiveResumeError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

@@ -40,6 +40,9 @@ export default function DashboardPage() {
         <span className="text-white font-semibold">AI Recruiting</span>
         <div className="flex items-center gap-4">
           <span className="text-slate-400 text-sm">{user?.email}</span>
+          <Link href="/candidate/profile" className="text-slate-400 hover:text-white text-sm transition-colors">
+            Profile
+          </Link>
           <button onClick={logout} className="text-slate-400 hover:text-white text-sm transition-colors">
             Sign out
           </button>

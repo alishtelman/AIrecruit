@@ -19,6 +19,7 @@ TargetRole = Literal[
 
 class StartInterviewRequest(BaseModel):
     target_role: TargetRole
+    template_id: uuid.UUID | None = None
 
 
 class StartInterviewResponse(BaseModel):

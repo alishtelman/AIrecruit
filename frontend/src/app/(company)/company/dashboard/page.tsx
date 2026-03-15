@@ -25,6 +25,8 @@ const REC_STYLES: Record<HiringRecommendation, { label: string; className: strin
   no:         { label: "No",          className: "bg-red-500/15 text-red-400 border-red-500/30" },
 };
 
+const PAGE_SIZE = 10;
+
 export default function CompanyDashboardPage() {
   const router = useRouter();
   const { loading: authLoading, logout } = useAuth("/company/login");
@@ -33,6 +35,7 @@ export default function CompanyDashboardPage() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
+  const [page, setPage] = useState(0);
 
   useEffect(() => {
     if (authLoading) return;
@@ -51,6 +54,14 @@ export default function CompanyDashboardPage() {
     return matchSearch && matchRole;
   });
 
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  function handleFilterChange(fn: () => void) {
+    fn();
+    setPage(0);
+  }
+
   return (
     <div className="min-h-screen bg-slate-900 px-4 py-8">
       <div className="max-w-5xl mx-auto">
@@ -64,6 +75,12 @@ export default function CompanyDashboardPage() {
             <span className="bg-blue-500/10 text-blue-400 text-sm px-3 py-1 rounded-full border border-blue-500/20">
               {candidates.length} candidate{candidates.length !== 1 ? "s" : ""}
             </span>
+            <Link
+              href="/company/templates"
+              className="text-slate-400 hover:text-white text-sm transition-colors"
+            >
+              Templates
+            </Link>
             <button
               onClick={logout}
               className="text-slate-400 hover:text-white text-sm transition-colors"
@@ -79,12 +96,12 @@ export default function CompanyDashboardPage() {
             type="text"
             placeholder="Search by name or email…"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => handleFilterChange(() => setSearch(e.target.value))}
             className="flex-1 bg-slate-800 border border-slate-700 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500"
           />
           <select
             value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value)}
+            onChange={(e) => handleFilterChange(() => setRoleFilter(e.target.value))}
             className="bg-slate-800 border border-slate-700 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="">All roles</option>
@@ -121,7 +138,7 @@ export default function CompanyDashboardPage() {
 
         {!loading && filtered.length > 0 && (
           <div className="space-y-3">
-            {filtered.map((c) => {
+            {paginated.map((c) => {
               const rec = REC_STYLES[c.hiring_recommendation] ?? REC_STYLES.maybe;
               return (
                 <Link
@@ -155,6 +172,28 @@ export default function CompanyDashboardPage() {
                 </Link>
               );
             })}
+
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between pt-4">
+                <button
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                  className="px-4 py-2 text-sm bg-slate-800 border border-slate-700 text-slate-300 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:border-slate-500 transition-colors"
+                >
+                  ← Previous
+                </button>
+                <span className="text-slate-400 text-sm">
+                  Page {page + 1} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  disabled={page >= totalPages - 1}
+                  className="px-4 py-2 text-sm bg-slate-800 border border-slate-700 text-slate-300 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:border-slate-500 transition-colors"
+                >
+                  Next →
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

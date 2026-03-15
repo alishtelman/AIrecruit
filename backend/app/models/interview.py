@@ -14,6 +14,7 @@ class Interview(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     candidate_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False)
     resume_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("resumes.id", ondelete="SET NULL"), nullable=True)
+    template_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("interview_templates.id", ondelete="SET NULL"), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="created", nullable=False)
     # created | in_progress | completed | report_generated | failed
     target_role: Mapped[str] = mapped_column(String(100), nullable=False)

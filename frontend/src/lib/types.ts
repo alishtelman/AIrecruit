@@ -47,6 +47,13 @@ export interface ResumeUploadResponse {
   is_active: boolean;
 }
 
+export interface ActiveResume {
+  resume_id: string;
+  file_name: string;
+  file_size: number;
+  uploaded_at: string;
+}
+
 // ── Interview ─────────────────────────────────────────────────────────────────
 
 export type TargetRole =
@@ -65,8 +72,20 @@ export type InterviewStatus =
   | "report_generated"
   | "failed";
 
+export interface InterviewTemplate {
+  template_id: string;
+  company_id: string;
+  name: string;
+  target_role: TargetRole;
+  questions: string[];
+  description: string | null;
+  is_public: boolean;
+  created_at: string;
+}
+
 export interface StartInterviewRequest {
   target_role: TargetRole;
+  template_id?: string | null;
 }
 
 export interface StartInterviewResponse {
