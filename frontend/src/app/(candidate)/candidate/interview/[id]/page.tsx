@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
+import { useTTS } from "@/hooks/useTTS";
 import { interviewApi } from "@/lib/api";
 import type { InterviewDetail, InterviewMessage } from "@/lib/types";
 
@@ -11,6 +12,7 @@ export default function InterviewPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { loading: authLoading } = useAuth();
+  const { enabled: ttsEnabled, speaking, speak, stop, toggle: toggleTTS } = useTTS();
 
   const [interview, setInterview] = useState<InterviewDetail | null>(null);
   const [messages, setMessages] = useState<InterviewMessage[]>([]);
@@ -40,7 +42,6 @@ export default function InterviewPage() {
           return;
         }
 
-        // Derive current question (last assistant message)
         const lastAssistant = [...data.messages]
           .reverse()
           .find((m) => m.role === "assistant");
@@ -55,10 +56,13 @@ export default function InterviewPage() {
           setCurrentQuestion(null);
         } else if (waitingForAnswer && lastAssistant) {
           setCurrentQuestion(lastAssistant.content);
+          // Read the first question aloud on page load
+          speak(lastAssistant.content);
         }
       })
       .catch(() => setError("Could not load interview"));
-  }, [id, authLoading, router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, authLoading]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -70,8 +74,8 @@ export default function InterviewPage() {
     setInput("");
     setSending(true);
     setError("");
+    stop(); // stop any ongoing speech when candidate sends
 
-    // Optimistic: add candidate message immediately
     const optimistic: InterviewMessage = {
       role: "candidate",
       content: text,
@@ -92,13 +96,13 @@ export default function InterviewPage() {
         };
         setMessages((prev) => [...prev, aiMsg]);
         setCanFinish(false);
+        // Read new question aloud
+        speak(res.current_question);
       } else {
-        // No more questions — ready to finish
         setCanFinish(true);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to send message");
-      // Remove optimistic message on error
       setMessages((prev) => prev.slice(0, -1));
       setInput(text);
     } finally {
@@ -108,6 +112,7 @@ export default function InterviewPage() {
 
   async function handleFinish() {
     if (!id || finishing) return;
+    stop();
     setFinishing(true);
     setError("");
     try {
@@ -145,35 +150,47 @@ export default function InterviewPage() {
             </span>
           </div>
         </div>
-        {/* Progress bar */}
-        <div className="w-32 h-1.5 bg-slate-700 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-blue-500 rounded-full transition-all"
-            style={{ width: `${progress}%` }}
-          />
+        <div className="flex items-center gap-3">
+          {/* TTS toggle */}
+          <button
+            onClick={toggleTTS}
+            title={ttsEnabled ? "Mute voice" : "Enable voice"}
+            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+              ttsEnabled
+                ? "bg-blue-500/15 border-blue-500/30 text-blue-400 hover:bg-blue-500/25"
+                : "bg-slate-700/50 border-slate-600 text-slate-500 hover:text-slate-400"
+            }`}
+          >
+            {speaking ? (
+              <span className="flex gap-0.5 items-end h-3">
+                <span className="w-0.5 bg-current rounded-full animate-[soundbar_0.8s_ease-in-out_infinite]" style={{ height: "40%" }} />
+                <span className="w-0.5 bg-current rounded-full animate-[soundbar_0.8s_ease-in-out_0.2s_infinite]" style={{ height: "100%" }} />
+                <span className="w-0.5 bg-current rounded-full animate-[soundbar_0.8s_ease-in-out_0.4s_infinite]" style={{ height: "60%" }} />
+              </span>
+            ) : (
+              <span>{ttsEnabled ? "🔊" : "🔇"}</span>
+            )}
+            {ttsEnabled ? "Voice on" : "Voice off"}
+          </button>
+          {/* Progress bar */}
+          <div className="w-24 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-blue-500 rounded-full transition-all"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
         </div>
       </header>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4 max-w-2xl w-full mx-auto">
         {messages.map((msg, i) => (
-          <div
+          <MessageBubble
             key={i}
-            className={`flex ${msg.role === "candidate" ? "justify-end" : "justify-start"}`}
-          >
-            <div
-              className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                msg.role === "candidate"
-                  ? "bg-blue-600 text-white rounded-br-sm"
-                  : "bg-slate-800 border border-slate-700 text-slate-100 rounded-bl-sm"
-              }`}
-            >
-              {msg.role === "assistant" && (
-                <div className="text-blue-400 text-xs font-medium mb-1 uppercase tracking-wide">AI Interviewer</div>
-              )}
-              {msg.content}
-            </div>
-          </div>
+            msg={msg}
+            onReplay={msg.role === "assistant" ? () => speak(msg.content) : undefined}
+            speaking={speaking}
+          />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -233,6 +250,48 @@ export default function InterviewPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function MessageBubble({
+  msg,
+  onReplay,
+  speaking,
+}: {
+  msg: InterviewMessage;
+  onReplay?: () => void;
+  speaking: boolean;
+}) {
+  const isAI = msg.role === "assistant";
+  return (
+    <div className={`flex ${isAI ? "justify-start" : "justify-end"}`}>
+      <div className="group relative max-w-[80%]">
+        <div
+          className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+            isAI
+              ? "bg-slate-800 border border-slate-700 text-slate-100 rounded-bl-sm"
+              : "bg-blue-600 text-white rounded-br-sm"
+          }`}
+        >
+          {isAI && (
+            <div className="text-blue-400 text-xs font-medium mb-1 uppercase tracking-wide">
+              AI Interviewer
+            </div>
+          )}
+          {msg.content}
+        </div>
+        {/* Replay button — shown on hover for AI messages */}
+        {isAI && onReplay && (
+          <button
+            onClick={onReplay}
+            title="Replay question"
+            className="absolute -bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded-full w-6 h-6 flex items-center justify-center"
+          >
+            {speaking ? "■" : "▶"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
