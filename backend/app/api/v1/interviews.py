@@ -16,6 +16,7 @@ Why path over body:
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from groq import RateLimitError as GroqRateLimitError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_candidate
@@ -109,6 +110,11 @@ async def start(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No active resume found. Please upload a resume before starting an interview.",
         )
+    except GroqRateLimitError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service rate limit reached. Please wait a few minutes and try again.",
+        )
 
 
 @router.post(
@@ -140,6 +146,11 @@ async def send_message(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Interview is not active.",
+        )
+    except GroqRateLimitError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service rate limit reached. Please wait a few minutes and try again.",
         )
 
 
