@@ -1,0 +1,313 @@
+"""
+Interview service — owns all interview business logic.
+Routers call these functions; no SQLAlchemy queries in routers.
+
+question_count is an explicit DB column on Interview, incremented here.
+It is the authoritative source of truth — no need to re-count messages.
+"""
+import uuid
+from datetime import datetime
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.ai.assessor import AssessmentResult, assessor
+from app.ai.interviewer import MAX_QUESTIONS, InterviewContext, interviewer
+from app.models.candidate import Candidate
+from app.models.interview import Interview, InterviewMessage
+from app.models.report import AssessmentReport
+from app.models.resume import Resume
+from app.schemas.interview import (
+    FinishInterviewResponse,
+    InterviewDetailResponse,
+    InterviewMessageResponse,
+    ReportSummary,
+    SendMessageResponse,
+    StartInterviewResponse,
+)
+
+
+# ---------------------------------------------------------------------------
+# Domain exceptions — routers translate these into HTTP responses
+# ---------------------------------------------------------------------------
+
+class NoActiveResumeError(Exception):
+    """Candidate has no active resume — interview cannot start."""
+
+
+class InterviewNotFoundError(Exception):
+    """Interview does not exist or does not belong to this candidate."""
+
+
+class InterviewNotActiveError(Exception):
+    """Operation requires status=in_progress."""
+
+
+class InterviewAlreadyFinishedError(Exception):
+    """Interview has already been finished."""
+
+
+class MaxQuestionsReachedError(Exception):
+    """All questions answered — candidate must call /finish."""
+
+
+class MaxQuestionsNotReachedError(Exception):
+    """Cannot finish before all questions have been asked."""
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+async def _get_interview(
+    db: AsyncSession,
+    interview_id: uuid.UUID,
+    candidate_id: uuid.UUID,
+) -> Interview:
+    interview = await db.scalar(
+        select(Interview).where(
+            Interview.id == interview_id,
+            Interview.candidate_id == candidate_id,
+        )
+    )
+    if not interview:
+        raise InterviewNotFoundError()
+    return interview
+
+
+async def _get_messages(db: AsyncSession, interview_id: uuid.UUID) -> list[InterviewMessage]:
+    result = await db.scalars(
+        select(InterviewMessage)
+        .where(InterviewMessage.interview_id == interview_id)
+        .order_by(InterviewMessage.created_at)
+    )
+    return list(result)
+
+
+def _to_history(messages: list[InterviewMessage]) -> list[dict]:
+    return [{"role": m.role, "content": m.content} for m in messages]
+
+
+# ---------------------------------------------------------------------------
+# Public service functions
+# ---------------------------------------------------------------------------
+
+async def start_interview(
+    db: AsyncSession,
+    candidate: Candidate,
+    target_role: str,
+) -> StartInterviewResponse:
+    # Guard: active resume required
+    active_resume = await db.scalar(
+        select(Resume).where(
+            Resume.candidate_id == candidate.id,
+            Resume.is_active.is_(True),
+        )
+    )
+    if not active_resume:
+        raise NoActiveResumeError()
+
+    # Create interview — store resume_id snapshot at start time
+    interview = Interview(
+        id=uuid.uuid4(),
+        candidate_id=candidate.id,
+        resume_id=active_resume.id,
+        status="created",
+        target_role=target_role,
+        question_count=0,
+        max_questions=MAX_QUESTIONS,
+        started_at=datetime.utcnow(),
+    )
+    db.add(interview)
+    await db.flush()  # get interview.id
+
+    # Generate and persist first question
+    ctx = InterviewContext(target_role=target_role, question_number=1, message_history=[])
+    first_question = await interviewer.get_next_question(ctx)
+
+    db.add(InterviewMessage(
+        id=uuid.uuid4(),
+        interview_id=interview.id,
+        role="assistant",
+        content=first_question,
+    ))
+
+    # Explicitly set question_count = 1
+    interview.question_count = 1
+    interview.status = "in_progress"
+    await db.commit()
+    await db.refresh(interview)
+
+    return StartInterviewResponse(
+        interview_id=interview.id,
+        status="in_progress",
+        question_count=interview.question_count,
+        max_questions=interview.max_questions,
+        current_question=first_question,
+    )
+
+
+async def add_candidate_message(
+    db: AsyncSession,
+    candidate: Candidate,
+    interview_id: uuid.UUID,
+    message: str,
+) -> SendMessageResponse:
+    interview = await _get_interview(db, interview_id, candidate.id)
+
+    if interview.status != "in_progress":
+        if interview.status in ("report_generated", "completed"):
+            raise InterviewAlreadyFinishedError()
+        raise InterviewNotActiveError()
+
+    # Guard: all questions answered and last message was from candidate → must finish
+    messages = await _get_messages(db, interview.id)
+    if (
+        interview.question_count >= interview.max_questions
+        and messages
+        and messages[-1].role == "candidate"
+    ):
+        raise MaxQuestionsReachedError()
+
+    # Persist candidate answer
+    db.add(InterviewMessage(
+        id=uuid.uuid4(),
+        interview_id=interview.id,
+        role="candidate",
+        content=message,
+    ))
+
+    # Generate next question if quota not exhausted
+    current_question: str | None = None
+    if interview.question_count < interview.max_questions:
+        history = _to_history(messages)
+        history.append({"role": "candidate", "content": message})
+
+        ctx = InterviewContext(
+            target_role=interview.target_role,
+            question_number=interview.question_count + 1,
+            message_history=history,
+        )
+        next_q = await interviewer.get_next_question(ctx)
+
+        db.add(InterviewMessage(
+            id=uuid.uuid4(),
+            interview_id=interview.id,
+            role="assistant",
+            content=next_q,
+        ))
+        # Explicitly increment question_count in DB
+        interview.question_count += 1
+        current_question = next_q
+
+    await db.commit()
+    await db.refresh(interview)
+
+    return SendMessageResponse(
+        interview_id=interview.id,
+        status="in_progress",
+        question_count=interview.question_count,
+        max_questions=interview.max_questions,
+        current_question=current_question,
+    )
+
+
+async def finish_interview(
+    db: AsyncSession,
+    candidate: Candidate,
+    interview_id: uuid.UUID,
+) -> FinishInterviewResponse:
+    interview = await _get_interview(db, interview_id, candidate.id)
+
+    if interview.status == "report_generated":
+        raise InterviewAlreadyFinishedError()
+    if interview.status != "in_progress":
+        raise InterviewNotActiveError()
+
+    if interview.question_count < interview.max_questions:
+        raise MaxQuestionsNotReachedError()
+
+    messages = await _get_messages(db, interview.id)
+
+    # Phase 1: mark completed
+    interview.status = "completed"
+    interview.completed_at = datetime.utcnow()
+    await db.commit()
+
+    # Phase 2: generate report — failure marks status=failed, "completed" rows
+    # can be retried by a background job later.
+    try:
+        result: AssessmentResult = await assessor.assess(
+            target_role=interview.target_role,
+            message_history=_to_history(messages),
+        )
+
+        report = AssessmentReport(
+            id=uuid.uuid4(),
+            interview_id=interview.id,
+            candidate_id=interview.candidate_id,
+            overall_score=result.overall_score,
+            hard_skills_score=result.hard_skills_score,
+            soft_skills_score=result.soft_skills_score,
+            communication_score=result.communication_score,
+            strengths=result.strengths,
+            weaknesses=result.weaknesses,
+            recommendations=result.recommendations,
+            hiring_recommendation=result.hiring_recommendation,
+            interview_summary=result.interview_summary,
+            model_version=result.model_version,
+            full_report_json=result.full_report_json,
+        )
+        db.add(report)
+        interview.status = "report_generated"
+        await db.commit()
+        await db.refresh(report)
+
+    except Exception:
+        interview.status = "failed"
+        await db.commit()
+        raise
+
+    return FinishInterviewResponse(
+        interview_id=interview.id,
+        status="report_generated",
+        report_id=report.id,
+        summary=ReportSummary(
+            overall_score=report.overall_score,
+            hiring_recommendation=report.hiring_recommendation,
+            interview_summary=report.interview_summary,
+        ),
+    )
+
+
+async def get_interview_detail(
+    db: AsyncSession,
+    candidate: Candidate,
+    interview_id: uuid.UUID,
+) -> InterviewDetailResponse:
+    interview = await _get_interview(db, interview_id, candidate.id)
+    messages = await _get_messages(db, interview.id)
+
+    report = await db.scalar(
+        select(AssessmentReport).where(AssessmentReport.interview_id == interview.id)
+    )
+
+    # Exclude system messages from API response
+    visible = [
+        InterviewMessageResponse(role=m.role, content=m.content, created_at=m.created_at)
+        for m in messages
+        if m.role != "system"
+    ]
+
+    return InterviewDetailResponse(
+        interview_id=interview.id,
+        status=interview.status,
+        target_role=interview.target_role,
+        question_count=interview.question_count,
+        max_questions=interview.max_questions,
+        started_at=interview.started_at,
+        completed_at=interview.completed_at,
+        messages=visible,
+        has_report=report is not None,
+        report_id=report.id if report else None,
+    )

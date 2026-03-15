@@ -1,0 +1,135 @@
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+export interface User {
+  id: string;
+  email: string;
+  role: "candidate" | "company_admin";
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface CandidateRegisterRequest {
+  email: string;
+  password: string;
+  full_name: string;
+}
+
+// ── Candidate ─────────────────────────────────────────────────────────────────
+
+export interface Candidate {
+  id: string;
+  user_id: string;
+  full_name: string;
+  created_at: string;
+}
+
+export interface CandidateWithUser {
+  user: User;
+  candidate: Candidate;
+}
+
+// ── Resume ────────────────────────────────────────────────────────────────────
+
+export interface ResumeUploadResponse {
+  resume_id: string;
+  file_name: string;
+  text_length: number;
+  is_active: boolean;
+}
+
+// ── Interview ─────────────────────────────────────────────────────────────────
+
+export type TargetRole = "backend_engineer" | "qa_engineer" | "product_manager";
+export type InterviewStatus =
+  | "created"
+  | "in_progress"
+  | "completed"
+  | "report_generated"
+  | "failed";
+
+export interface StartInterviewRequest {
+  target_role: TargetRole;
+}
+
+export interface StartInterviewResponse {
+  interview_id: string;
+  status: InterviewStatus;
+  question_count: number;
+  max_questions: number;
+  current_question: string;
+}
+
+export interface SendMessageRequest {
+  message: string;
+}
+
+export interface SendMessageResponse {
+  interview_id: string;
+  status: InterviewStatus;
+  question_count: number;
+  max_questions: number;
+  current_question: string | null;
+}
+
+export interface InterviewMessage {
+  role: "assistant" | "candidate" | "system";
+  content: string;
+  created_at: string;
+}
+
+export interface InterviewDetail {
+  interview_id: string;
+  status: InterviewStatus;
+  target_role: TargetRole;
+  question_count: number;
+  max_questions: number;
+  started_at: string | null;
+  completed_at: string | null;
+  messages: InterviewMessage[];
+  has_report: boolean;
+  report_id: string | null;
+}
+
+export interface ReportSummary {
+  overall_score: number | null;
+  hiring_recommendation: HiringRecommendation;
+  interview_summary: string | null;
+}
+
+export interface FinishInterviewResponse {
+  interview_id: string;
+  status: InterviewStatus;
+  report_id: string;
+  summary: ReportSummary;
+}
+
+// ── Report ────────────────────────────────────────────────────────────────────
+
+export type HiringRecommendation = "strong_yes" | "yes" | "maybe" | "no";
+
+export interface AssessmentReport {
+  id: string;
+  interview_id: string;
+  candidate_id: string;
+  overall_score: number | null;
+  hard_skills_score: number | null;
+  soft_skills_score: number | null;
+  communication_score: number | null;
+  strengths: string[];
+  weaknesses: string[];
+  recommendations: string[];
+  hiring_recommendation: HiringRecommendation;
+  interview_summary: string | null;
+  model_version: string;
+  created_at: string;
+}
