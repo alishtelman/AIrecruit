@@ -4,9 +4,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password, verify_password, create_access_token
+from app.models.company import Company
 from app.models.user import User
 from app.models.candidate import Candidate
 from app.schemas.candidate import CandidateRegisterRequest
+from app.schemas.company import CompanyRegisterRequest
 from app.schemas.user import TokenResponse
 
 
@@ -46,6 +48,35 @@ async def register_candidate(
     await db.refresh(user)
     await db.refresh(candidate)
     return user, candidate
+
+
+async def register_company(
+    db: AsyncSession,
+    data: CompanyRegisterRequest,
+) -> tuple[User, Company]:
+    existing = await db.scalar(select(User).where(User.email == data.email))
+    if existing:
+        raise EmailAlreadyExistsError(data.email)
+
+    user = User(
+        id=uuid.uuid4(),
+        email=data.email,
+        hashed_password=hash_password(data.password),
+        role="company_admin",
+    )
+    db.add(user)
+    await db.flush()
+
+    company = Company(
+        id=uuid.uuid4(),
+        owner_user_id=user.id,
+        name=data.company_name,
+    )
+    db.add(company)
+    await db.commit()
+    await db.refresh(user)
+    await db.refresh(company)
+    return user, company
 
 
 async def login(

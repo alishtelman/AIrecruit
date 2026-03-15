@@ -1,0 +1,71 @@
+import uuid
+from datetime import datetime
+
+from pydantic import BaseModel, EmailStr, field_validator
+
+
+# ── Register ──────────────────────────────────────────────────────────────────
+
+class CompanyRegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+    company_name: str
+
+    @field_validator("password")
+    @classmethod
+    def password_min_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        return v
+
+    @field_validator("company_name")
+    @classmethod
+    def name_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("company_name cannot be empty")
+        return v.strip()
+
+
+class CompanyRegisterResponse(BaseModel):
+    user_id: uuid.UUID
+    email: str
+    company_id: uuid.UUID
+    company_name: str
+
+
+# ── Candidate list (company view) ─────────────────────────────────────────────
+
+class CandidateListItemResponse(BaseModel):
+    candidate_id: uuid.UUID
+    full_name: str
+    email: str
+    target_role: str
+    overall_score: float | None
+    hiring_recommendation: str
+    interview_summary: str | None
+    report_id: uuid.UUID
+    completed_at: datetime | None
+
+
+# ── Candidate detail (company view) ───────────────────────────────────────────
+
+class ReportWithRoleResponse(BaseModel):
+    report_id: uuid.UUID
+    target_role: str
+    overall_score: float | None
+    hard_skills_score: float | None
+    soft_skills_score: float | None
+    communication_score: float | None
+    strengths: list[str]
+    weaknesses: list[str]
+    recommendations: list[str]
+    hiring_recommendation: str
+    interview_summary: str | None
+    created_at: datetime
+
+
+class CandidateDetailResponse(BaseModel):
+    candidate_id: uuid.UUID
+    full_name: str
+    email: str
+    reports: list[ReportWithRoleResponse]

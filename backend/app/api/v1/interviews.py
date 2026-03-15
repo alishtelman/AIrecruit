@@ -25,6 +25,7 @@ from app.models.user import User
 from app.schemas.interview import (
     FinishInterviewResponse,
     InterviewDetailResponse,
+    InterviewListItemResponse,
     SendMessageRequest,
     SendMessageResponse,
     StartInterviewRequest,
@@ -40,6 +41,7 @@ from app.services.interview_service import (
     add_candidate_message,
     finish_interview,
     get_interview_detail,
+    list_interviews,
     start_interview,
 )
 
@@ -51,6 +53,18 @@ def _candidate(
 ) -> Candidate:
     _, candidate = user_and_candidate
     return candidate
+
+
+@router.get(
+    "/",
+    response_model=list[InterviewListItemResponse],
+    summary="List all interviews for the current candidate",
+)
+async def list_all(
+    candidate: Candidate = Depends(_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    return await list_interviews(db, candidate)
 
 
 @router.post(

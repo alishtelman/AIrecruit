@@ -1,14 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authApi } from "@/lib/api";
-import { setToken } from "@/lib/auth";
+import { getToken, setToken } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
   const [form, setForm] = useState({ email: "", password: "" });
+
+  useEffect(() => {
+    if (getToken()) router.replace("/candidate/dashboard");
+  }, [router]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 

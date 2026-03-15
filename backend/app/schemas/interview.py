@@ -5,7 +5,16 @@ from typing import Literal
 from pydantic import BaseModel, field_validator
 
 # Allowed roles — single source of truth shared with interviewer.py question banks
-TargetRole = Literal["backend_engineer", "qa_engineer", "product_manager"]
+TargetRole = Literal[
+    "backend_engineer",
+    "frontend_engineer",
+    "qa_engineer",
+    "devops_engineer",
+    "data_scientist",
+    "product_manager",
+    "mobile_engineer",
+    "designer",
+]
 
 
 class StartInterviewRequest(BaseModel):
@@ -69,5 +78,17 @@ class InterviewDetailResponse(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     messages: list[InterviewMessageResponse]
+    has_report: bool
+    report_id: uuid.UUID | None
+
+
+class InterviewListItemResponse(BaseModel):
+    interview_id: uuid.UUID
+    status: str
+    target_role: str
+    question_count: int
+    max_questions: int
+    started_at: datetime | None
+    completed_at: datetime | None
     has_report: bool
     report_id: uuid.UUID | None

@@ -1,77 +1,189 @@
 """
 AI Interviewer module.
 
-Current implementation: mock with role-based question templates.
-Phase 5 replacement: swap MockInterviewer with LLMInterviewer that calls Claude API.
-The public interface (get_next_question + InterviewContext) stays the same.
+Singleton `interviewer` is an LLMInterviewer (Groq) when GROQ_API_KEY is set,
+otherwise falls back to MockInterviewer.
 """
 from dataclasses import dataclass, field
 
+from groq import AsyncGroq
+
+from app.core.config import settings
+
 MAX_QUESTIONS = 8
 
-# Role-based question banks. Each list has exactly MAX_QUESTIONS entries.
+_ROLE_LABELS: dict[str, str] = {
+    "backend_engineer": "Backend-разработчик",
+    "frontend_engineer": "Frontend-разработчик",
+    "qa_engineer": "QA-инженер",
+    "devops_engineer": "DevOps-инженер",
+    "data_scientist": "Data Scientist",
+    "product_manager": "Продакт-менеджер",
+    "mobile_engineer": "Mobile-разработчик",
+    "designer": "UX/UI Дизайнер",
+}
+
+
+@dataclass
+class InterviewContext:
+    target_role: str
+    question_number: int          # 1-based
+    message_history: list[dict] = field(default_factory=list)
+    # Each dict: {"role": "assistant"|"candidate", "content": str}
+    resume_text: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# LLM implementation (Groq)
+# ---------------------------------------------------------------------------
+
+class LLMInterviewer:
+    """Generates interview questions via Groq API in Russian."""
+
+    def __init__(self, client: AsyncGroq) -> None:
+        self._client = client
+
+    async def get_next_question(self, ctx: InterviewContext) -> str:
+        role_label = _ROLE_LABELS.get(ctx.target_role, ctx.target_role.replace("_", " "))
+
+        system = (
+            f"Ты — опытный технический интервьюер, проводящий структурированное собеседование "
+            f"на позицию «{role_label}» на русском языке.\n\n"
+            "Правила:\n"
+            "- Задавай ровно ОДИН вопрос за раз, без нумерации.\n"
+            "- Чередуй технические вопросы и вопросы про опыт/soft skills.\n"
+            "- Если предыдущий ответ кандидата был поверхностным или уклончивым — задай уточняющий вопрос по той же теме.\n"
+            "- Если ответ содержал конкретный проект или технологию — задай углублённый вопрос по нему.\n"
+            "- Опирайся на резюме кандидата, если оно предоставлено.\n"
+            "- Не давай оценку ответам — только задавай следующий вопрос.\n"
+            "- Веди себя профессионально и доброжелательно.\n"
+            "- Отвечай ТОЛЬКО самим вопросом, без вступлений, оценок и комментариев.\n"
+        )
+        if ctx.resume_text:
+            system += f"\nРезюме кандидата:\n{ctx.resume_text[:3000]}"
+
+        # Groq uses OpenAI-compatible chat format (user/assistant roles).
+        # We prepend a trigger "user" message, then replay the full history.
+        messages: list[dict] = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": "Начни собеседование."},
+        ]
+        for msg in ctx.message_history:
+            role = "assistant" if msg["role"] == "assistant" else "user"
+            messages.append({"role": role, "content": msg["content"]})
+
+        response = await self._client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            max_tokens=512,
+            messages=messages,
+        )
+        return response.choices[0].message.content.strip()
+
+
+# ---------------------------------------------------------------------------
+# Mock fallback (no API key)
+# ---------------------------------------------------------------------------
+
 _QUESTIONS: dict[str, list[str]] = {
+    "frontend_engineer": [
+        "Расскажите о себе и своём опыте в frontend-разработке.",
+        "Как вы подходите к оптимизации производительности веб-приложений?",
+        "Объясните разницу между SSR, SSG и CSR. Когда вы используете каждый подход?",
+        "Как вы организуете состояние в крупном React/Vue/Angular приложении?",
+        "Опишите ваш опыт с accessibility (a11y). Как вы обеспечиваете доступность интерфейсов?",
+        "Как вы подходите к тестированию frontend-кода?",
+        "Расскажите о сложной UI-задаче, которую вам пришлось решить.",
+        "Как вы следите за новинками во frontend и принимаете решения о внедрении новых технологий?",
+    ],
+    "devops_engineer": [
+        "Расскажите о себе и своём опыте в DevOps.",
+        "Опишите CI/CD пайплайн, который вы настраивали. Какие инструменты использовали?",
+        "Как вы подходите к мониторингу и алертингу production-систем?",
+        "Расскажите о вашем опыте с Kubernetes или другими оркестраторами контейнеров.",
+        "Как вы обеспечиваете безопасность инфраструктуры? Приведите конкретные практики.",
+        "Опишите инцидент в production, в котором вы участвовали. Как вы его решали?",
+        "Как вы управляете конфигурацией и секретами в разных окружениях?",
+        "Как вы подходите к disaster recovery и обеспечению высокой доступности?",
+    ],
+    "data_scientist": [
+        "Расскажите о себе и своём опыте в Data Science.",
+        "Опишите проект ML, который вы довели до production. Какие были основные вызовы?",
+        "Как вы выбираете метрики для оценки модели? Приведите пример из практики.",
+        "Как вы обрабатываете пропущенные данные и выбросы в датасете?",
+        "Объясните разницу между underfitting и overfitting. Как вы с ними боретесь?",
+        "Расскажите о вашем опыте с A/B-тестированием.",
+        "Как вы объясняете результаты модели нетехническим стейкхолдерам?",
+        "Как вы следите за качеством модели в production (model drift, data drift)?",
+    ],
+    "mobile_engineer": [
+        "Расскажите о себе и вашем опыте в мобильной разработке.",
+        "Какие платформы вы разрабатывали? Опишите ключевые различия между iOS и Android разработкой.",
+        "Как вы оптимизируете производительность мобильного приложения?",
+        "Расскажите о вашем опыте с React Native, Flutter или другими кроссплатформенными фреймворками.",
+        "Как вы подходите к тестированию мобильных приложений?",
+        "Опишите сложную техническую задачу в мобильной разработке, которую вы решали.",
+        "Как вы обеспечиваете безопасность данных в мобильном приложении?",
+        "Как вы работаете с push-уведомлениями, offline-режимом и синхронизацией данных?",
+    ],
+    "designer": [
+        "Расскажите о себе и вашем опыте в UX/UI дизайне.",
+        "Опишите ваш процесс дизайна — от исследования до финального макета.",
+        "Как вы проводите пользовательские исследования? Какие методы предпочитаете?",
+        "Расскажите о дизайн-решении, которым вы особенно гордитесь. Как вы к нему пришли?",
+        "Как вы работаете с разработчиками при передаче дизайна в разработку?",
+        "Как вы измеряете успех дизайна после запуска?",
+        "Как вы справляетесь с противоречиями между бизнес-требованиями и интересами пользователей?",
+        "Расскажите о случае, когда пользовательское тестирование изменило ваш первоначальный дизайн.",
+    ],
     "backend_engineer": [
-        "Tell me about yourself and your background as a backend engineer.",
-        "Describe the most complex system you have built or contributed to. What were the key architectural decisions?",
-        "How do you approach database design for a high-traffic application? Walk me through your thought process.",
-        "Explain how you handle errors, retries, and failures in production services.",
-        "Describe your experience with asynchronous or event-driven architectures. Give a concrete example.",
-        "How do you ensure security in the APIs and services you build?",
-        "What is your approach to performance profiling and optimization?",
-        "How do you balance technical debt against shipping new features? Give a real example.",
+        "Расскажите о себе и своём опыте в backend-разработке.",
+        "Опишите самую сложную систему, которую вы создавали. Какие ключевые архитектурные решения вы принимали?",
+        "Как вы подходите к проектированию базы данных для высоконагруженного приложения?",
+        "Как вы обрабатываете ошибки, повторные попытки и отказы в production-сервисах?",
+        "Опишите ваш опыт с асинхронными или событийно-ориентированными архитектурами.",
+        "Как вы обеспечиваете безопасность в API и сервисах, которые создаёте?",
+        "Каков ваш подход к профилированию и оптимизации производительности?",
+        "Как вы балансируете технический долг и разработку новых функций?",
     ],
     "qa_engineer": [
-        "Tell me about yourself and your experience in quality assurance.",
-        "Describe your approach to building a test strategy for a new product feature.",
-        "What is your experience with test automation? Which frameworks have you used and why?",
-        "How do you decide which test cases to automate versus test manually?",
-        "Describe a critical bug you found that prevented a production incident. How did you find it?",
-        "How do you handle situations where developers push back on your bug reports?",
-        "What is your experience with performance and load testing?",
-        "How do you maintain quality in an agile environment with short release cycles?",
+        "Расскажите о себе и вашем опыте в обеспечении качества.",
+        "Опишите ваш подход к построению стратегии тестирования для нового функционала.",
+        "Каков ваш опыт с автоматизацией тестирования? Какие фреймворки использовали?",
+        "Как вы решаете, что автоматизировать, а что тестировать вручную?",
+        "Опишите критичный баг, который вы нашли и который предотвратил инцидент в production.",
+        "Как вы поступаете, когда разработчики отклоняют ваши баг-репорты?",
+        "Каков ваш опыт с нагрузочным и производительностным тестированием?",
+        "Как вы поддерживаете качество в agile-среде с короткими циклами релизов?",
     ],
     "product_manager": [
-        "Tell me about yourself and your experience as a product manager.",
-        "Walk me through how you define and prioritize a product roadmap.",
-        "Describe a product you took from idea to launch. What were the key decisions you made?",
-        "How do you gather and validate user requirements? Give a specific example.",
-        "How do you measure the success of a feature after launch?",
-        "Describe a time you had to say no to a stakeholder request. How did you handle it?",
-        "How do you collaborate with engineering to ensure timely, high-quality delivery?",
-        "Give an example of a data-driven product decision you made.",
+        "Расскажите о себе и вашем опыте в роли продакт-менеджера.",
+        "Объясните, как вы формируете и приоритизируете продуктовый роадмап.",
+        "Опишите продукт, который вы довели от идеи до запуска.",
+        "Как вы собираете и валидируете требования пользователей?",
+        "Как вы измеряете успех фичи после запуска?",
+        "Приведите пример, когда вам пришлось отказать стейкхолдеру.",
+        "Как вы взаимодействуете с инженерами для обеспечения качественной разработки?",
+        "Приведите пример продуктового решения, основанного на данных.",
     ],
 }
 
 _DEFAULT_ROLE = "backend_engineer"
 
 
-@dataclass
-class InterviewContext:
-    target_role: str
-    question_number: int  # 1-based: which question to generate next
-    message_history: list[dict] = field(default_factory=list)
-    # Each dict: {"role": "assistant"|"candidate", "content": str}
-
-
 class MockInterviewer:
-    """
-    Returns pre-written questions by role and question index.
-
-    TO REPLACE IN PHASE 5:
-    - Inject Anthropic client
-    - Build a system prompt with role + resume context
-    - Pass message_history as conversation turns
-    - Return Claude's response as the next question
-    """
-
     async def get_next_question(self, ctx: InterviewContext) -> str:
         questions = _QUESTIONS.get(ctx.target_role, _QUESTIONS[_DEFAULT_ROLE])
-        idx = ctx.question_number - 1  # question_number is 1-based
+        idx = ctx.question_number - 1
         if 0 <= idx < len(questions):
             return questions[idx]
-        return "Is there anything else you would like to share about your experience?"
+        return "Хотите добавить что-то ещё о своём опыте?"
 
 
-# Module-level singleton — replace with LLMInterviewer(client=anthropic_client) in Phase 5
-interviewer = MockInterviewer()
+# ---------------------------------------------------------------------------
+# Singleton
+# ---------------------------------------------------------------------------
+
+if settings.GROQ_API_KEY:
+    interviewer = LLMInterviewer(client=AsyncGroq(api_key=settings.GROQ_API_KEY))
+else:
+    interviewer = MockInterviewer()  # type: ignore[assignment]

@@ -49,7 +49,15 @@ export interface ResumeUploadResponse {
 
 // ── Interview ─────────────────────────────────────────────────────────────────
 
-export type TargetRole = "backend_engineer" | "qa_engineer" | "product_manager";
+export type TargetRole =
+  | "backend_engineer"
+  | "frontend_engineer"
+  | "qa_engineer"
+  | "devops_engineer"
+  | "data_scientist"
+  | "product_manager"
+  | "mobile_engineer"
+  | "designer";
 export type InterviewStatus =
   | "created"
   | "in_progress"
@@ -87,6 +95,18 @@ export interface InterviewMessage {
   created_at: string;
 }
 
+export interface InterviewListItem {
+  interview_id: string;
+  status: InterviewStatus;
+  target_role: TargetRole;
+  question_count: number;
+  max_questions: number;
+  started_at: string | null;
+  completed_at: string | null;
+  has_report: boolean;
+  report_id: string | null;
+}
+
 export interface InterviewDetail {
   interview_id: string;
   status: InterviewStatus;
@@ -111,6 +131,55 @@ export interface FinishInterviewResponse {
   status: InterviewStatus;
   report_id: string;
   summary: ReportSummary;
+}
+
+// ── Company ───────────────────────────────────────────────────────────────────
+
+export interface CompanyRegisterRequest {
+  email: string;
+  password: string;
+  company_name: string;
+}
+
+export interface CompanyRegisterResponse {
+  user_id: string;
+  email: string;
+  company_id: string;
+  company_name: string;
+}
+
+export interface CandidateListItem {
+  candidate_id: string;
+  full_name: string;
+  email: string;
+  target_role: string;
+  overall_score: number | null;
+  hiring_recommendation: HiringRecommendation;
+  interview_summary: string | null;
+  report_id: string;
+  completed_at: string | null;
+}
+
+export interface ReportWithRole {
+  report_id: string;
+  target_role: string;
+  overall_score: number | null;
+  hard_skills_score: number | null;
+  soft_skills_score: number | null;
+  communication_score: number | null;
+  strengths: string[];
+  weaknesses: string[];
+  recommendations: string[];
+  hiring_recommendation: HiringRecommendation;
+  interview_summary: string | null;
+  created_at: string;
+}
+
+export interface CandidateDetail {
+  candidate_id: string;
+  full_name: string;
+  email: string;
+  reports: ReportWithRole[];
 }
 
 // ── Report ────────────────────────────────────────────────────────────────────

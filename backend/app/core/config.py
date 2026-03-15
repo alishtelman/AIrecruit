@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     ANTHROPIC_API_KEY: str = ""
+    GROQ_API_KEY: str = ""
     UPLOAD_DIR: str = "/app/uploads"
     RESUME_STORAGE_DIR: str = "/app/storage/resumes"
     MAX_RESUME_SIZE_MB: int = 10

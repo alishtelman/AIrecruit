@@ -32,7 +32,7 @@ A platform where candidates complete structured AI interviews and receive verifi
 | Backend | Python 3.11, FastAPI, SQLAlchemy (async), Alembic |
 | Database | PostgreSQL 16 |
 | Auth | JWT (python-jose), bcrypt (passlib) |
-| AI | Anthropic Claude API (mock in current phase) |
+| AI | Groq API — Llama 3.3 70B (interviewer + assessor) |
 | Frontend | Next.js 14, TypeScript, Tailwind CSS |
 | Infrastructure | Docker, Docker Compose |
 
@@ -110,15 +110,20 @@ created → in_progress → completed → report_generated
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/api/v1/auth/candidate/register` | — | Register candidate |
+| POST | `/api/v1/auth/company/register` | — | Register company |
 | POST | `/api/v1/auth/login` | — | Login (all roles) |
 | GET | `/api/v1/auth/me` | Bearer | Current user |
 | GET | `/api/v1/auth/me/candidate` | Bearer | Candidate profile |
+| GET | `/api/v1/candidate/stats` | Bearer | Resume + interview stats for dashboard |
 | POST | `/api/v1/candidate/resume/upload` | Bearer | Upload PDF/DOCX resume |
+| GET | `/api/v1/interviews/` | Bearer | List all candidate interviews |
 | POST | `/api/v1/interviews/start` | Bearer | Start interview |
 | POST | `/api/v1/interviews/{id}/message` | Bearer | Send answer, get next question |
 | POST | `/api/v1/interviews/{id}/finish` | Bearer | Finish and generate report |
 | GET | `/api/v1/interviews/{id}` | Bearer | Interview details + messages |
 | GET | `/api/v1/reports/{id}` | Bearer | Assessment report |
+| GET | `/api/v1/company/candidates` | Bearer (company) | List verified candidates |
+| GET | `/api/v1/company/candidates/{id}` | Bearer (company) | Candidate profile + all reports |
 
 Full interactive docs: **http://localhost:8001/docs**
 
@@ -145,8 +150,9 @@ cp .env.example .env
 
 Open `.env` and set:
 ```
-ANTHROPIC_API_KEY=your-key-here   # required for Phase 5 (LLM)
+GROQ_API_KEY=gsk_...              # required for LLM interviews (free at console.groq.com)
 SECRET_KEY=your-random-secret     # change before any real use
+NEXT_PUBLIC_API_URL=http://localhost:8001
 ```
 
 > **Note on ports:** If you have other services running, the defaults are:
@@ -230,12 +236,13 @@ curl -s -X POST http://localhost:8001/api/v1/interviews/$INTERVIEW_ID/finish \
 | Phase | Status | Description |
 |---|---|---|
 | Phase 1 | ✅ Done | Project scaffold, Docker, DB schema |
-| Phase 2 | ✅ Done | JWT auth, candidate registration |
+| Phase 2 | ✅ Done | JWT auth, candidate + company registration |
 | Phase 3 | ✅ Done | Resume upload, text extraction |
 | Phase 4 | ✅ Done | Interview engine (mock AI) |
 | Phase 4.5 | ✅ Done | Working frontend UI (full candidate flow) |
-| Phase 5 | 🔜 Next | Real LLM integration (Claude API) |
-| Phase 6 | 📋 Planned | Company dashboard, candidate browsing |
+| Phase 5 | ✅ Done | Real LLM integration (Groq — Llama 3.3 70B) |
+| Phase 6 | ✅ Done | Company dashboard, candidate browsing |
+| Phase 7 | 🔜 Next | Voice/video interviews, custom templates |
 
 ---
 
@@ -271,7 +278,7 @@ docker compose down
 | `SECRET_KEY` | — | JWT signing secret (change in production) |
 | `ALGORITHM` | `HS256` | JWT algorithm |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Token TTL |
-| `ANTHROPIC_API_KEY` | — | Claude API key (required for Phase 5) |
+| `GROQ_API_KEY` | — | Groq API key — get free at console.groq.com |
 | `RESUME_STORAGE_DIR` | `/app/storage/resumes` | Resume file storage path |
 | `MAX_RESUME_SIZE_MB` | `10` | Max upload size |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8001` | Backend URL for frontend |

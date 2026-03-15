@@ -60,8 +60,8 @@ export default function ReportPage() {
   return (
     <div className="min-h-screen bg-slate-900 px-4 py-10">
       <div className="max-w-2xl mx-auto">
-        <Link href="/candidate/dashboard" className="text-slate-400 hover:text-white text-sm mb-6 inline-block">
-          ← Back to dashboard
+        <Link href="/candidate/reports" className="text-slate-400 hover:text-white text-sm mb-6 inline-block transition-colors">
+          ← Back to my interviews
         </Link>
 
         <h1 className="text-2xl font-bold text-white mb-2">Assessment Report</h1>

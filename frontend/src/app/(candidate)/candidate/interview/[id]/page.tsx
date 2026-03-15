@@ -133,11 +133,16 @@ export default function InterviewPage() {
     <div className="min-h-screen bg-slate-900 flex flex-col">
       {/* Header */}
       <header className="border-b border-slate-800 px-6 py-4 flex items-center justify-between shrink-0">
-        <div>
-          <span className="text-white font-semibold">{roleLabel} Interview</span>
-          <span className="text-slate-400 text-sm ml-3">
-            Question {questionCount} of {maxQuestions}
-          </span>
+        <div className="flex items-center gap-4">
+          <Link href="/candidate/reports" className="text-slate-500 hover:text-slate-300 text-sm transition-colors">
+            ←
+          </Link>
+          <div>
+            <span className="text-white font-semibold">{roleLabel} Interview</span>
+            <span className="text-slate-400 text-sm ml-3">
+              Question {questionCount} of {maxQuestions}
+            </span>
+          </div>
         </div>
         {/* Progress bar */}
         <div className="w-32 h-1.5 bg-slate-700 rounded-full overflow-hidden">

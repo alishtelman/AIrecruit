@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "model": "sonnet",
+  "effortLevel": "low",
+  "permissions": {
+    "allow": [
+      "Bash(docker compose ps)",
+      "Bash(docker compose config)",
+      "Bash(docker compose logs *)",
+      "Bash(docker compose exec api pytest *)",
+      "Bash(docker compose exec api python -m pytest *)",
+      "Bash(docker compose exec api alembic *)",
+      "Bash(docker compose exec web npm run lint *)",
+      "Bash(docker compose exec web npm run test *)",
+      "Bash(docker compose exec web npm run build *)",
+      "Bash(playwright-cli *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Edit(./package-lock.json)",
+      "Edit(./pnpm-lock.yaml)",
+      "Edit(./yarn.lock)"
+    ]
+  },
+  "env": {
+    "ENABLE_TOOL_SEARCH": "auto:5",
+    "PLAYWRIGHT_CLI_SESSION": "fullstack-app"
+  }
+}

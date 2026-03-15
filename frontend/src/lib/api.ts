@@ -1,10 +1,15 @@
 import { getToken } from "./auth";
 import type {
   AssessmentReport,
+  CandidateDetail,
+  CandidateListItem,
   CandidateRegisterRequest,
   CandidateWithUser,
+  CompanyRegisterRequest,
+  CompanyRegisterResponse,
   FinishInterviewResponse,
   InterviewDetail,
+  InterviewListItem,
   LoginRequest,
   ResumeUploadResponse,
   SendMessageRequest,
@@ -61,6 +66,35 @@ export const authApi = {
   meCandidate: () => request<CandidateWithUser>("/api/v1/auth/me/candidate"),
 };
 
+// ── Company Auth ──────────────────────────────────────────────────────────────
+
+export const companyAuthApi = {
+  register: (data: CompanyRegisterRequest) =>
+    request<CompanyRegisterResponse>("/api/v1/auth/company/register", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+};
+
+// ── Company Candidates ────────────────────────────────────────────────────────
+
+export const companyApi = {
+  listCandidates: () =>
+    request<CandidateListItem[]>("/api/v1/company/candidates"),
+
+  getCandidate: (candidateId: string) =>
+    request<CandidateDetail>(`/api/v1/company/candidates/${candidateId}`),
+};
+
+// ── Candidate ─────────────────────────────────────────────────────────────────
+
+export const candidateApi = {
+  stats: () =>
+    request<{ has_resume: boolean; interview_count: number; completed_count: number; latest_report_id: string | null }>(
+      "/api/v1/candidate/stats"
+    ),
+};
+
 // ── Resume ────────────────────────────────────────────────────────────────────
 
 export const resumeApi = {
@@ -77,6 +111,9 @@ export const resumeApi = {
 // ── Interview ─────────────────────────────────────────────────────────────────
 
 export const interviewApi = {
+  list: () =>
+    request<InterviewListItem[]>("/api/v1/interviews/"),
+
   start: (data: StartInterviewRequest) =>
     request<StartInterviewResponse>("/api/v1/interviews/start", {
       method: "POST",

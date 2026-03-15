@@ -122,7 +122,12 @@ async def start_interview(
     await db.flush()  # get interview.id
 
     # Generate and persist first question
-    ctx = InterviewContext(target_role=target_role, question_number=1, message_history=[])
+    ctx = InterviewContext(
+        target_role=target_role,
+        question_number=1,
+        message_history=[],
+        resume_text=active_resume.raw_text,
+    )
     first_question = await interviewer.get_next_question(ctx)
 
     db.add(InterviewMessage(
@@ -183,10 +188,12 @@ async def add_candidate_message(
         history = _to_history(messages)
         history.append({"role": "candidate", "content": message})
 
+        resume = await db.scalar(select(Resume).where(Resume.id == interview.resume_id))
         ctx = InterviewContext(
             target_role=interview.target_role,
             question_number=interview.question_count + 1,
             message_history=history,
+            resume_text=resume.raw_text if resume else None,
         )
         next_q = await interviewer.get_next_question(ctx)
 
@@ -311,3 +318,34 @@ async def get_interview_detail(
         has_report=report is not None,
         report_id=report.id if report else None,
     )
+
+
+async def list_interviews(
+    db: AsyncSession,
+    candidate: Candidate,
+) -> list:
+    from app.schemas.interview import InterviewListItemResponse
+    result = await db.scalars(
+        select(Interview)
+        .where(Interview.candidate_id == candidate.id)
+        .order_by(Interview.started_at.desc())
+    )
+    interviews = list(result)
+
+    items = []
+    for interview in interviews:
+        report = await db.scalar(
+            select(AssessmentReport).where(AssessmentReport.interview_id == interview.id)
+        )
+        items.append(InterviewListItemResponse(
+            interview_id=interview.id,
+            status=interview.status,
+            target_role=interview.target_role,
+            question_count=interview.question_count,
+            max_questions=interview.max_questions,
+            started_at=interview.started_at,
+            completed_at=interview.completed_at,
+            has_report=report is not None,
+            report_id=report.id if report else None,
+        ))
+    return items

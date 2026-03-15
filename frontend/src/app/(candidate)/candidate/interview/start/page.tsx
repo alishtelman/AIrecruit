@@ -14,14 +14,39 @@ const ROLES: { value: TargetRole; label: string; desc: string }[] = [
     desc: "System design, databases, APIs, performance",
   },
   {
+    value: "frontend_engineer",
+    label: "Frontend Engineer",
+    desc: "UI, performance, frameworks, accessibility",
+  },
+  {
     value: "qa_engineer",
     label: "QA Engineer",
     desc: "Test strategy, automation, quality processes",
   },
   {
+    value: "devops_engineer",
+    label: "DevOps Engineer",
+    desc: "CI/CD, infrastructure, Kubernetes, monitoring",
+  },
+  {
+    value: "data_scientist",
+    label: "Data Scientist",
+    desc: "ML models, experiments, analytics, production AI",
+  },
+  {
     value: "product_manager",
     label: "Product Manager",
     desc: "Roadmap, stakeholders, metrics, delivery",
+  },
+  {
+    value: "mobile_engineer",
+    label: "Mobile Engineer",
+    desc: "iOS, Android, React Native, Flutter",
+  },
+  {
+    value: "designer",
+    label: "UX/UI Designer",
+    desc: "User research, prototyping, design systems",
   },
 ];
 

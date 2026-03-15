@@ -5,12 +5,14 @@ from app.api.v1.deps import get_current_candidate, get_current_user
 from app.core.database import get_db
 from app.models.user import User
 from app.schemas.candidate import CandidateRegisterRequest, CandidateResponse, CandidateWithUserResponse
+from app.schemas.company import CompanyRegisterRequest, CompanyRegisterResponse
 from app.schemas.user import LoginRequest, TokenResponse, UserResponse
 from app.services.auth_service import (
     EmailAlreadyExistsError,
     InvalidCredentialsError,
     login,
     register_candidate,
+    register_company,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -35,6 +37,30 @@ async def candidate_register(
     return CandidateWithUserResponse(
         user=UserResponse.model_validate(user),
         candidate=CandidateResponse.model_validate(candidate),
+    )
+
+
+@router.post(
+    "/company/register",
+    response_model=CompanyRegisterResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def company_register(
+    body: CompanyRegisterRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        user, company = await register_company(db, body)
+    except EmailAlreadyExistsError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered",
+        )
+    return CompanyRegisterResponse(
+        user_id=user.id,
+        email=user.email,
+        company_id=company.id,
+        company_name=company.name,
     )
 
 
