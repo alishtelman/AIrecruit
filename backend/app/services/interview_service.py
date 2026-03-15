@@ -133,17 +133,16 @@ async def start_interview(
     db.add(interview)
     await db.flush()  # get interview.id
 
-    # Generate and persist first question
-    if template:
-        first_question = template.questions[0]
-    else:
-        ctx = InterviewContext(
-            target_role=target_role,
-            question_number=1,
-            message_history=[],
-            resume_text=active_resume.raw_text,
-        )
-        first_question = await interviewer.get_next_question(ctx)
+    # Generate and persist first question (always via LLM, template is guidance)
+    ctx = InterviewContext(
+        target_role=target_role,
+        question_number=1,
+        max_questions=max_q,
+        message_history=[],
+        resume_text=active_resume.raw_text,
+        template_questions=template.questions if template else None,
+    )
+    first_question = await interviewer.get_next_question(ctx)
 
     db.add(InterviewMessage(
         id=uuid.uuid4(),
@@ -203,21 +202,24 @@ async def add_candidate_message(
         history = _to_history(messages)
         history.append({"role": "candidate", "content": message})
 
-        # Use template question if this interview was started with a template
+        # Load template questions if this interview uses a template
+        template_questions: list[str] | None = None
         if interview.template_id:
             template = await db.scalar(
                 select(InterviewTemplate).where(InterviewTemplate.id == interview.template_id)
             )
-            next_q = template.questions[interview.question_count] if template else "Расскажите ещё о своём опыте."
-        else:
-            resume = await db.scalar(select(Resume).where(Resume.id == interview.resume_id))
-            ctx = InterviewContext(
-                target_role=interview.target_role,
-                question_number=interview.question_count + 1,
-                message_history=history,
-                resume_text=resume.raw_text if resume else None,
-            )
-            next_q = await interviewer.get_next_question(ctx)
+            template_questions = template.questions if template else None
+
+        resume = await db.scalar(select(Resume).where(Resume.id == interview.resume_id))
+        ctx = InterviewContext(
+            target_role=interview.target_role,
+            question_number=interview.question_count + 1,
+            max_questions=interview.max_questions,
+            message_history=history,
+            resume_text=resume.raw_text if resume else None,
+            template_questions=template_questions,
+        )
+        next_q = await interviewer.get_next_question(ctx)
 
         db.add(InterviewMessage(
             id=uuid.uuid4(),

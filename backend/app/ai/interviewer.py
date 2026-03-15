@@ -28,42 +28,96 @@ _ROLE_LABELS: dict[str, str] = {
 class InterviewContext:
     target_role: str
     question_number: int          # 1-based
+    max_questions: int = MAX_QUESTIONS
     message_history: list[dict] = field(default_factory=list)
     # Each dict: {"role": "assistant"|"candidate", "content": str}
     resume_text: str | None = None
+    template_questions: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
 # LLM implementation (Groq)
 # ---------------------------------------------------------------------------
 
+def _build_system_prompt(ctx: InterviewContext) -> str:
+    role_label = _ROLE_LABELS.get(ctx.target_role, ctx.target_role.replace("_", " "))
+
+    prompt = (
+        f"Ты — опытный технический интервьюер, ведущий живое собеседование "
+        f"на позицию «{role_label}».\n\n"
+
+        "## Твоя задача\n"
+        "Провести настоящий профессиональный разговор, а не анкету. "
+        "Каждый вопрос должен вытекать из ответов кандидата и его резюме. "
+        "Ты оцениваешь реальную глубину знаний и практический опыт.\n\n"
+
+        "## Работа с резюме\n"
+        "Если предоставлено резюме — изучи его внимательно:\n"
+        "- Упоминай конкретные компании, проекты, технологии и сроки из CV.\n"
+        "- Вместо общего «Расскажи про базы данных» спроси: «Я вижу, ты 2 года "
+        "работал с PostgreSQL в [Компания] — какие были нагрузки и как вы их решали?»\n"
+        "- Если в резюме есть пробел, смена направления или нетипичный проект — "
+        "спроси об этом.\n"
+        "- Если резюме не релевантно позиции — отметь это в вопросе и задай "
+        "технический вопрос по роли.\n\n"
+
+        "## Реакция на ответы кандидата\n"
+        "- Ответ поверхностный → попроси конкретный пример: "
+        "«Можешь привести конкретный случай из практики?»\n"
+        "- Упомянута конкретная технология → уточни детали: "
+        "«Ты упомянул Kafka — как выстраивал топологию, как боролся с consumer lag?»\n"
+        "- Описан проект → уточни личный вклад, технические решения и их последствия.\n"
+        "- Ответ полный и конкретный → переходи к следующей теме естественно.\n"
+        "- Ответ явная чушь, не по теме или несерьёзный → задай уточняющий вопрос "
+        "по той же теме в другой формулировке, не делай вид что всё нормально.\n\n"
+
+        "## Формат ответа\n"
+        "- Только ОДИН вопрос. Без нумерации.\n"
+        "- НЕ начинай с оценки («Отлично!», «Хороший ответ», «Интересно»).\n"
+        "- НЕ повторяй вопрос. НЕ давай советов и комментариев.\n"
+        "- Отвечай ТОЛЬКО самим вопросом — ничего кроме.\n"
+    )
+
+    # Template questions as a structured plan
+    if ctx.template_questions:
+        n = len(ctx.template_questions)
+        topics = "\n".join(
+            f"  {i+1}. {q}" for i, q in enumerate(ctx.template_questions)
+        )
+        prompt += (
+            f"\n## Структура собеседования (темы-ориентиры)\n"
+            f"Всего {n} тем, по одной на каждый вопрос. Прорабатывай их по порядку, "
+            f"но формулируй каждый вопрос исходя из резюме и предыдущих ответов. "
+            f"Это план — не скрипт для зачитывания.\n"
+            f"{topics}\n\n"
+            f"Сейчас задаёшь вопрос по теме №{ctx.question_number} из {n}.\n"
+        )
+    else:
+        prompt += (
+            f"\n## Структура\n"
+            f"Это вопрос {ctx.question_number} из {ctx.max_questions}. "
+            f"Чередуй технические вопросы и вопросы про опыт/soft skills. "
+            f"В начале — спроси о самом значимом опыте из резюме. "
+            f"В середине — глубокие технические вопросы. "
+            f"В конце — поведенческие/ситуационные.\n"
+        )
+
+    # Resume
+    if ctx.resume_text:
+        prompt += f"\n## Резюме кандидата\n{ctx.resume_text[:4000]}\n"
+
+    return prompt
+
+
 class LLMInterviewer:
-    """Generates interview questions via Groq API in Russian."""
+    """Generates adaptive interview questions via Groq API."""
 
     def __init__(self, client: AsyncGroq) -> None:
         self._client = client
 
     async def get_next_question(self, ctx: InterviewContext) -> str:
-        role_label = _ROLE_LABELS.get(ctx.target_role, ctx.target_role.replace("_", " "))
+        system = _build_system_prompt(ctx)
 
-        system = (
-            f"Ты — опытный технический интервьюер, проводящий структурированное собеседование "
-            f"на позицию «{role_label}» на русском языке.\n\n"
-            "Правила:\n"
-            "- Задавай ровно ОДИН вопрос за раз, без нумерации.\n"
-            "- Чередуй технические вопросы и вопросы про опыт/soft skills.\n"
-            "- Если предыдущий ответ кандидата был поверхностным или уклончивым — задай уточняющий вопрос по той же теме.\n"
-            "- Если ответ содержал конкретный проект или технологию — задай углублённый вопрос по нему.\n"
-            "- Опирайся на резюме кандидата, если оно предоставлено.\n"
-            "- Не давай оценку ответам — только задавай следующий вопрос.\n"
-            "- Веди себя профессионально и доброжелательно.\n"
-            "- Отвечай ТОЛЬКО самим вопросом, без вступлений, оценок и комментариев.\n"
-        )
-        if ctx.resume_text:
-            system += f"\nРезюме кандидата:\n{ctx.resume_text[:3000]}"
-
-        # Groq uses OpenAI-compatible chat format (user/assistant roles).
-        # We prepend a trigger "user" message, then replay the full history.
         messages: list[dict] = [
             {"role": "system", "content": system},
             {"role": "user", "content": "Начни собеседование."},
@@ -75,6 +129,7 @@ class LLMInterviewer:
         response = await self._client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             max_tokens=512,
+            temperature=0.7,
             messages=messages,
         )
         return response.choices[0].message.content.strip()
