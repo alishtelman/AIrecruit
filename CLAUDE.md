@@ -33,7 +33,18 @@ docker compose exec frontend npm run lint
 docker compose exec frontend npm run build
 ```
 
-No backend test suite exists yet.
+## Backend tests
+Tests run against the live backend at `http://localhost:8001`. Requires `docker compose up`.
+
+```bash
+# Run all tests (from repo root)
+cd backend && python3 -m pytest -v
+
+# Run specific test file
+cd backend && python3 -m pytest tests/test_auth.py -v
+```
+
+20 integration tests: auth (7), interview flow (7), templates (6).
 
 ## Structure
 
@@ -41,7 +52,7 @@ No backend test suite exists yet.
 backend/app/
   api/v1/       — thin FastAPI routers (no DB logic)
   services/     — all business logic
-  ai/           — mock interviewer + assessor (Phase 5: replace with Claude API)
+  ai/           — Groq LLM interviewer (adaptive, resume-aware) + assessor
   models/       — SQLAlchemy ORM models
   schemas/      — Pydantic DTOs
   core/         — config, database setup, JWT/bcrypt
