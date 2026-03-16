@@ -32,6 +32,12 @@ class ActiveResumeResponse(BaseModel):
     uploaded_at: datetime
 
 
+class ResumeTextResponse(BaseModel):
+    resume_id: str
+    file_name: str
+    raw_text: str
+
+
 @router.get("/stats", response_model=CandidateStatsResponse)
 async def get_stats(
     user_and_candidate: tuple[User, Candidate] = Depends(get_current_candidate),
@@ -89,6 +95,27 @@ async def get_active_resume(
         file_name=resume.file_name,
         file_size=resume.file_size,
         uploaded_at=resume.created_at,
+    )
+
+
+@router.get("/resume/text", response_model=ResumeTextResponse)
+async def get_resume_text(
+    user_and_candidate: tuple[User, Candidate] = Depends(get_current_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    from fastapi import HTTPException
+    _, candidate = user_and_candidate
+    resume = await db.scalar(
+        select(Resume)
+        .where(Resume.candidate_id == candidate.id, Resume.is_active.is_(True))
+        .order_by(Resume.created_at.desc())
+    )
+    if not resume:
+        raise HTTPException(status_code=404, detail="No active resume found.")
+    return ResumeTextResponse(
+        resume_id=str(resume.id),
+        file_name=resume.file_name,
+        raw_text=resume.raw_text or "",
     )
 
 

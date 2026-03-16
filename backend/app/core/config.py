@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     UPLOAD_DIR: str = "/app/uploads"
     RESUME_STORAGE_DIR: str = "/app/storage/resumes"
+    RECORDING_STORAGE_DIR: str = "/app/storage/recordings"
     MAX_RESUME_SIZE_MB: int = 10
 
 

@@ -34,6 +34,7 @@ class InterviewContext:
     resume_text: str | None = None
     template_questions: list[str] | None = None
     competency_targets: list[str] | None = None  # competency names for this question
+    language: str = "ru"
 
 
 # ---------------------------------------------------------------------------
@@ -44,15 +45,19 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
     role_label = _ROLE_LABELS.get(ctx.target_role, ctx.target_role.replace("_", " "))
 
     prompt = (
+        f"## ПРИОРИТЕТ\n"
+        f"Ты оцениваешь компетенции роли «{role_label}».\n"
+        f"Резюме — ТОЛЬКО контекст для персонализации вопросов.\n"
+        f"Никогда не уходи от компетенций роли из-за содержания резюме.\n\n"
+
         f"Ты — опытный технический интервьюер, ведущий живое собеседование "
         f"на позицию «{role_label}».\n\n"
 
         "## Твоя задача\n"
         "Провести настоящий профессиональный разговор, а не анкету. "
-        "Каждый вопрос должен вытекать из ответов кандидата и его резюме. "
         "Ты оцениваешь реальную глубину знаний и практический опыт.\n\n"
 
-        "## Работа с резюме\n"
+        "## Персонализация (контекст, не оценка)\n"
         "Если предоставлено резюме — изучи его внимательно:\n"
         "- Упоминай конкретные компании, проекты, технологии и сроки из CV.\n"
         "- Вместо общего «Расскажи про базы данных» спроси: «Я вижу, ты 2 года "
@@ -160,6 +165,10 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
     # Resume
     if ctx.resume_text:
         prompt += f"\n## Резюме кандидата\n{ctx.resume_text[:4000]}\n"
+
+    # Language
+    if ctx.language == "en":
+        prompt += "\n## Language\nConduct this interview entirely in English.\n"
 
     return prompt
 

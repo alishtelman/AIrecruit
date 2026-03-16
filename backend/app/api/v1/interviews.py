@@ -15,7 +15,7 @@ Why path over body:
 """
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from groq import RateLimitError as GroqRateLimitError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +44,7 @@ from app.services.interview_service import (
     finish_interview,
     get_interview_detail,
     list_interviews,
+    save_interview_recording,
     start_interview,
 )
 from app.services.template_service import list_public_templates
@@ -104,7 +105,7 @@ async def start(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await start_interview(db, candidate, body.target_role, body.template_id)
+        return await start_interview(db, candidate, body.target_role, body.template_id, body.language)
     except NoActiveResumeError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -188,6 +189,23 @@ async def finish(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Report generation failed. Interview marked as failed.",
         )
+
+
+@router.post(
+    "/{interview_id}/recording",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Upload interview recording",
+)
+async def upload_recording(
+    interview_id: uuid.UUID,
+    file: UploadFile = File(...),
+    candidate: Candidate = Depends(_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await save_interview_recording(db, candidate.id, interview_id, file)
+    except InterviewNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
 
 
 @router.get(

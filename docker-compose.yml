@@ -28,6 +28,7 @@ services:
       - ./backend:/app
       - uploads:/app/uploads
       - ./backend/storage:/app/storage
+      - recordings:/app/storage/recordings
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
@@ -47,3 +48,4 @@ services:
 volumes:
   postgres_data:
   uploads:
+  recordings:

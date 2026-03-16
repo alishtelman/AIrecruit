@@ -20,6 +20,7 @@ TargetRole = Literal[
 class StartInterviewRequest(BaseModel):
     target_role: TargetRole
     template_id: uuid.UUID | None = None
+    language: Literal["ru", "en"] = "ru"
 
 
 class StartInterviewResponse(BaseModel):
@@ -28,6 +29,7 @@ class StartInterviewResponse(BaseModel):
     question_count: int
     max_questions: int
     current_question: str
+    language: Literal["ru", "en"] = "ru"
 
 
 class SendMessageRequest(BaseModel):
@@ -76,6 +78,7 @@ class InterviewDetailResponse(BaseModel):
     target_role: str
     question_count: int
     max_questions: int
+    language: Literal["ru", "en"] = "ru"
     started_at: datetime | None
     completed_at: datetime | None
     messages: list[InterviewMessageResponse]

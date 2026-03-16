@@ -28,6 +28,7 @@ function StartInterviewInner() {
   const [selected, setSelected] = useState<TargetRole | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<InterviewTemplate | null>(null);
   const [templates, setTemplates] = useState<InterviewTemplate[]>([]);
+  const [language, setLanguage] = useState<"ru" | "en">("ru");
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
 
@@ -50,6 +51,7 @@ function StartInterviewInner() {
       const res = await interviewApi.start({
         target_role: selected,
         template_id: selectedTemplate?.template_id ?? null,
+        language,
       });
       router.push(`/candidate/interview/${res.interview_id}`);
     } catch (err: unknown) {
@@ -172,6 +174,33 @@ function StartInterviewInner() {
             {" "}({selectedTemplate.questions.length} custom questions)
           </div>
         )}
+
+        {/* Language selection */}
+        <div className="mb-6">
+          <p className="text-slate-400 text-sm mb-2">Interview language:</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setLanguage("ru")}
+              className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                language === "ru"
+                  ? "bg-blue-500/15 border-blue-500/40 text-blue-400"
+                  : "bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600"
+              }`}
+            >
+              🇷🇺 Русский
+            </button>
+            <button
+              onClick={() => setLanguage("en")}
+              className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                language === "en"
+                  ? "bg-blue-500/15 border-blue-500/40 text-blue-400"
+                  : "bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600"
+              }`}
+            >
+              🇬🇧 English
+            </button>
+          </div>
+        </div>
 
         <button
           onClick={handleStart}

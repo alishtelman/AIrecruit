@@ -114,25 +114,17 @@ export default function ReportPage() {
           )}
         </div>
 
-        {/* Competency breakdown */}
+        {/* Competency heatmap */}
         {report.competency_scores && report.competency_scores.length > 0 && (
-          <Section title="Competency Breakdown" color="blue">
-            <div className="space-y-3">
-              {report.competency_scores.map((cs, i) => (
-                <CompetencyRow key={i} cs={cs} />
-              ))}
-            </div>
+          <Section title="Competency Heatmap" color="blue">
+            <CompetencyHeatmap scores={report.competency_scores} />
           </Section>
         )}
 
-        {/* Skill tags */}
+        {/* Skill matrix */}
         {report.skill_tags && report.skill_tags.length > 0 && (
           <Section title="Skills Identified" color="cyan">
-            <div className="flex flex-wrap gap-2">
-              {report.skill_tags.map((tag, i) => (
-                <SkillBadge key={i} tag={tag} />
-              ))}
-            </div>
+            <SkillMatrix tags={report.skill_tags} />
           </Section>
         )}
 
@@ -214,6 +206,90 @@ function ScoreCard({ label, score, highlight = false }: { label: string; score: 
           className={`h-full rounded-full transition-all ${highlight ? "bg-blue-500" : "bg-slate-400"}`}
           style={{ width: `${pct}%` }}
         />
+      </div>
+    </div>
+  );
+}
+
+function CompetencyHeatmap({ scores }: { scores: CompetencyScore[] }) {
+  // Group by category
+  const groups: Record<string, CompetencyScore[]> = {};
+  for (const cs of scores) {
+    if (!groups[cs.category]) groups[cs.category] = [];
+    groups[cs.category].push(cs);
+  }
+
+  return (
+    <div className="space-y-4">
+      {Object.entries(groups).map(([category, items]) => (
+        <div key={category}>
+          <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">
+            {CATEGORY_LABELS[category] ?? category}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {items.map((cs, i) => {
+              const cellClass =
+                cs.score >= 7
+                  ? "bg-green-500/30 border-green-500/50 text-green-300"
+                  : cs.score >= 5
+                  ? "bg-yellow-500/30 border-yellow-500/50 text-yellow-300"
+                  : "bg-red-500/30 border-red-500/50 text-red-300";
+              return (
+                <div key={i} className={`border rounded-lg px-3 py-2 ${cellClass}`}>
+                  <div className="text-xs font-medium truncate">{cs.competency}</div>
+                  <div className="text-lg font-bold mt-0.5">{cs.score.toFixed(1)}</div>
+                  {cs.evidence && (
+                    <div className="text-xs opacity-70 mt-1 line-clamp-2">{cs.evidence}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SkillMatrix({ tags }: { tags: SkillTag[] }) {
+  const strong = tags.filter((t) => t.proficiency === "expert" || t.proficiency === "advanced");
+  const develop = tags.filter((t) => t.proficiency === "beginner" || t.proficiency === "intermediate");
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div>
+        <div className="text-xs text-green-400 uppercase tracking-wide font-semibold mb-2">
+          Сильные (expert / advanced)
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {strong.length === 0 ? (
+            <span className="text-slate-500 text-xs">—</span>
+          ) : (
+            strong.map((tag, i) => (
+              <span key={i} className="px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-400">
+                {tag.skill}
+                {tag.mentions_count > 1 && <span className="ml-1 opacity-60">×{tag.mentions_count}</span>}
+              </span>
+            ))
+          )}
+        </div>
+      </div>
+      <div>
+        <div className="text-xs text-yellow-400 uppercase tracking-wide font-semibold mb-2">
+          Развивать (beginner / intermediate)
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {develop.length === 0 ? (
+            <span className="text-slate-500 text-xs">—</span>
+          ) : (
+            develop.map((tag, i) => (
+              <span key={i} className="px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-500/20 text-yellow-400">
+                {tag.skill}
+                {tag.mentions_count > 1 && <span className="ml-1 opacity-60">×{tag.mentions_count}</span>}
+              </span>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

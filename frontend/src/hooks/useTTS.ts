@@ -12,7 +12,7 @@ const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
  *   1. Groq TTS via backend /api/v1/tts  (high quality)
  *   2. Browser SpeechSynthesis            (fallback, no API key)
  */
-export function useTTS() {
+export function useTTS(language?: string) {
   const [enabled, setEnabled] = useState(true);
   const [speaking, setSpeaking] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -86,7 +86,7 @@ export function useTTS() {
       // Fallback: browser SpeechSynthesis
       if (typeof window !== "undefined" && "speechSynthesis" in window) {
         const utter = new SpeechSynthesisUtterance(text);
-        utter.lang = "ru-RU";  // interviews are in Russian
+        utter.lang = language === "en" ? "en-US" : "ru-RU";
         utter.rate = 0.95;
         utter.onend = () => setSpeaking(false);
         utter.onerror = () => setSpeaking(false);
