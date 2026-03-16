@@ -291,6 +291,7 @@ export interface QuestionAnalysis {
   red_flags: string[];
   specificity: string;
   depth: string;
+  ai_likelihood: number | null;
 }
 
 export interface SkillTag {

@@ -90,11 +90,24 @@ _QUESTION_ANALYSIS_TOOL = {
                                 "type": "string",
                                 "enum": ["expert", "strong", "adequate", "surface", "none"],
                             },
+                            "ai_likelihood": {
+                                "type": "number",
+                                "description": (
+                                    "Probability 0.0-1.0 that this answer was AI-generated. "
+                                    "Look for: unnatural structure (bullet points without being asked), "
+                                    "marker phrases ('Certainly', 'Great question', 'In conclusion', "
+                                    "'As a professional'), no personal examples, "
+                                    "covers every angle of a question perfectly, "
+                                    "academic tone in a casual conversation, "
+                                    "answers things that were NOT asked. "
+                                    "0.0 = clearly human, 1.0 = almost certainly AI."
+                                ),
+                            },
                         },
                         "required": [
                             "question_number", "targeted_competencies",
                             "answer_quality", "evidence", "skills_mentioned",
-                            "red_flags", "specificity", "depth",
+                            "red_flags", "specificity", "depth", "ai_likelihood",
                         ],
                     },
                 },
@@ -296,46 +309,70 @@ def _aggregate_skills(per_question: list[dict]) -> list[dict]:
     return sorted(skill_map.values(), key=lambda x: x["mentions_count"], reverse=True)
 
 
-def _compute_cheat_risk(signals: dict | None) -> tuple[float, list[str]]:
-    """Compute cheat_risk_score (0.0–1.0) and list of flags from behavioral signals."""
-    if not signals:
-        return 0.0, []
-
+def _compute_cheat_risk(
+    signals: dict | None,
+    per_question_analysis: list[dict] | None = None,
+) -> tuple[float, list[str]]:
+    """Compute cheat_risk_score (0.0–1.0) and list of flags from behavioral signals + AI likelihood."""
     flags: list[str] = []
     score = 0.0
 
-    paste_count: int = signals.get("paste_count", 0)
-    tab_switches: int = signals.get("tab_switches", 0)
-    face_away_pct: float | None = signals.get("face_away_pct")
-    response_times: list[dict] = signals.get("response_times", [])
+    # ── Behavioral signals ────────────────────────────────────────────────────
+    if signals:
+        paste_count: int = signals.get("paste_count", 0)
+        tab_switches: int = signals.get("tab_switches", 0)
+        face_away_pct: float | None = signals.get("face_away_pct")
+        response_times: list[dict] = signals.get("response_times", [])
 
-    if paste_count >= 3:
-        flags.append(f"High paste activity ({paste_count} pastes)")
-        score += 0.3
-    elif paste_count >= 1:
-        flags.append(f"Paste activity detected ({paste_count} pastes)")
-        score += 0.15
+        if paste_count >= 3:
+            flags.append(f"High paste activity ({paste_count} pastes)")
+            score += 0.3
+        elif paste_count >= 1:
+            flags.append(f"Paste activity detected ({paste_count} pastes)")
+            score += 0.15
 
-    if tab_switches >= 5:
-        flags.append(f"Frequent tab/window switching ({tab_switches} switches)")
-        score += 0.3
-    elif tab_switches >= 2:
-        flags.append(f"Tab/window switching ({tab_switches} switches)")
-        score += 0.15
+        if tab_switches >= 5:
+            flags.append(f"Frequent tab/window switching ({tab_switches} switches)")
+            score += 0.3
+        elif tab_switches >= 2:
+            flags.append(f"Tab/window switching ({tab_switches} switches)")
+            score += 0.15
 
-    if face_away_pct is not None and face_away_pct >= 0.4:
-        flags.append(f"Face not visible {int(face_away_pct * 100)}% of the time")
-        score += 0.3
-    elif face_away_pct is not None and face_away_pct >= 0.2:
-        flags.append(f"Face away {int(face_away_pct * 100)}% of the time")
-        score += 0.1
+        if face_away_pct is not None and face_away_pct >= 0.4:
+            flags.append(f"Face not visible {int(face_away_pct * 100)}% of the time")
+            score += 0.3
+        elif face_away_pct is not None and face_away_pct >= 0.2:
+            flags.append(f"Face away {int(face_away_pct * 100)}% of the time")
+            score += 0.1
 
-    # Very fast answers (<10s) combined with paste events → suspicious
-    if response_times and paste_count >= 1:
-        fast = [rt for rt in response_times if rt.get("seconds", 999) < 10]
-        if len(fast) >= 2:
-            flags.append(f"{len(fast)} answers submitted under 10 seconds with paste activity")
-            score += 0.2
+        # Very fast answers (<10s) combined with paste events → suspicious
+        if response_times and paste_count >= 1:
+            fast = [rt for rt in response_times if rt.get("seconds", 999) < 10]
+            if len(fast) >= 2:
+                flags.append(f"{len(fast)} answers submitted under 10 seconds with paste activity")
+                score += 0.2
+
+    # ── AI-generated text detection (from Pass 1 per-question analysis) ───────
+    if per_question_analysis:
+        ai_scores = [
+            q.get("ai_likelihood", 0.0)
+            for q in per_question_analysis
+            if q.get("ai_likelihood") is not None
+        ]
+        if ai_scores:
+            avg_ai = sum(ai_scores) / len(ai_scores)
+            high_ai = [s for s in ai_scores if s >= 0.7]
+
+            if avg_ai >= 0.7:
+                flags.append(f"High AI-generated text probability across answers (avg {avg_ai:.0%})")
+                score += 0.4
+            elif avg_ai >= 0.5:
+                flags.append(f"Moderate AI-generated text probability (avg {avg_ai:.0%})")
+                score += 0.2
+
+            if len(high_ai) >= 3:
+                flags.append(f"{len(high_ai)} answers show strong AI-writing patterns")
+                score += 0.15
 
     return round(min(score, 1.0), 2), flags
 
@@ -417,8 +454,8 @@ class LLMAssessor:
         if response_times:
             result.full_report_json["response_times"] = response_times
 
-        # Cheat risk from behavioral signals
-        cheat_risk, cheat_flags = _compute_cheat_risk(behavioral_signals)
+        # Cheat risk: behavioral signals + AI-likelihood from Pass 1
+        cheat_risk, cheat_flags = _compute_cheat_risk(behavioral_signals, result.per_question_analysis)
         result.cheat_risk_score = cheat_risk
         result.cheat_flags = cheat_flags
         if cheat_flags:
@@ -445,7 +482,13 @@ class LLMAssessor:
             "3. Конкретные доказательства из ответа (цитаты, примеры)\n"
             "4. Упомянутые технологии/навыки с уровнем владения\n"
             "5. Красные флаги (противоречия, фабрикации, уход от вопроса)\n"
-            "6. Конкретность (high/medium/low) и глубина (expert/strong/adequate/surface/none)\n\n"
+            "6. Конкретность (high/medium/low) и глубина (expert/strong/adequate/surface/none)\n"
+            "7. Вероятность AI-генерации (ai_likelihood 0.0-1.0):\n"
+            "   Признаки AI: буллет-пойнты без просьбы, фразы 'Certainly/Great question/In conclusion',\n"
+            "   идеальное покрытие всех аспектов без личных примеров, академический тон в диалоге,\n"
+            "   ответ на незаданные вопросы, слишком правильная структура intro→body→conclusion.\n"
+            "   Признаки живого человека: личные примеры ('я делал X'), неполные мысли, паузы,\n"
+            "   специфические детали, неформальный язык.\n\n"
             "Будь объективным. Оценивай только по фактическому содержанию ответов.\n"
             "Шкала answer_quality (1-10): 1-4 = нет/поверхностный ответ, 5-6 = рабочие знания без глубины, "
             "7-8 = конкретные примеры + trade-offs, 9-10 = экспертное мышление. "
@@ -655,6 +698,7 @@ class MockAssessor:
                     "red_flags": [],
                     "specificity": "medium",
                     "depth": "adequate",
+                    "ai_likelihood": 0.0,
                 })
 
         role_label = target_role.replace("_", " ")
@@ -668,7 +712,7 @@ class MockAssessor:
             "mock": True,
         }
 
-        cheat_risk, cheat_flags = _compute_cheat_risk(behavioral_signals)
+        cheat_risk, cheat_flags = _compute_cheat_risk(behavioral_signals, per_q)
 
         return AssessmentResult(
             overall_score=overall,

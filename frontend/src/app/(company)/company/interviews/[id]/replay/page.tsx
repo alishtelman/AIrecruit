@@ -121,9 +121,14 @@ function TurnCard({ turn, expanded, onToggle }: {
                   </ul>
                 </div>
               )}
-              <div className="sm:col-span-2 flex gap-4 text-xs text-slate-500">
+              <div className="sm:col-span-2 flex flex-wrap gap-4 text-xs text-slate-500">
                 <span>Specificity: <span className="text-slate-300 capitalize">{qa.specificity}</span></span>
                 <span>Depth: <span className={`capitalize ${DEPTH_COLORS[qa.depth]?.split(" ")[0]}`}>{qa.depth}</span></span>
+                {qa.ai_likelihood != null && qa.ai_likelihood > 0.1 && (
+                  <span className={`font-medium ${qa.ai_likelihood >= 0.7 ? "text-red-400" : qa.ai_likelihood >= 0.4 ? "text-orange-400" : "text-yellow-400"}`}>
+                    AI likelihood: {Math.round(qa.ai_likelihood * 100)}%
+                  </span>
+                )}
               </div>
             </div>
           )}

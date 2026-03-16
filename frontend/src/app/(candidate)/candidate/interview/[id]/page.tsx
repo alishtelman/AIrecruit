@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useTTS } from "@/hooks/useTTS";
 import { useMediaRecorder } from "@/hooks/useMediaRecorder";
 import { useVoiceInput } from "@/hooks/useVoiceInput";
+import { useFaceDetection } from "@/hooks/useFaceDetection";
 import { candidateApi, interviewApi } from "@/lib/api";
 import type { InterviewDetail, InterviewMessage } from "@/lib/types";
 
@@ -45,6 +46,7 @@ export default function InterviewPage() {
   const [interviewLanguage, setInterviewLanguage] = useState<string>("ru");
   const { enabled: ttsEnabled, speaking, speak, stop, toggle: toggleTTS } = useTTS(interviewLanguage);
   const { isRecording, previewRef, startRecording, stopRecording, getBlob } = useMediaRecorder();
+  const { faceAwayPct, isModelLoaded: faceModelLoaded } = useFaceDetection(previewRef, recordingConsent);
   const { state: voiceState, start: startVoice, stop: stopVoice } = useVoiceInput({
     onTranscript: (text) => setInput((prev) => prev ? prev + " " + text : text),
   });
@@ -183,7 +185,7 @@ export default function InterviewPage() {
         response_times: responseTimes.current,
         paste_count: pasteCountRef.current,
         tab_switches: tabSwitchCountRef.current,
-        face_away_pct: null, // eye tracking not implemented yet
+        face_away_pct: faceAwayPct,
       }).catch(() => null);
 
       const res = await interviewApi.finish(id);
@@ -236,11 +238,25 @@ export default function InterviewPage() {
               className="w-[120px] h-[90px] rounded-lg object-cover border border-slate-700"
             />
           )}
-          {/* REC indicator */}
+          {/* REC + eye tracking indicator */}
           {isRecording && (
-            <span className="flex items-center gap-1 text-red-400 text-xs font-semibold">
-              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-              REC
+            <span className="flex items-center gap-2">
+              <span className="flex items-center gap-1 text-red-400 text-xs font-semibold">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                REC
+              </span>
+              {faceModelLoaded && (
+                <span
+                  className={`text-xs font-medium ${
+                    faceAwayPct !== null && faceAwayPct > 0.3
+                      ? "text-orange-400"
+                      : "text-green-400"
+                  }`}
+                  title={`Face detection: ${faceAwayPct !== null ? Math.round(faceAwayPct * 100) + "% away" : "detecting…"}`}
+                >
+                  {faceAwayPct !== null && faceAwayPct > 0.3 ? "👁️‍🗨️ Look at camera" : "👁️"}
+                </span>
+              )}
             </span>
           )}
           {/* Consent button to start recording */}
