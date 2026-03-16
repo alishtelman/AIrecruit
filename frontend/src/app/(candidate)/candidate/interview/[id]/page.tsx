@@ -27,6 +27,13 @@ export default function InterviewPage() {
   const [error, setError] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Behavioral signals tracking (Feature 7)
+  const pasteCountRef = useRef(0);
+  const tabSwitchCountRef = useRef(0);
+  const questionStartTimeRef = useRef<number>(Date.now());
+  const responseTimes = useRef<{ q: number; seconds: number }[]>([]);
+  const currentQNumRef = useRef(1);
+
   // Resume panel
   const [resumeText, setResumeText] = useState<string | null>(null);
   const [resumeOpen, setResumeOpen] = useState(false);
@@ -86,6 +93,22 @@ export default function InterviewPage() {
     candidateApi.getResumeText().then((r) => setResumeText(r.raw_text)).catch(() => null);
   }, [id, authLoading]);
 
+  // Track behavioral signals
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (document.hidden) tabSwitchCountRef.current++;
+    }
+    function onBlur() {
+      tabSwitchCountRef.current++;
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -93,6 +116,12 @@ export default function InterviewPage() {
   async function handleSend() {
     if (!input.trim() || sending || !id) return;
     const text = input.trim();
+
+    // Record response time for this question
+    const elapsed = (Date.now() - questionStartTimeRef.current) / 1000;
+    responseTimes.current.push({ q: currentQNumRef.current, seconds: Math.round(elapsed) });
+    questionStartTimeRef.current = Date.now();
+
     setInput("");
     setSending(true);
     setError("");
@@ -111,6 +140,8 @@ export default function InterviewPage() {
       setCurrentQuestion(res.current_question);
 
       if (res.current_question) {
+        currentQNumRef.current = res.question_count;
+        questionStartTimeRef.current = Date.now();
         const aiMsg: InterviewMessage = {
           role: "assistant",
           content: res.current_question,
@@ -147,6 +178,14 @@ export default function InterviewPage() {
           await interviewApi.uploadRecording(id, blob).catch(() => null);
         }
       }
+      // Submit behavioral signals before finishing
+      await interviewApi.submitSignals(id, {
+        response_times: responseTimes.current,
+        paste_count: pasteCountRef.current,
+        tab_switches: tabSwitchCountRef.current,
+        face_away_pct: null, // eye tracking not implemented yet
+      }).catch(() => null);
+
       const res = await interviewApi.finish(id);
       router.push(`/candidate/reports/${res.report_id}`);
     } catch (err: unknown) {
@@ -328,6 +367,7 @@ export default function InterviewPage() {
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onPaste={() => { pasteCountRef.current++; }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();

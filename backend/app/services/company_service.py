@@ -4,6 +4,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.candidate import Candidate
+from app.models.hire_outcome import HireOutcome
 from app.models.interview import Interview
 from app.models.report import AssessmentReport
 from app.models.user import User
@@ -14,7 +15,10 @@ from app.schemas.company import (
 )
 
 
-async def list_verified_candidates(db: AsyncSession) -> list[CandidateListItemResponse]:
+async def list_verified_candidates(
+    db: AsyncSession,
+    company_id: uuid.UUID | None = None,
+) -> list[CandidateListItemResponse]:
     """Return one entry per candidate — their most recent completed report."""
     result = await db.execute(
         select(AssessmentReport, Interview, Candidate, User)
@@ -24,6 +28,15 @@ async def list_verified_candidates(db: AsyncSession) -> list[CandidateListItemRe
         .order_by(desc(AssessmentReport.created_at))
     )
     rows = result.all()
+
+    # Load hire outcomes for this company if company_id provided
+    outcome_map: dict[uuid.UUID, str] = {}
+    if company_id:
+        outcomes = await db.scalars(
+            select(HireOutcome).where(HireOutcome.company_id == company_id)
+        )
+        for o in outcomes:
+            outcome_map[o.candidate_id] = o.outcome
 
     seen: set[uuid.UUID] = set()
     items: list[CandidateListItemResponse] = []
@@ -41,6 +54,10 @@ async def list_verified_candidates(db: AsyncSession) -> list[CandidateListItemRe
                     interview_summary=report.interview_summary,
                     report_id=report.id,
                     completed_at=interview.completed_at,
+                    salary_min=candidate.salary_min,
+                    salary_max=candidate.salary_max,
+                    salary_currency=candidate.salary_currency,
+                    hire_outcome=outcome_map.get(candidate.id),
                 )
             )
     return items
@@ -49,6 +66,7 @@ async def list_verified_candidates(db: AsyncSession) -> list[CandidateListItemRe
 async def get_candidate_detail(
     db: AsyncSession,
     candidate_id: uuid.UUID,
+    company_id: uuid.UUID | None = None,
 ) -> CandidateDetailResponse | None:
     candidate = await db.scalar(select(Candidate).where(Candidate.id == candidate_id))
     if not candidate:
@@ -66,9 +84,24 @@ async def get_candidate_detail(
     )
     rows = result.all()
 
+    # Load hire outcome for this company
+    hire_outcome = None
+    hire_notes = None
+    if company_id:
+        ho = await db.scalar(
+            select(HireOutcome).where(
+                HireOutcome.company_id == company_id,
+                HireOutcome.candidate_id == candidate_id,
+            )
+        )
+        if ho:
+            hire_outcome = ho.outcome
+            hire_notes = ho.notes
+
     reports = [
         ReportWithRoleResponse(
             report_id=report.id,
+            interview_id=report.interview_id,
             target_role=interview.target_role,
             overall_score=report.overall_score,
             hard_skills_score=report.hard_skills_score,
@@ -93,5 +126,10 @@ async def get_candidate_detail(
         candidate_id=candidate.id,
         full_name=candidate.full_name,
         email=user.email,
+        salary_min=candidate.salary_min,
+        salary_max=candidate.salary_max,
+        salary_currency=candidate.salary_currency,
+        hire_outcome=hire_outcome,
+        hire_notes=hire_notes,
         reports=reports,
     )

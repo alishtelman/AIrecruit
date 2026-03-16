@@ -24,6 +24,8 @@ from app.schemas.interview import (
     FinishInterviewResponse,
     InterviewDetailResponse,
     InterviewMessageResponse,
+    InterviewReplayResponse,
+    ReplayTurn,
     ReportSummary,
     SendMessageResponse,
     StartInterviewResponse,
@@ -348,6 +350,7 @@ async def finish_interview(
             target_role=interview.target_role,
             message_history=_to_history(messages),
             message_timestamps=_to_timestamps(messages),
+            behavioral_signals=interview.behavioral_signals,
         )
 
         report = AssessmentReport(
@@ -371,6 +374,8 @@ async def finish_interview(
             skill_tags=result.skill_tags or None,
             red_flags=result.red_flags or None,
             response_consistency=result.response_consistency,
+            cheat_risk_score=result.cheat_risk_score,
+            cheat_flags=result.cheat_flags or None,
         )
         db.add(report)
         await db.flush()
@@ -503,6 +508,72 @@ async def save_interview_recording(
 
     interview.recording_path = dest
     await db.commit()
+
+
+async def save_behavioral_signals(
+    db: AsyncSession,
+    candidate_id: uuid.UUID,
+    interview_id: uuid.UUID,
+    signals: dict,
+) -> None:
+    """Persist behavioral signals captured during the interview."""
+    interview = await _get_interview(db, interview_id, candidate_id)
+    interview.behavioral_signals = signals
+    await db.commit()
+
+
+async def get_interview_replay(
+    db: AsyncSession,
+    interview_id: uuid.UUID,
+    company_id: uuid.UUID,  # noqa: used for future ACL; currently any company can view
+) -> InterviewReplayResponse | None:
+    """Return a Q&A replay annotated with per-question analysis."""
+    interview = await db.scalar(select(Interview).where(Interview.id == interview_id))
+    if not interview:
+        return None
+
+    messages = await _get_messages(db, interview.id)
+    report = await db.scalar(
+        select(AssessmentReport).where(AssessmentReport.interview_id == interview.id)
+    )
+
+    # Load candidate name
+    candidate = await db.scalar(select(Candidate).where(Candidate.id == interview.candidate_id))
+    candidate_name = candidate.full_name if candidate else "Unknown"
+
+    # Build turns: pair assistant messages with following candidate messages
+    per_q: list[dict] = report.per_question_analysis or [] if report else []
+
+    turns: list[ReplayTurn] = []
+    visible = [m for m in messages if m.role in ("assistant", "candidate")]
+    q_num = 0
+    i = 0
+    while i < len(visible):
+        msg = visible[i]
+        if msg.role == "assistant":
+            q_num += 1
+            question_msg = msg
+            answer_msg = visible[i + 1] if i + 1 < len(visible) and visible[i + 1].role == "candidate" else None
+            analysis = per_q[q_num - 1] if q_num - 1 < len(per_q) else None
+            turns.append(ReplayTurn(
+                question_number=q_num,
+                question=question_msg.content,
+                answer=answer_msg.content if answer_msg else "",
+                question_time=question_msg.created_at,
+                answer_time=answer_msg.created_at if answer_msg else None,
+                analysis=analysis,
+            ))
+            i += 2 if answer_msg else 1
+        else:
+            i += 1
+
+    return InterviewReplayResponse(
+        interview_id=interview.id,
+        candidate_name=candidate_name,
+        target_role=interview.target_role,
+        completed_at=interview.completed_at,
+        turns=turns,
+    )
 
 
 async def list_interviews(

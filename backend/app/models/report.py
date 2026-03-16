@@ -44,6 +44,9 @@ class AssessmentReport(Base):
     red_flags: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # [{flag, evidence, severity}]
     response_consistency: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cheat_risk_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cheat_flags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # list of strings describing behavioral signals that triggered cheat risk
 
     # Audit trail
     full_report_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)

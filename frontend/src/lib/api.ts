@@ -9,8 +9,10 @@ import type {
   CompanyRegisterRequest,
   CompanyRegisterResponse,
   FinishInterviewResponse,
+  HireOutcomeResponse,
   InterviewDetail,
   InterviewListItem,
+  InterviewReplay,
   InterviewTemplate,
   LoginRequest,
   ResumeTextResponse,
@@ -125,6 +127,18 @@ export const companyApi = {
 
   deleteAssessment: (id: string) =>
     request<void>(`/api/v1/company/assessments/${id}`, { method: "DELETE" }),
+
+  setOutcome: (candidateId: string, outcome: string, notes?: string) =>
+    request<HireOutcomeResponse>(`/api/v1/company/candidates/${candidateId}/outcome`, {
+      method: "POST",
+      body: JSON.stringify({ outcome, notes }),
+    }),
+
+  getOutcome: (candidateId: string) =>
+    request<HireOutcomeResponse>(`/api/v1/company/candidates/${candidateId}/outcome`),
+
+  getInterviewReplay: (interviewId: string) =>
+    request<InterviewReplay>(`/api/v1/company/interviews/${interviewId}/replay`),
 };
 
 // ── Public Templates ──────────────────────────────────────────────────────────
@@ -147,6 +161,20 @@ export const candidateApi = {
 
   getResumeText: () =>
     request<ResumeTextResponse>("/api/v1/candidate/resume/text"),
+
+  getSalary: () =>
+    request<{ salary_min: number | null; salary_max: number | null; salary_currency: string }>("/api/v1/candidate/salary"),
+
+  updateSalary: (data: { salary_min: number | null; salary_max: number | null; currency: string }) =>
+    request<{ salary_min: number | null; salary_max: number | null; salary_currency: string }>("/api/v1/candidate/salary", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  salaryBenchmark: (role: string) =>
+    request<{ role: string; buckets: { score_range: string; median_min: number | null; median_max: number | null; count: number }[] }>(
+      `/api/v1/candidate/salary/benchmark?role=${encodeURIComponent(role)}`
+    ),
 };
 
 // ── Resume ────────────────────────────────────────────────────────────────────
@@ -187,6 +215,12 @@ export const interviewApi = {
 
   getDetail: (id: string) =>
     request<InterviewDetail>(`/api/v1/interviews/${id}`),
+
+  submitSignals: (id: string, signals: { response_times: { q: number; seconds: number }[]; paste_count: number; tab_switches: number; face_away_pct: number | null }) =>
+    request<void>(`/api/v1/interviews/${id}/signals`, {
+      method: "POST",
+      body: JSON.stringify(signals),
+    }),
 
   uploadRecording: (id: string, blob: Blob) => {
     const form = new FormData();

@@ -7,9 +7,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.deps import get_current_company, get_current_company_admin, get_db
 from app.models.company import Company
 from app.models.user import User
-from app.schemas.company import CandidateDetailResponse, CandidateListItemResponse
+from app.schemas.company import (
+    CandidateDetailResponse,
+    CandidateListItemResponse,
+    HireOutcomeRequest,
+    HireOutcomeResponse,
+)
+from app.schemas.interview import InterviewReplayResponse
 from app.schemas.template import TemplateCreateRequest, TemplateResponse
 from app.services.company_service import get_candidate_detail, list_verified_candidates
+from app.services.hire_outcome_service import get_hire_outcome, set_hire_outcome
+from app.services.interview_service import get_interview_replay
 from app.services.member_service import (
     MemberAlreadyExistsError,
     RoleConflictError,
@@ -36,7 +44,8 @@ async def get_candidates(
     db: AsyncSession = Depends(get_db),
     user_and_company: tuple[User, Company] = Depends(get_current_company),
 ):
-    return await list_verified_candidates(db)
+    _, company = user_and_company
+    return await list_verified_candidates(db, company_id=company.id)
 
 
 @router.get("/candidates/{candidate_id}", response_model=CandidateDetailResponse)
@@ -45,9 +54,51 @@ async def get_candidate(
     db: AsyncSession = Depends(get_db),
     user_and_company: tuple[User, Company] = Depends(get_current_company),
 ):
-    result = await get_candidate_detail(db, candidate_id)
+    _, company = user_and_company
+    result = await get_candidate_detail(db, candidate_id, company_id=company.id)
     if not result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+    return result
+
+
+@router.post("/candidates/{candidate_id}/outcome", response_model=HireOutcomeResponse)
+async def set_candidate_outcome(
+    candidate_id: uuid.UUID,
+    body: HireOutcomeRequest,
+    db: AsyncSession = Depends(get_db),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    _, company = user_and_company
+    try:
+        record = await set_hire_outcome(db, company.id, candidate_id, body.outcome, body.notes)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    return HireOutcomeResponse(outcome=record.outcome, notes=record.notes, updated_at=record.updated_at)
+
+
+@router.get("/candidates/{candidate_id}/outcome", response_model=HireOutcomeResponse)
+async def get_candidate_outcome(
+    candidate_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    _, company = user_and_company
+    record = await get_hire_outcome(db, company.id, candidate_id)
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No outcome recorded")
+    return HireOutcomeResponse(outcome=record.outcome, notes=record.notes, updated_at=record.updated_at)
+
+
+@router.get("/interviews/{interview_id}/replay", response_model=InterviewReplayResponse)
+async def get_replay(
+    interview_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    _, company = user_and_company
+    result = await get_interview_replay(db, interview_id, company.id)
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found")
     return result
 
 

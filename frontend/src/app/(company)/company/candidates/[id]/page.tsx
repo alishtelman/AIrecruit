@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { companyApi } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
-import type { CandidateDetail, HiringRecommendation, ReportWithRole, CompetencyScore, SkillTag, RedFlag } from "@/lib/types";
+import type { CandidateDetail, HiringRecommendation, ReportWithRole, CompetencyScore, SkillTag, RedFlag, HireOutcome } from "@/lib/types";
 
 const ROLE_LABELS: Record<string, string> = {
   backend_engineer: "Backend Engineer",
@@ -96,6 +96,13 @@ function CompetencyRow({ cs }: { cs: CompetencyScore }) {
   );
 }
 
+const OUTCOME_LABELS: Record<string, { label: string; cls: string }> = {
+  hired:       { label: "Hired",       cls: "bg-green-500/15 text-green-400 border-green-500/30" },
+  rejected:    { label: "Rejected",    cls: "bg-red-500/15 text-red-400 border-red-500/30" },
+  interviewing:{ label: "Interviewing",cls: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
+  no_show:     { label: "No Show",     cls: "bg-slate-500/15 text-slate-400 border-slate-600" },
+};
+
 function ReportCard({ report }: { report: ReportWithRole }) {
   const rec = REC_STYLES[report.hiring_recommendation] ?? REC_STYLES.maybe;
   const [showCompetencies, setShowCompetencies] = useState(false);
@@ -113,6 +120,14 @@ function ReportCard({ report }: { report: ReportWithRole }) {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {report.interview_id && (
+            <Link
+              href={`/company/interviews/${report.interview_id}/replay`}
+              className="text-xs text-blue-400 hover:text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded transition-colors"
+            >
+              View Replay
+            </Link>
+          )}
           <span className={`text-xs px-2.5 py-1 rounded-full border ${rec.className}`}>
             {rec.label}
           </span>
@@ -234,14 +249,36 @@ export default function CandidateDetailPage() {
   const [candidate, setCandidate] = useState<CandidateDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [outcome, setOutcome] = useState<string>("");
+  const [outcomeNotes, setOutcomeNotes] = useState("");
+  const [savingOutcome, setSavingOutcome] = useState(false);
+  const [outcomeSaved, setOutcomeSaved] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
     companyApi.getCandidate(id)
-      .then(setCandidate)
+      .then((c) => {
+        setCandidate(c);
+        setOutcome(c.hire_outcome ?? "");
+        setOutcomeNotes(c.hire_notes ?? "");
+      })
       .catch((err) => setError(err.message ?? "Failed to load candidate"))
       .finally(() => setLoading(false));
   }, [id, authLoading, router]);
+
+  async function handleSaveOutcome() {
+    if (!outcome) return;
+    setSavingOutcome(true);
+    try {
+      await companyApi.setOutcome(id, outcome, outcomeNotes || undefined);
+      setOutcomeSaved(true);
+      setTimeout(() => setOutcomeSaved(false), 2000);
+    } catch {
+      // ignore
+    } finally {
+      setSavingOutcome(false);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-slate-900 px-4 py-8">
@@ -269,6 +306,52 @@ export default function CandidateDetailPage() {
               <p className="text-slate-500 text-sm mt-0.5">
                 {candidate.reports.length} interview{candidate.reports.length !== 1 ? "s" : ""} completed
               </p>
+
+              {/* Salary expectation */}
+              {(candidate.salary_min || candidate.salary_max) && (
+                <p className="text-slate-300 text-sm mt-2">
+                  💰 Salary expectation:{" "}
+                  {candidate.salary_min && candidate.salary_max
+                    ? `${candidate.salary_min.toLocaleString()}–${candidate.salary_max.toLocaleString()}`
+                    : (candidate.salary_min || candidate.salary_max)?.toLocaleString()}{" "}
+                  {candidate.salary_currency}
+                </p>
+              )}
+
+              {/* Hire outcome */}
+              <div className="mt-4 p-4 bg-slate-800 border border-slate-700 rounded-xl space-y-3">
+                <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">Hiring Decision</p>
+                <div className="flex flex-wrap gap-2">
+                  {(["hired", "interviewing", "rejected", "no_show"] as const).map((o) => {
+                    const cfg = OUTCOME_LABELS[o];
+                    return (
+                      <button
+                        key={o}
+                        onClick={() => setOutcome(o)}
+                        className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                          outcome === o ? cfg.cls : "border-slate-600 text-slate-500 hover:border-slate-500"
+                        }`}
+                      >
+                        {cfg.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <input
+                  type="text"
+                  placeholder="Notes (optional)"
+                  value={outcomeNotes}
+                  onChange={(e) => setOutcomeNotes(e.target.value)}
+                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+                <button
+                  onClick={handleSaveOutcome}
+                  disabled={!outcome || savingOutcome}
+                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+                >
+                  {outcomeSaved ? "Saved ✓" : savingOutcome ? "Saving…" : "Save Decision"}
+                </button>
+              </div>
             </div>
 
             <div className="space-y-4">

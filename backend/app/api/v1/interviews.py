@@ -24,6 +24,7 @@ from app.core.database import get_db
 from app.models.candidate import Candidate
 from app.models.user import User
 from app.schemas.interview import (
+    BehavioralSignalsRequest,
     FinishInterviewResponse,
     InterviewDetailResponse,
     InterviewListItemResponse,
@@ -44,6 +45,7 @@ from app.services.interview_service import (
     finish_interview,
     get_interview_detail,
     list_interviews,
+    save_behavioral_signals,
     save_interview_recording,
     start_interview,
 )
@@ -189,6 +191,23 @@ async def finish(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Report generation failed. Interview marked as failed.",
         )
+
+
+@router.post(
+    "/{interview_id}/signals",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Submit behavioral signals captured during the interview",
+)
+async def submit_signals(
+    interview_id: uuid.UUID,
+    body: BehavioralSignalsRequest,
+    candidate: Candidate = Depends(_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await save_behavioral_signals(db, candidate.id, interview_id, body.model_dump())
+    except InterviewNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
 
 
 @router.post(

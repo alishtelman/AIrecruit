@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -30,6 +30,8 @@ class Interview(Base):
     company_assessment_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("company_assessments.id", ondelete="SET NULL"), nullable=True
     )
+    behavioral_signals: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # {response_times: [{q, seconds}], paste_count, tab_switches, face_away_pct}
 
     messages: Mapped[list["InterviewMessage"]] = relationship(
         "InterviewMessage", back_populates="interview", order_by="InterviewMessage.created_at"

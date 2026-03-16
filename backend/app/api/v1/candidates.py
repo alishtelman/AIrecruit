@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,7 @@ from app.models.candidate import Candidate
 from app.models.interview import Interview
 from app.models.report import AssessmentReport
 from app.models.resume import Resume
-from app.models.user import User
+from app.models.user import User  # noqa: F401 (used by type hints in deps)
 from app.schemas.resume import ResumeUploadResponse
 from app.services.resume_service import upload_resume
 
@@ -117,6 +117,121 @@ async def get_resume_text(
         file_name=resume.file_name,
         raw_text=resume.raw_text or "",
     )
+
+
+class SalaryUpdateRequest(BaseModel):
+    salary_min: int | None = None
+    salary_max: int | None = None
+    currency: str = "USD"
+
+
+class SalaryResponse(BaseModel):
+    salary_min: int | None
+    salary_max: int | None
+    salary_currency: str
+
+
+class BenchmarkBucket(BaseModel):
+    score_range: str
+    median_min: float | None
+    median_max: float | None
+    count: int
+
+
+class SalaryBenchmarkResponse(BaseModel):
+    role: str
+    buckets: list[BenchmarkBucket]
+
+
+@router.patch("/salary", response_model=SalaryResponse)
+async def update_salary(
+    body: SalaryUpdateRequest,
+    user_and_candidate: tuple[User, Candidate] = Depends(get_current_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    _, candidate = user_and_candidate
+    candidate.salary_min = body.salary_min
+    candidate.salary_max = body.salary_max
+    candidate.salary_currency = body.currency
+    await db.commit()
+    await db.refresh(candidate)
+    return SalaryResponse(
+        salary_min=candidate.salary_min,
+        salary_max=candidate.salary_max,
+        salary_currency=candidate.salary_currency,
+    )
+
+
+@router.get("/salary", response_model=SalaryResponse)
+async def get_salary(
+    user_and_candidate: tuple[User, Candidate] = Depends(get_current_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    _, candidate = user_and_candidate
+    return SalaryResponse(
+        salary_min=candidate.salary_min,
+        salary_max=candidate.salary_max,
+        salary_currency=candidate.salary_currency,
+    )
+
+
+@router.get("/salary/benchmark", response_model=SalaryBenchmarkResponse)
+async def salary_benchmark(
+    role: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return median salary expectations by score bucket for a given role."""
+    # Get all candidates who set salary AND have a report for this role
+    result = await db.execute(
+        select(Candidate, AssessmentReport)
+        .join(Interview, AssessmentReport.interview_id == Interview.id)
+        .join(Candidate, AssessmentReport.candidate_id == Candidate.id)
+        .where(
+            Interview.target_role == role,
+            Candidate.salary_min.isnot(None),
+        )
+    )
+    rows = result.all()
+
+    buckets_data: dict[str, list[tuple[int, int]]] = {
+        "0-4": [], "5-6": [], "7-8": [], "9-10": [],
+    }
+
+    def _bucket(score: float | None) -> str:
+        if score is None:
+            return "0-4"
+        if score <= 4:
+            return "0-4"
+        if score <= 6:
+            return "5-6"
+        if score <= 8:
+            return "7-8"
+        return "9-10"
+
+    for candidate, report in rows:
+        b = _bucket(report.overall_score)
+        if candidate.salary_min is not None:
+            buckets_data[b].append((candidate.salary_min, candidate.salary_max or candidate.salary_min))
+
+    def _median(vals: list[float]) -> float | None:
+        if not vals:
+            return None
+        s = sorted(vals)
+        n = len(s)
+        return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+
+    result_buckets = []
+    for score_range, pairs in buckets_data.items():
+        mins = [p[0] for p in pairs]
+        maxs = [p[1] for p in pairs]
+        result_buckets.append(BenchmarkBucket(
+            score_range=score_range,
+            median_min=_median(mins),
+            median_max=_median(maxs),
+            count=len(pairs),
+        ))
+
+    return SalaryBenchmarkResponse(role=role, buckets=result_buckets)
 
 
 @router.post(

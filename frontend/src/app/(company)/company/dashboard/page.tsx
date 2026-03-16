@@ -7,6 +7,13 @@ import { companyApi } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import type { CandidateListItem, HiringRecommendation } from "@/lib/types";
 
+const OUTCOME_LABELS: Record<string, { label: string; cls: string }> = {
+  hired:       { label: "Hired",       cls: "bg-green-500/20 text-green-400" },
+  rejected:    { label: "Rejected",    cls: "bg-red-500/20 text-red-400" },
+  interviewing:{ label: "Interviewing",cls: "bg-blue-500/20 text-blue-400" },
+  no_show:     { label: "No Show",     cls: "bg-slate-500/20 text-slate-400" },
+};
+
 const ROLE_LABELS: Record<string, string> = {
   backend_engineer: "Backend Engineer",
   frontend_engineer: "Frontend Engineer",
@@ -185,15 +192,25 @@ export default function CompanyDashboardPage() {
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-3 mb-1">
+                      <div className="flex items-center gap-3 mb-1 flex-wrap">
                         <span className="text-white font-semibold truncate">{c.full_name}</span>
                         <span className={`text-xs px-2 py-0.5 rounded-full border ${rec.className}`}>
                           {rec.label}
                         </span>
+                        {c.hire_outcome && OUTCOME_LABELS[c.hire_outcome] && (
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${OUTCOME_LABELS[c.hire_outcome].cls}`}>
+                            {OUTCOME_LABELS[c.hire_outcome].label}
+                          </span>
+                        )}
                       </div>
                       <p className="text-slate-400 text-sm truncate">{c.email}</p>
                       <p className="text-slate-500 text-xs mt-1">
                         {ROLE_LABELS[c.target_role] ?? c.target_role}
+                        {c.salary_min && (
+                          <span className="ml-2 text-slate-600">
+                            💰 {c.salary_min.toLocaleString()}{c.salary_max ? `–${c.salary_max.toLocaleString()}` : "+"} {c.salary_currency}
+                          </span>
+                        )}
                       </p>
                       {c.interview_summary && (
                         <p className="text-slate-400 text-sm mt-2 line-clamp-2">{c.interview_summary}</p>

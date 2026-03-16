@@ -45,12 +45,17 @@ class CandidateListItemResponse(BaseModel):
     interview_summary: str | None
     report_id: uuid.UUID
     completed_at: datetime | None
+    salary_min: int | None = None
+    salary_max: int | None = None
+    salary_currency: str = "USD"
+    hire_outcome: str | None = None
 
 
 # ── Candidate detail (company view) ───────────────────────────────────────────
 
 class ReportWithRoleResponse(BaseModel):
     report_id: uuid.UUID
+    interview_id: uuid.UUID | None = None
     target_role: str
     overall_score: float | None
     hard_skills_score: float | None
@@ -69,8 +74,24 @@ class ReportWithRoleResponse(BaseModel):
     response_consistency: float | None = None
 
 
+class HireOutcomeRequest(BaseModel):
+    outcome: str  # hired | rejected | interviewing | no_show
+    notes: str | None = None
+
+
+class HireOutcomeResponse(BaseModel):
+    outcome: str
+    notes: str | None
+    updated_at: datetime
+
+
 class CandidateDetailResponse(BaseModel):
     candidate_id: uuid.UUID
     full_name: str
     email: str
+    salary_min: int | None = None
+    salary_max: int | None = None
+    salary_currency: str = "USD"
+    hire_outcome: str | None = None
+    hire_notes: str | None = None
     reports: list[ReportWithRoleResponse]

@@ -12,14 +12,50 @@ interface Stats {
   latest_report_id: string | null;
 }
 
+interface Salary {
+  salary_min: number | null;
+  salary_max: number | null;
+  salary_currency: string;
+}
+
 export default function DashboardPage() {
   const { user, loading, logout } = useAuth();
   const [stats, setStats] = useState<Stats | null>(null);
+  const [salary, setSalary] = useState<Salary>({ salary_min: null, salary_max: null, salary_currency: "USD" });
+  const [salaryMin, setSalaryMin] = useState("");
+  const [salaryMax, setSalaryMax] = useState("");
+  const [salaryCurrency, setSalaryCurrency] = useState("USD");
+  const [savingSalary, setSavingSalary] = useState(false);
+  const [salarySaved, setSalarySaved] = useState(false);
 
   useEffect(() => {
     if (loading) return;
     candidateApi.stats().then(setStats).catch(() => null);
+    candidateApi.getSalary().then((s) => {
+      setSalary(s);
+      setSalaryMin(s.salary_min?.toString() ?? "");
+      setSalaryMax(s.salary_max?.toString() ?? "");
+      setSalaryCurrency(s.salary_currency ?? "USD");
+    }).catch(() => null);
   }, [loading]);
+
+  async function handleSaveSalary() {
+    setSavingSalary(true);
+    try {
+      const updated = await candidateApi.updateSalary({
+        salary_min: salaryMin ? parseInt(salaryMin) : null,
+        salary_max: salaryMax ? parseInt(salaryMax) : null,
+        currency: salaryCurrency,
+      });
+      setSalary(updated);
+      setSalarySaved(true);
+      setTimeout(() => setSalarySaved(false), 2000);
+    } catch {
+      // ignore
+    } finally {
+      setSavingSalary(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -61,6 +97,52 @@ export default function DashboardPage() {
             <StatBadge label="Reports" done={step3Done} value={`${stats.completed_count} completed`} />
           </div>
         )}
+
+        {/* Salary Expectations */}
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 mb-6">
+          <h2 className="text-white font-semibold mb-3 text-sm">💰 Salary Expectations</h2>
+          <div className="flex flex-wrap gap-3 items-end">
+            <div>
+              <label className="text-slate-400 text-xs mb-1 block">Min</label>
+              <input
+                type="number"
+                placeholder="e.g. 80000"
+                value={salaryMin}
+                onChange={(e) => setSalaryMin(e.target.value)}
+                className="w-32 bg-slate-700 border border-slate-600 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500"
+              />
+            </div>
+            <div>
+              <label className="text-slate-400 text-xs mb-1 block">Max</label>
+              <input
+                type="number"
+                placeholder="e.g. 120000"
+                value={salaryMax}
+                onChange={(e) => setSalaryMax(e.target.value)}
+                className="w-32 bg-slate-700 border border-slate-600 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500"
+              />
+            </div>
+            <div>
+              <label className="text-slate-400 text-xs mb-1 block">Currency</label>
+              <select
+                value={salaryCurrency}
+                onChange={(e) => setSalaryCurrency(e.target.value)}
+                className="bg-slate-700 border border-slate-600 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500"
+              >
+                {["USD", "EUR", "GBP", "RUB", "KZT"].map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              onClick={handleSaveSalary}
+              disabled={savingSalary}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+            >
+              {salarySaved ? "Saved ✓" : savingSalary ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
 
         <div className="grid gap-4">
           <StepCard

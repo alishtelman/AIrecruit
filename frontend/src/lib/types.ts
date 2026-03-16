@@ -205,10 +205,40 @@ export interface CandidateListItem {
   interview_summary: string | null;
   report_id: string;
   completed_at: string | null;
+  salary_min: number | null;
+  salary_max: number | null;
+  salary_currency: string;
+  hire_outcome: string | null;
+}
+
+export type HireOutcome = "hired" | "rejected" | "interviewing" | "no_show";
+
+export interface HireOutcomeResponse {
+  outcome: HireOutcome;
+  notes: string | null;
+  updated_at: string;
+}
+
+export interface ReplayTurn {
+  question_number: number;
+  question: string;
+  answer: string;
+  question_time: string | null;
+  answer_time: string | null;
+  analysis: QuestionAnalysis | null;
+}
+
+export interface InterviewReplay {
+  interview_id: string;
+  candidate_name: string;
+  target_role: string;
+  completed_at: string | null;
+  turns: ReplayTurn[];
 }
 
 export interface ReportWithRole {
   report_id: string;
+  interview_id: string | null;
   target_role: string;
   overall_score: number | null;
   hard_skills_score: number | null;
@@ -231,6 +261,11 @@ export interface CandidateDetail {
   candidate_id: string;
   full_name: string;
   email: string;
+  salary_min: number | null;
+  salary_max: number | null;
+  salary_currency: string;
+  hire_outcome: string | null;
+  hire_notes: string | null;
   reports: ReportWithRole[];
 }
 
@@ -291,4 +326,6 @@ export interface AssessmentReport {
   skill_tags: SkillTag[] | null;
   red_flags: RedFlag[] | null;
   response_consistency: number | null;
+  cheat_risk_score: number | null;
+  cheat_flags: string[] | null;
 }

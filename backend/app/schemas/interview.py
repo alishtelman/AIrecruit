@@ -86,6 +86,30 @@ class InterviewDetailResponse(BaseModel):
     report_id: uuid.UUID | None
 
 
+class BehavioralSignalsRequest(BaseModel):
+    response_times: list[dict] = []  # [{q: int, seconds: float}]
+    paste_count: int = 0
+    tab_switches: int = 0
+    face_away_pct: float | None = None
+
+
+class ReplayTurn(BaseModel):
+    question_number: int
+    question: str
+    answer: str
+    question_time: datetime | None
+    answer_time: datetime | None
+    analysis: dict | None  # QuestionAnalysis dict from per_question_analysis
+
+
+class InterviewReplayResponse(BaseModel):
+    interview_id: uuid.UUID
+    candidate_name: str
+    target_role: str
+    completed_at: datetime | None
+    turns: list[ReplayTurn]
+
+
 class InterviewListItemResponse(BaseModel):
     interview_id: uuid.UUID
     status: str

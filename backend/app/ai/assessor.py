@@ -225,6 +225,8 @@ class AssessmentResult:
     red_flags: list[dict] = field(default_factory=list)
     response_consistency: float | None = None
     problem_solving_score: float | None = None
+    cheat_risk_score: float | None = None
+    cheat_flags: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +296,50 @@ def _aggregate_skills(per_question: list[dict]) -> list[dict]:
     return sorted(skill_map.values(), key=lambda x: x["mentions_count"], reverse=True)
 
 
+def _compute_cheat_risk(signals: dict | None) -> tuple[float, list[str]]:
+    """Compute cheat_risk_score (0.0–1.0) and list of flags from behavioral signals."""
+    if not signals:
+        return 0.0, []
+
+    flags: list[str] = []
+    score = 0.0
+
+    paste_count: int = signals.get("paste_count", 0)
+    tab_switches: int = signals.get("tab_switches", 0)
+    face_away_pct: float | None = signals.get("face_away_pct")
+    response_times: list[dict] = signals.get("response_times", [])
+
+    if paste_count >= 3:
+        flags.append(f"High paste activity ({paste_count} pastes)")
+        score += 0.3
+    elif paste_count >= 1:
+        flags.append(f"Paste activity detected ({paste_count} pastes)")
+        score += 0.15
+
+    if tab_switches >= 5:
+        flags.append(f"Frequent tab/window switching ({tab_switches} switches)")
+        score += 0.3
+    elif tab_switches >= 2:
+        flags.append(f"Tab/window switching ({tab_switches} switches)")
+        score += 0.15
+
+    if face_away_pct is not None and face_away_pct >= 0.4:
+        flags.append(f"Face not visible {int(face_away_pct * 100)}% of the time")
+        score += 0.3
+    elif face_away_pct is not None and face_away_pct >= 0.2:
+        flags.append(f"Face away {int(face_away_pct * 100)}% of the time")
+        score += 0.1
+
+    # Very fast answers (<10s) combined with paste events → suspicious
+    if response_times and paste_count >= 1:
+        fast = [rt for rt in response_times if rt.get("seconds", 999) < 10]
+        if len(fast) >= 2:
+            flags.append(f"{len(fast)} answers submitted under 10 seconds with paste activity")
+            score += 0.2
+
+    return round(min(score, 1.0), 2), flags
+
+
 def _compute_response_times(message_timestamps: list[dict] | None) -> dict:
     """Compute response time analytics from message timestamps."""
     if not message_timestamps:
@@ -334,6 +380,7 @@ class LLMAssessor:
         target_role: str,
         message_history: list[dict],
         message_timestamps: list[dict] | None = None,
+        behavioral_signals: dict | None = None,
     ) -> AssessmentResult:
         role_label = _ROLE_LABELS.get(target_role, target_role.replace("_", " "))
         competencies = get_competencies(target_role)
@@ -369,6 +416,13 @@ class LLMAssessor:
         response_times = _compute_response_times(message_timestamps)
         if response_times:
             result.full_report_json["response_times"] = response_times
+
+        # Cheat risk from behavioral signals
+        cheat_risk, cheat_flags = _compute_cheat_risk(behavioral_signals)
+        result.cheat_risk_score = cheat_risk
+        result.cheat_flags = cheat_flags
+        if cheat_flags:
+            result.full_report_json["cheat_risk"] = {"score": cheat_risk, "flags": cheat_flags}
 
         return result
 
@@ -553,6 +607,7 @@ class MockAssessor:
         target_role: str,
         message_history: list[dict],
         message_timestamps: list[dict] | None = None,
+        behavioral_signals: dict | None = None,
     ) -> AssessmentResult:
         candidate_msgs = [m for m in message_history if m["role"] == "candidate"]
         response_count = len(candidate_msgs)
@@ -613,6 +668,8 @@ class MockAssessor:
             "mock": True,
         }
 
+        cheat_risk, cheat_flags = _compute_cheat_risk(behavioral_signals)
+
         return AssessmentResult(
             overall_score=overall,
             hard_skills_score=aggregates["hard_skills_score"],
@@ -634,6 +691,8 @@ class MockAssessor:
             skill_tags=[],
             red_flags=[],
             response_consistency=round(base, 1),
+            cheat_risk_score=cheat_risk,
+            cheat_flags=cheat_flags,
         )
 
 
