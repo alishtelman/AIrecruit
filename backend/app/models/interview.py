@@ -23,8 +23,13 @@ class Interview(Base):
     max_questions: Mapped[int] = mapped_column(Integer, default=8, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    language: Mapped[str] = mapped_column(String(10), server_default="ru", nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    recording_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    company_assessment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("company_assessments.id", ondelete="SET NULL"), nullable=True
+    )
 
     messages: Mapped[list["InterviewMessage"]] = relationship(
         "InterviewMessage", back_populates="interview", order_by="InterviewMessage.created_at"

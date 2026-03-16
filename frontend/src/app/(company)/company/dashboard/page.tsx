@@ -35,6 +35,8 @@ export default function CompanyDashboardPage() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
+  const [recFilter, setRecFilter] = useState("");
+  const [sortBy, setSortBy] = useState<"score" | "date">("score");
   const [page, setPage] = useState(0);
 
   useEffect(() => {
@@ -45,22 +47,26 @@ export default function CompanyDashboardPage() {
       .finally(() => setLoading(false));
   }, [authLoading, router]);
 
-  const filtered = candidates.filter((c) => {
-    const matchSearch =
-      !search ||
-      c.full_name.toLowerCase().includes(search.toLowerCase()) ||
-      c.email.toLowerCase().includes(search.toLowerCase());
-    const matchRole = !roleFilter || c.target_role === roleFilter;
-    return matchSearch && matchRole;
-  });
+  const filtered = candidates
+    .filter((c) => {
+      const matchSearch =
+        !search ||
+        c.full_name.toLowerCase().includes(search.toLowerCase()) ||
+        c.email.toLowerCase().includes(search.toLowerCase());
+      const matchRole = !roleFilter || c.target_role === roleFilter;
+      const matchRec = !recFilter || c.hiring_recommendation === recFilter;
+      return matchSearch && matchRole && matchRec;
+    })
+    .sort((a, b) =>
+      sortBy === "score"
+        ? (b.overall_score ?? 0) - (a.overall_score ?? 0)
+        : 0
+    );
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
-  function handleFilterChange(fn: () => void) {
-    fn();
-    setPage(0);
-  }
+  function handleFilterChange(fn: () => void) { fn(); setPage(0); }
 
   return (
     <div className="min-h-screen bg-slate-900 px-4 py-8">
@@ -81,23 +87,35 @@ export default function CompanyDashboardPage() {
             >
               Templates
             </Link>
-            <button
-              onClick={logout}
+            <Link
+              href="/company/employees"
               className="text-slate-400 hover:text-white text-sm transition-colors"
             >
+              Employees
+            </Link>
+            <Link
+              href="/company/team"
+              className="text-slate-400 hover:text-white text-sm transition-colors"
+            >
+              Team
+            </Link>
+            <Link href="/company/settings" className="text-slate-400 hover:text-white text-sm transition-colors">
+              Settings
+            </Link>
+            <button onClick={logout} className="text-slate-400 hover:text-white text-sm transition-colors">
               Sign out
             </button>
           </div>
         </div>
 
         {/* Filters */}
-        <div className="flex gap-3 mb-6">
+        <div className="flex flex-wrap gap-3 mb-6">
           <input
             type="text"
             placeholder="Search by name or email…"
             value={search}
             onChange={(e) => handleFilterChange(() => setSearch(e.target.value))}
-            className="flex-1 bg-slate-800 border border-slate-700 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500"
+            className="flex-1 min-w-[200px] bg-slate-800 border border-slate-700 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500"
           />
           <select
             value={roleFilter}
@@ -108,6 +126,25 @@ export default function CompanyDashboardPage() {
             {Object.entries(ROLE_LABELS).map(([value, label]) => (
               <option key={value} value={value}>{label}</option>
             ))}
+          </select>
+          <select
+            value={recFilter}
+            onChange={(e) => handleFilterChange(() => setRecFilter(e.target.value))}
+            className="bg-slate-800 border border-slate-700 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">All recommendations</option>
+            <option value="strong_yes">Strong Yes</option>
+            <option value="yes">Yes</option>
+            <option value="maybe">Maybe</option>
+            <option value="no">No</option>
+          </select>
+          <select
+            value={sortBy}
+            onChange={(e) => handleFilterChange(() => setSortBy(e.target.value as "score" | "date"))}
+            className="bg-slate-800 border border-slate-700 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="score">Sort: Score ↓</option>
+            <option value="date">Sort: Latest</option>
           </select>
         </div>
 

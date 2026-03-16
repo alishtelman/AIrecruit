@@ -16,6 +16,17 @@ async def create_template(
     description: str | None,
     is_public: bool,
 ) -> InterviewTemplate:
+    existing = await db.scalar(
+        select(InterviewTemplate).where(
+            InterviewTemplate.company_id == company_id,
+            InterviewTemplate.name == name,
+        )
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Template with this name already exists",
+        )
     template = InterviewTemplate(
         company_id=company_id,
         name=name,

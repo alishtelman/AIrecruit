@@ -14,6 +14,7 @@ from datetime import datetime
 
 from groq import AsyncGroq
 
+from app.ai.calibration import build_calibration_prompt
 from app.ai.competencies import get_competencies, get_category_weights
 from app.core.config import settings
 
@@ -391,7 +392,10 @@ class LLMAssessor:
             "4. Упомянутые технологии/навыки с уровнем владения\n"
             "5. Красные флаги (противоречия, фабрикации, уход от вопроса)\n"
             "6. Конкретность (high/medium/low) и глубина (expert/strong/adequate/surface/none)\n\n"
-            "Будь объективным. Оценивай только по фактическому содержанию ответов."
+            "Будь объективным. Оценивай только по фактическому содержанию ответов.\n"
+            "Шкала answer_quality (1-10): 1-4 = нет/поверхностный ответ, 5-6 = рабочие знания без глубины, "
+            "7-8 = конкретные примеры + trade-offs, 9-10 = экспертное мышление. "
+            "Большинство ответов попадают в диапазон 4-7. Не завышай оценки без цитат."
         )
 
         try:
@@ -420,29 +424,31 @@ class LLMAssessor:
         pass1_data: list[dict],
         target_role: str,
     ) -> AssessmentResult:
-        """Pass 2: Score each competency using Pass 1 evidence."""
+        """Pass 2: Score each competency using Pass 1 evidence + BARS calibration."""
         pass1_summary = json.dumps(pass1_data, ensure_ascii=False, indent=2) if pass1_data else "Анализ вопросов недоступен."
+
+        # Determine which categories are present for targeted BARS anchors
+        from app.ai.competencies import get_competencies as _get_comps
+        categories_present = list({c.category for c in _get_comps(target_role)})
+        calibration_block = build_calibration_prompt(categories_present)
 
         system = (
             f"Ты — эксперт по оценке кандидатов на позицию «{role_label}».\n\n"
             "## Матрица компетенций\n"
             f"{comp_ref}\n\n"
-            "## Шкала оценки\n"
-            "1-2: Нет знаний или полностью неправильное понимание\n"
-            "3-4: Поверхностные, учебниковые ответы без практического опыта\n"
-            "5-6: Рабочие знания, может описать базовое использование, но без глубины\n"
-            "7-8: Сильный практический опыт, обсуждает trade-offs и edge cases\n"
-            "9-10: Экспертный уровень, демонстрирует глубокое понимание и оригинальное мышление\n\n"
+            f"{calibration_block}\n\n"
             "## Задача\n"
-            "На основе транскрипта и анализа вопросов:\n"
-            "1. Выставь балл (1-10) для КАЖДОЙ компетенции из матрицы\n"
-            "2. Укажи evidence и reasoning для каждой оценки\n"
-            "3. Определи strengths, weaknesses, recommendations\n"
-            "4. Оцени response_consistency (0-10): насколько ответы согласованы друг с другом\n"
-            "5. Выпиши red_flags с severity\n"
-            "6. Дай hiring_recommendation: strong_yes (8.5+), yes (7.0-8.4), maybe (5.5-6.9), no (<5.5)\n\n"
-            "Критерии рекомендации основаны на взвешенном среднем по компетенциям.\n"
-            "Будь объективным и конкретным. Каждая оценка должна быть подкреплена evidence."
+            "На основе транскрипта и анализа вопросов (Pass 1):\n"
+            "1. Выставь балл (1-10) для КАЖДОЙ компетенции из матрицы, строго следуя BARS выше\n"
+            "2. Для каждой оценки: укажи конкретные цитаты из транскрипта как evidence\n"
+            "3. reasoning должен объяснять ПОЧЕМУ это именно такой балл по шкале BARS\n"
+            "4. Определи 3-5 strengths и 2-4 weaknesses с конкретными примерами из ответов\n"
+            "5. Оцени response_consistency (0-10): противоречат ли ответы друг другу\n"
+            "6. Выпиши red_flags с severity если есть\n"
+            "7. hiring_recommendation: strong_yes (≥8.5), yes (7.0–8.4), maybe (5.5–6.9), no (<5.5)\n\n"
+            "ВАЖНО: hiring_recommendation должна соответствовать взвешенному среднему по компетенциям.\n"
+            "ВАЖНО: Не давай оценку выше 7 без конкретных цитат с trade-off рассуждением.\n"
+            "ВАЖНО: Не давай оценку ниже 5 без конкретного примера неправильного понимания."
         )
 
         user_content = (

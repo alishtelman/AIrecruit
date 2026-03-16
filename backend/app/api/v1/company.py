@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_company, get_current_company_admin, get_db
@@ -9,6 +10,18 @@ from app.models.user import User
 from app.schemas.company import CandidateDetailResponse, CandidateListItemResponse
 from app.schemas.template import TemplateCreateRequest, TemplateResponse
 from app.services.company_service import get_candidate_detail, list_verified_candidates
+from app.services.member_service import (
+    MemberAlreadyExistsError,
+    RoleConflictError,
+    invite_member,
+    list_members,
+    remove_member,
+)
+from app.services.assessment_invite_service import (
+    create_assessment,
+    delete_assessment,
+    list_company_assessments,
+)
 from app.services.template_service import (
     create_template,
     delete_template,
@@ -21,7 +34,7 @@ router = APIRouter(prefix="/company", tags=["company"])
 @router.get("/candidates", response_model=list[CandidateListItemResponse])
 async def get_candidates(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_company_admin),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
 ):
     return await list_verified_candidates(db)
 
@@ -30,12 +43,80 @@ async def get_candidates(
 async def get_candidate(
     candidate_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_company_admin),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
 ):
     result = await get_candidate_detail(db, candidate_id)
     if not result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
     return result
+
+
+# ── Team Members ───────────────────────────────────────────────────────────────
+
+class InviteMemberRequest(BaseModel):
+    email: EmailStr
+
+
+class MemberResponse(BaseModel):
+    member_id: str | None
+    user_id: str
+    email: str
+    role: str
+    created_at: str
+
+
+class InviteMemberResponse(BaseModel):
+    member: MemberResponse
+    temp_password: str | None
+
+
+@router.get("/members", response_model=list[MemberResponse])
+async def get_members(
+    db: AsyncSession = Depends(get_db),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    _, company = user_and_company
+    return await list_members(db, company.id)
+
+
+@router.post("/members/invite", response_model=InviteMemberResponse, status_code=status.HTTP_201_CREATED)
+async def invite_company_member(
+    body: InviteMemberRequest,
+    db: AsyncSession = Depends(get_db),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    user, company = user_and_company
+    # Only admin (owner) can invite
+    if user.role != "company_admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the company admin can invite members")
+    try:
+        member, temp_password = await invite_member(db, company.id, body.email, user.id)
+    except MemberAlreadyExistsError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except RoleConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    return InviteMemberResponse(
+        member=MemberResponse(
+            member_id=str(member.id),
+            user_id=str(member.user_id),
+            email=body.email,
+            role=member.role,
+            created_at=member.created_at.isoformat(),
+        ),
+        temp_password=temp_password,
+    )
+
+
+@router.delete("/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_company_member(
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    current_user, company = user_and_company
+    if current_user.role != "company_admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the company admin can remove members")
+    await remove_member(db, company.id, user_id, current_user.id)
 
 
 # ── Templates ─────────────────────────────────────────────────────────────────
@@ -67,6 +148,7 @@ async def create_new_template(
     body: TemplateCreateRequest,
     db: AsyncSession = Depends(get_db),
     user_and_company: tuple[User, Company] = Depends(get_current_company),
+    _admin: User = Depends(get_current_company_admin),
 ):
     _, company = user_and_company
     t = await create_template(
@@ -95,6 +177,74 @@ async def remove_template(
     template_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user_and_company: tuple[User, Company] = Depends(get_current_company),
+    _admin: User = Depends(get_current_company_admin),
 ):
     _, company = user_and_company
     await delete_template(db, template_id, company.id)
+
+
+# ── Employee Assessments ───────────────────────────────────────────────────────
+
+class CreateAssessmentRequest(BaseModel):
+    employee_email: EmailStr
+    employee_name: str
+    target_role: str
+
+
+class AssessmentResponse(BaseModel):
+    id: str
+    employee_email: str
+    employee_name: str
+    target_role: str
+    status: str
+    invite_token: str
+    interview_id: str | None
+    report_id: str | None
+    created_at: str
+
+
+@router.get("/assessments", response_model=list[AssessmentResponse])
+async def get_assessments(
+    db: AsyncSession = Depends(get_db),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    _, company = user_and_company
+    return await list_company_assessments(db, company.id)
+
+
+@router.post("/assessments", response_model=AssessmentResponse, status_code=status.HTTP_201_CREATED)
+async def create_employee_assessment(
+    body: CreateAssessmentRequest,
+    db: AsyncSession = Depends(get_db),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    user, company = user_and_company
+    a = await create_assessment(
+        db,
+        company_id=company.id,
+        created_by_user_id=user.id,
+        employee_email=body.employee_email,
+        employee_name=body.employee_name,
+        target_role=body.target_role,
+    )
+    return AssessmentResponse(
+        id=str(a.id),
+        employee_email=a.employee_email,
+        employee_name=a.employee_name,
+        target_role=a.target_role,
+        status=a.status,
+        invite_token=a.invite_token,
+        interview_id=None,
+        report_id=None,
+        created_at=a.created_at.isoformat(),
+    )
+
+
+@router.delete("/assessments/{assessment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_assessment(
+    assessment_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    _, company = user_and_company
+    await delete_assessment(db, assessment_id, company.id)

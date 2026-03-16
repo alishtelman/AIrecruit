@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.core.security import decode_access_token
 from app.models.candidate import Candidate
 from app.models.company import Company
+from app.models.company_member import CompanyMember
 from app.models.user import User
 
 bearer_scheme = HTTPBearer()
@@ -53,16 +54,31 @@ async def get_current_candidate(
 async def get_current_company_admin(
     current_user: User = Depends(get_current_user),
 ) -> User:
+    """Only the company owner (company_admin role) can access."""
     if current_user.role != "company_admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Company admin access required")
     return current_user
 
 
 async def get_current_company(
-    current_user: User = Depends(get_current_company_admin),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> tuple[User, Company]:
-    company = await db.scalar(select(Company).where(Company.owner_user_id == current_user.id))
+    """Any company user (admin or invited member) can access."""
+    if current_user.role not in ("company_admin", "company_member"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Company access required")
+
+    if current_user.role == "company_admin":
+        company = await db.scalar(select(Company).where(Company.owner_user_id == current_user.id))
+    else:
+        # company_member — find their company via CompanyMember table
+        membership = await db.scalar(
+            select(CompanyMember).where(CompanyMember.user_id == current_user.id)
+        )
+        if membership is None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of any company")
+        company = await db.scalar(select(Company).where(Company.id == membership.company_id))
+
     if company is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company profile not found")
     return current_user, company

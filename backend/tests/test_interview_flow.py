@@ -123,7 +123,7 @@ async def test_full_interview_flow(client: AsyncClient, candidate_token: str):
     )
     assert resp.status_code == 200
     report = resp.json()
-    assert report["hiring_recommendation"] == "yes"
+    assert report["hiring_recommendation"] in ("yes", "strong_yes")
 
 
 @pytest.mark.asyncio

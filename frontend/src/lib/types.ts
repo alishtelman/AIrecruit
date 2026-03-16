@@ -3,8 +3,28 @@
 export interface User {
   id: string;
   email: string;
-  role: "candidate" | "company_admin";
+  role: "candidate" | "company_admin" | "company_member";
   is_active: boolean;
+  created_at: string;
+}
+
+export interface CompanyAssessment {
+  id: string;
+  employee_email: string;
+  employee_name: string;
+  target_role: string;
+  status: "pending" | "in_progress" | "completed";
+  invite_token: string;
+  interview_id: string | null;
+  report_id: string | null;
+  created_at: string;
+}
+
+export interface CompanyMember {
+  member_id: string | null;
+  user_id: string;
+  email: string;
+  role: "admin" | "member";
   created_at: string;
 }
 
@@ -86,6 +106,7 @@ export interface InterviewTemplate {
 export interface StartInterviewRequest {
   target_role: TargetRole;
   template_id?: string | null;
+  language?: "ru" | "en";
 }
 
 export interface StartInterviewResponse {
@@ -132,11 +153,18 @@ export interface InterviewDetail {
   target_role: TargetRole;
   question_count: number;
   max_questions: number;
+  language?: string;
   started_at: string | null;
   completed_at: string | null;
   messages: InterviewMessage[];
   has_report: boolean;
   report_id: string | null;
+}
+
+export interface ResumeTextResponse {
+  resume_id: number;
+  file_name: string;
+  raw_text: string;
 }
 
 export interface ReportSummary {

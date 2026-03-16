@@ -139,6 +139,7 @@ async def start_interview(
     candidate: Candidate,
     target_role: str,
     template_id: uuid.UUID | None = None,
+    language: str = "ru",
 ) -> StartInterviewResponse:
     # Guard: active resume required
     active_resume = await db.scalar(
@@ -172,6 +173,7 @@ async def start_interview(
         target_role=target_role,
         question_count=0,
         max_questions=max_q,
+        language=language,
         started_at=datetime.utcnow(),
     )
     db.add(interview)
@@ -196,6 +198,7 @@ async def start_interview(
         resume_text=active_resume.raw_text,
         template_questions=template.questions if template else None,
         competency_targets=question_plan[0] if question_plan else None,
+        language=language,
     )
     first_question = await interviewer.get_next_question(ctx)
 
@@ -218,6 +221,7 @@ async def start_interview(
         question_count=interview.question_count,
         max_questions=interview.max_questions,
         current_question=first_question,
+        language=interview.language,
     )
 
 
@@ -289,6 +293,7 @@ async def add_candidate_message(
             resume_text=resume.raw_text if resume else None,
             template_questions=template_questions,
             competency_targets=competency_targets,
+            language=interview.language,
         )
         next_q = await interviewer.get_next_question(ctx)
 
@@ -378,6 +383,11 @@ async def finish_interview(
         await db.commit()
         await db.refresh(report)
 
+        # Sync company assessment status if this was an employee assessment
+        if interview.company_assessment_id:
+            from app.services.assessment_invite_service import sync_assessment_status
+            await sync_assessment_status(db, interview.id)
+
     except Exception:
         interview.status = "failed"
         await db.commit()
@@ -420,12 +430,38 @@ async def get_interview_detail(
         target_role=interview.target_role,
         question_count=interview.question_count,
         max_questions=interview.max_questions,
+        language=interview.language,
         started_at=interview.started_at,
         completed_at=interview.completed_at,
         messages=visible,
         has_report=report is not None,
         report_id=report.id if report else None,
     )
+
+
+async def save_interview_recording(
+    db: AsyncSession,
+    candidate_id: uuid.UUID,
+    interview_id: uuid.UUID,
+    file,  # UploadFile
+) -> None:
+    import os
+    from app.core.config import settings
+
+    interview = await _get_interview(db, interview_id, candidate_id)
+
+    os.makedirs(settings.RECORDING_STORAGE_DIR, exist_ok=True)
+    dest = os.path.join(settings.RECORDING_STORAGE_DIR, f"{interview_id}.webm")
+
+    with open(dest, "wb") as out:
+        while True:
+            chunk = await file.read(1024 * 64)
+            if not chunk:
+                break
+            out.write(chunk)
+
+    interview.recording_path = dest
+    await db.commit()
 
 
 async def list_interviews(

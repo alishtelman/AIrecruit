@@ -13,6 +13,7 @@ import type {
   InterviewListItem,
   InterviewTemplate,
   LoginRequest,
+  ResumeTextResponse,
   ResumeUploadResponse,
   SendMessageRequest,
   SendMessageResponse,
@@ -20,6 +21,8 @@ import type {
   StartInterviewResponse,
   TokenResponse,
   User,
+  CompanyAssessment,
+  CompanyMember,
 } from "./types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -98,6 +101,30 @@ export const companyApi = {
 
   deleteTemplate: (templateId: string) =>
     request<void>(`/api/v1/company/templates/${templateId}`, { method: "DELETE" }),
+
+  listMembers: () =>
+    request<CompanyMember[]>("/api/v1/company/members"),
+
+  inviteMember: (email: string) =>
+    request<{ member: CompanyMember; temp_password: string | null }>("/api/v1/company/members/invite", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+
+  removeMember: (userId: string) =>
+    request<void>(`/api/v1/company/members/${userId}`, { method: "DELETE" }),
+
+  listAssessments: () =>
+    request<CompanyAssessment[]>("/api/v1/company/assessments"),
+
+  createAssessment: (data: { employee_email: string; employee_name: string; target_role: string }) =>
+    request<CompanyAssessment>("/api/v1/company/assessments", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  deleteAssessment: (id: string) =>
+    request<void>(`/api/v1/company/assessments/${id}`, { method: "DELETE" }),
 };
 
 // ── Public Templates ──────────────────────────────────────────────────────────
@@ -117,6 +144,9 @@ export const candidateApi = {
 
   getResume: () =>
     request<ActiveResume | null>("/api/v1/candidate/resume"),
+
+  getResumeText: () =>
+    request<ResumeTextResponse>("/api/v1/candidate/resume/text"),
 };
 
 // ── Resume ────────────────────────────────────────────────────────────────────
@@ -157,6 +187,25 @@ export const interviewApi = {
 
   getDetail: (id: string) =>
     request<InterviewDetail>(`/api/v1/interviews/${id}`),
+
+  uploadRecording: (id: string, blob: Blob) => {
+    const form = new FormData();
+    form.append("file", blob, "recording.webm");
+    return request<void>(`/api/v1/interviews/${id}/recording`, {
+      method: "POST",
+      body: form,
+    });
+  },
+};
+
+// ── STT ───────────────────────────────────────────────────────────────────────
+
+export const sttApi = {
+  transcribe: (blob: Blob): Promise<{ text: string }> => {
+    const form = new FormData();
+    form.append("file", blob, "audio.webm");
+    return request<{ text: string }>("/api/v1/stt", { method: "POST", body: form });
+  },
 };
 
 // ── Report ────────────────────────────────────────────────────────────────────

@@ -5,14 +5,15 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { useTTS } from "@/hooks/useTTS";
-import { interviewApi } from "@/lib/api";
+import { useMediaRecorder } from "@/hooks/useMediaRecorder";
+import { useVoiceInput } from "@/hooks/useVoiceInput";
+import { candidateApi, interviewApi } from "@/lib/api";
 import type { InterviewDetail, InterviewMessage } from "@/lib/types";
 
 export default function InterviewPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { loading: authLoading } = useAuth();
-  const { enabled: ttsEnabled, speaking, speak, stop, toggle: toggleTTS } = useTTS();
 
   const [interview, setInterview] = useState<InterviewDetail | null>(null);
   const [messages, setMessages] = useState<InterviewMessage[]>([]);
@@ -26,6 +27,21 @@ export default function InterviewPage() {
   const [error, setError] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Resume panel
+  const [resumeText, setResumeText] = useState<string | null>(null);
+  const [resumeOpen, setResumeOpen] = useState(false);
+
+  // Recording consent
+  const [recordingConsent, setRecordingConsent] = useState(false);
+
+  // Language is loaded from interview, default "ru" until loaded
+  const [interviewLanguage, setInterviewLanguage] = useState<string>("ru");
+  const { enabled: ttsEnabled, speaking, speak, stop, toggle: toggleTTS } = useTTS(interviewLanguage);
+  const { isRecording, previewRef, startRecording, stopRecording, getBlob } = useMediaRecorder();
+  const { state: voiceState, start: startVoice, stop: stopVoice } = useVoiceInput({
+    onTranscript: (text) => setInput((prev) => prev ? prev + " " + text : text),
+  });
+
   // Load interview on mount
   useEffect(() => {
     if (!id || authLoading) return;
@@ -36,6 +52,7 @@ export default function InterviewPage() {
         setMessages(data.messages.filter((m) => m.role !== "system"));
         setQuestionCount(data.question_count);
         setMaxQuestions(data.max_questions);
+        if (data.language) setInterviewLanguage(data.language);
 
         if (data.status === "report_generated" && data.report_id) {
           router.replace(`/candidate/reports/${data.report_id}`);
@@ -56,12 +73,17 @@ export default function InterviewPage() {
           setCurrentQuestion(null);
         } else if (waitingForAnswer && lastAssistant) {
           setCurrentQuestion(lastAssistant.content);
-          // Read the first question aloud on page load
           speak(lastAssistant.content);
         }
       })
       .catch(() => setError("Could not load interview"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, authLoading]);
+
+  // Load resume text
+  useEffect(() => {
+    if (!id || authLoading) return;
+    candidateApi.getResumeText().then((r) => setResumeText(r.raw_text)).catch(() => null);
   }, [id, authLoading]);
 
   useEffect(() => {
@@ -74,7 +96,7 @@ export default function InterviewPage() {
     setInput("");
     setSending(true);
     setError("");
-    stop(); // stop any ongoing speech when candidate sends
+    stop();
 
     const optimistic: InterviewMessage = {
       role: "candidate",
@@ -96,7 +118,6 @@ export default function InterviewPage() {
         };
         setMessages((prev) => [...prev, aiMsg]);
         setCanFinish(false);
-        // Read new question aloud
         speak(res.current_question);
       } else {
         setCanFinish(true);
@@ -116,12 +137,27 @@ export default function InterviewPage() {
     setFinishing(true);
     setError("");
     try {
+      // Stop recording and upload
+      if (isRecording) {
+        stopRecording();
+        // Small wait for ondataavailable to fire
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const blob = getBlob();
+        if (blob && blob.size > 0) {
+          await interviewApi.uploadRecording(id, blob).catch(() => null);
+        }
+      }
       const res = await interviewApi.finish(id);
       router.push(`/candidate/reports/${res.report_id}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to finish interview");
       setFinishing(false);
     }
+  }
+
+  function handleConsentAndRecord() {
+    setRecordingConsent(true);
+    startRecording();
   }
 
   if (authLoading || !interview) {
@@ -151,6 +187,47 @@ export default function InterviewPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {/* Webcam preview */}
+          {isRecording && (
+            <video
+              ref={previewRef}
+              muted
+              autoPlay
+              playsInline
+              className="w-[120px] h-[90px] rounded-lg object-cover border border-slate-700"
+            />
+          )}
+          {/* REC indicator */}
+          {isRecording && (
+            <span className="flex items-center gap-1 text-red-400 text-xs font-semibold">
+              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              REC
+            </span>
+          )}
+          {/* Consent button to start recording */}
+          {!recordingConsent && interview.status === "in_progress" && (
+            <button
+              onClick={handleConsentAndRecord}
+              title="Enable video recording"
+              className="text-xs px-3 py-1.5 rounded-lg border border-slate-600 bg-slate-700/50 text-slate-400 hover:text-slate-300 transition-colors"
+            >
+              📹 Record
+            </button>
+          )}
+          {/* Resume panel toggle */}
+          {resumeText && (
+            <button
+              onClick={() => setResumeOpen((v) => !v)}
+              title="Toggle resume panel"
+              className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+                resumeOpen
+                  ? "bg-purple-500/15 border-purple-500/30 text-purple-400"
+                  : "bg-slate-700/50 border-slate-600 text-slate-400 hover:text-slate-300"
+              }`}
+            >
+              Резюме
+            </button>
+          )}
           {/* TTS toggle */}
           <button
             onClick={toggleTTS}
@@ -182,17 +259,38 @@ export default function InterviewPage() {
         </div>
       </header>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4 max-w-2xl w-full mx-auto">
-        {messages.map((msg, i) => (
-          <MessageBubble
-            key={i}
-            msg={msg}
-            onReplay={msg.role === "assistant" ? () => speak(msg.content) : undefined}
-            speaking={speaking}
-          />
-        ))}
-        <div ref={bottomRef} />
+      {/* Body */}
+      <div className="flex flex-1 overflow-hidden relative">
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4 max-w-2xl w-full mx-auto">
+          {messages.map((msg, i) => (
+            <MessageBubble
+              key={i}
+              msg={msg}
+              onReplay={msg.role === "assistant" ? () => speak(msg.content) : undefined}
+              speaking={speaking}
+            />
+          ))}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Resume panel */}
+        {resumeOpen && resumeText && (
+          <aside className="fixed right-0 top-0 h-full w-80 bg-slate-800 border-l border-slate-700 overflow-y-auto p-4 z-10">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-white font-semibold text-sm">Резюме</h3>
+              <button
+                onClick={() => setResumeOpen(false)}
+                className="text-slate-400 hover:text-white text-lg leading-none"
+              >
+                ✕
+              </button>
+            </div>
+            <pre className="text-slate-300 text-xs whitespace-pre-wrap leading-relaxed font-sans">
+              {resumeText}
+            </pre>
+          </aside>
+        )}
       </div>
 
       {/* Error */}
@@ -236,10 +334,36 @@ export default function InterviewPage() {
                   handleSend();
                 }
               }}
-              placeholder="Type your answer… (Enter to send, Shift+Enter for new line)"
+              placeholder={
+                voiceState === "recording"
+                  ? "🎙 Listening…"
+                  : voiceState === "transcribing"
+                  ? "⏳ Transcribing…"
+                  : "Type your answer… (Enter to send, Shift+Enter for new line)"
+              }
               rows={2}
               className="flex-1 bg-slate-800 border border-slate-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500 resize-none"
             />
+            {/* Mic button */}
+            <button
+              onMouseDown={startVoice}
+              onMouseUp={stopVoice}
+              onTouchStart={startVoice}
+              onTouchEnd={stopVoice}
+              disabled={sending || voiceState === "transcribing"}
+              title="Hold to speak"
+              className={`px-4 rounded-xl transition-colors font-medium border select-none ${
+                voiceState === "recording"
+                  ? "bg-red-500/20 border-red-500/50 text-red-400 animate-pulse"
+                  : voiceState === "transcribing"
+                  ? "bg-slate-700 border-slate-600 text-slate-400 opacity-60"
+                  : voiceState === "error"
+                  ? "bg-red-500/10 border-red-500/30 text-red-400"
+                  : "bg-slate-700 border-slate-600 text-slate-300 hover:border-slate-500"
+              }`}
+            >
+              {voiceState === "recording" ? "🔴" : voiceState === "transcribing" ? "⏳" : "🎙"}
+            </button>
             <button
               onClick={handleSend}
               disabled={!input.trim() || sending}

@@ -15,6 +15,8 @@ from app.models.resume import Resume  # noqa: F401
 from app.models.interview import Interview, InterviewMessage  # noqa: F401
 from app.models.report import AssessmentReport  # noqa: F401
 from app.models.template import InterviewTemplate  # noqa: F401
+from app.models.company_member import CompanyMember  # noqa: F401
+from app.models.company_assessment import CompanyAssessment  # noqa: F401
 from app.core.database import Base
 from app.core.config import settings
 
