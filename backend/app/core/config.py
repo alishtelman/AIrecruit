@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     RESUME_STORAGE_DIR: str = "/app/storage/resumes"
     RECORDING_STORAGE_DIR: str = "/app/storage/recordings"
     MAX_RESUME_SIZE_MB: int = 10
+    RESEND_API_KEY: str = ""
+    FROM_EMAIL: str = "AIRecruit <noreply@airecruit.app>"
+    APP_URL: str = "http://localhost:3000"
 
 
 settings = Settings()

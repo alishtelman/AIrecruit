@@ -388,6 +388,47 @@ async def finish_interview(
             from app.services.assessment_invite_service import sync_assessment_status
             await sync_assessment_status(db, interview.id)
 
+        # Send email notifications (fire-and-forget, never crash the response)
+        try:
+            from app.models.user import User
+            from app.core.config import settings
+            from app.services.email_service import send_report_ready, send_new_candidate_to_company
+
+            user = await db.scalar(select(User).where(User.id == candidate.user_id))
+            role_label = interview.target_role.replace("_", " ").title()
+
+            # 1. Notify candidate
+            if user:
+                await send_report_ready(
+                    candidate_email=user.email,
+                    candidate_name=candidate.full_name,
+                    role=role_label,
+                    overall_score=report.overall_score or 0,
+                    report_id=str(report.id),
+                    app_url=settings.APP_URL,
+                )
+
+            # 2. Notify company admin(s) that filtered for this role
+            from app.models.company import Company
+            companies = (await db.scalars(select(Company))).all()
+            for company in companies:
+                company_user = await db.scalar(select(User).where(User.id == company.owner_user_id))
+                if company_user:
+                    await send_new_candidate_to_company(
+                        company_email=company_user.email,
+                        company_name=company.name,
+                        candidate_name=candidate.full_name,
+                        candidate_email=user.email if user else "",
+                        role=role_label,
+                        overall_score=report.overall_score or 0,
+                        hiring_recommendation=report.hiring_recommendation,
+                        candidate_id=str(candidate.id),
+                        app_url=settings.APP_URL,
+                    )
+        except Exception as _email_exc:
+            import logging
+            logging.getLogger(__name__).warning("Email notification failed: %s", _email_exc)
+
     except Exception:
         interview.status = "failed"
         await db.commit()
