@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
-import { reportApi } from "@/lib/api";
+import { companyApi } from "@/lib/api";
 import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis } from "@/lib/types";
 
 const RECOMMENDATION_CONFIG: Record<HiringRecommendation, { label: string; color: string; bg: string }> = {
@@ -48,7 +48,7 @@ export default function CompanyReportPage() {
 
   useEffect(() => {
     if (!id || authLoading) return;
-    reportApi.getById(id).then(setReport).catch(() => setError("Could not load report"));
+    companyApi.getReport(id).then(setReport).catch(() => setError("Could not load report"));
   }, [id, authLoading]);
 
   if (authLoading || (!report && !error)) {

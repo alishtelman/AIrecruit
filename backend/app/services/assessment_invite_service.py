@@ -81,7 +81,8 @@ async def list_company_assessments(
 async def link_interview_to_assessment(
     db: AsyncSession,
     token: str,
-    candidate_id: uuid.UUID,
+    candidate: Candidate,
+    candidate_email: str,
     target_role: str,
     language: str,
 ) -> tuple[CompanyAssessment, Interview]:
@@ -111,18 +112,25 @@ async def link_interview_to_assessment(
             detail=f"This invite is for role '{assessment.target_role}', not '{target_role}'",
         )
 
-    # Get candidate's user_id
-    candidate = await db.scalar(select(Candidate).where(Candidate.id == candidate_id))
-    if not candidate:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+    if candidate_email.strip().lower() != assessment.employee_email.strip().lower():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This assessment invite is assigned to a different email address",
+        )
 
-    interview = await start_interview(
+    start_response = await start_interview(
         db,
-        candidate_id=candidate_id,
+        candidate=candidate,
         target_role=target_role,
         template_id=None,
         language=language,
     )
+    interview = await db.scalar(select(Interview).where(Interview.id == start_response.interview_id))
+    if interview is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Interview was created but could not be loaded",
+        )
 
     # Link
     interview.company_assessment_id = assessment.id

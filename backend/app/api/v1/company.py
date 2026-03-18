@@ -14,8 +14,9 @@ from app.schemas.company import (
     HireOutcomeResponse,
 )
 from app.schemas.interview import InterviewReplayResponse
+from app.schemas.report import AssessmentReportResponse
 from app.schemas.template import TemplateCreateRequest, TemplateResponse
-from app.services.company_service import get_candidate_detail, list_verified_candidates
+from app.services.company_service import get_candidate_detail, get_company_report, list_verified_candidates
 from app.services.hire_outcome_service import get_hire_outcome, set_hire_outcome
 from app.services.interview_service import get_interview_replay
 from app.services.member_service import (
@@ -100,6 +101,19 @@ async def get_replay(
     if not result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found")
     return result
+
+
+@router.get("/reports/{report_id}", response_model=AssessmentReportResponse)
+async def get_report(
+    report_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    _, company = user_and_company
+    report = await get_company_report(db, report_id, company.id)
+    if not report:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+    return report
 
 
 # ── Team Members ───────────────────────────────────────────────────────────────

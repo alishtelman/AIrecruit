@@ -22,6 +22,7 @@ class QuestionAnalysis(BaseModel):
     red_flags: list[str] = []
     specificity: str = "medium"
     depth: str = "adequate"
+    ai_likelihood: float | None = None
 
 
 class SkillTag(BaseModel):
@@ -59,5 +60,7 @@ class AssessmentReportResponse(BaseModel):
     skill_tags: list[SkillTag] | None = None
     red_flags: list[RedFlag] | None = None
     response_consistency: float | None = None
+    cheat_risk_score: float | None = None
+    cheat_flags: list[str] | None = None
 
     model_config = {"from_attributes": True}

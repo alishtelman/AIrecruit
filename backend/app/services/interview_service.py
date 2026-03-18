@@ -413,23 +413,32 @@ async def finish_interview(
                     app_url=settings.APP_URL,
                 )
 
-            # 2. Notify company admin(s) that filtered for this role
-            from app.models.company import Company
-            companies = (await db.scalars(select(Company))).all()
-            for company in companies:
-                company_user = await db.scalar(select(User).where(User.id == company.owner_user_id))
-                if company_user:
-                    await send_new_candidate_to_company(
-                        company_email=company_user.email,
-                        company_name=company.name,
-                        candidate_name=candidate.full_name,
-                        candidate_email=user.email if user else "",
-                        role=role_label,
-                        overall_score=report.overall_score or 0,
-                        hiring_recommendation=report.hiring_recommendation,
-                        candidate_id=str(candidate.id),
-                        app_url=settings.APP_URL,
+            # 2. Notify the owning company only for private employee assessments.
+            if interview.company_assessment_id:
+                from app.models.company import Company
+                from app.models.company_assessment import CompanyAssessment
+
+                assessment = await db.scalar(
+                    select(CompanyAssessment).where(CompanyAssessment.id == interview.company_assessment_id)
+                )
+                if assessment:
+                    company = await db.scalar(select(Company).where(Company.id == assessment.company_id))
+                    company_user = (
+                        await db.scalar(select(User).where(User.id == company.owner_user_id))
+                        if company else None
                     )
+                    if company and company_user:
+                        await send_new_candidate_to_company(
+                            company_email=company_user.email,
+                            company_name=company.name,
+                            candidate_name=candidate.full_name,
+                            candidate_email=user.email if user else "",
+                            role=role_label,
+                            overall_score=report.overall_score or 0,
+                            hiring_recommendation=report.hiring_recommendation,
+                            candidate_id=str(candidate.id),
+                            app_url=settings.APP_URL,
+                        )
         except Exception as _email_exc:
             import logging
             logging.getLogger(__name__).warning("Email notification failed: %s", _email_exc)
@@ -492,19 +501,46 @@ async def save_interview_recording(
     file,  # UploadFile
 ) -> None:
     import os
+    from fastapi import HTTPException, status
     from app.core.config import settings
 
     interview = await _get_interview(db, interview_id, candidate_id)
 
     os.makedirs(settings.RECORDING_STORAGE_DIR, exist_ok=True)
-    dest = os.path.join(settings.RECORDING_STORAGE_DIR, f"{interview_id}.webm")
+    allowed_types = {
+        "video/webm": ".webm",
+        "video/mp4": ".mp4",
+    }
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Unsupported recording format. Allowed: video/webm, video/mp4.",
+        )
 
-    with open(dest, "wb") as out:
-        while True:
-            chunk = await file.read(1024 * 64)
-            if not chunk:
-                break
-            out.write(chunk)
+    max_bytes = settings.MAX_RECORDING_SIZE_MB * 1024 * 1024
+    dest = os.path.join(
+        settings.RECORDING_STORAGE_DIR,
+        f"{interview_id}{allowed_types[file.content_type]}",
+    )
+    written = 0
+
+    try:
+        with open(dest, "wb") as out:
+            while True:
+                chunk = await file.read(1024 * 64)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"Recording exceeds maximum allowed size of {settings.MAX_RECORDING_SIZE_MB} MB.",
+                    )
+                out.write(chunk)
+    except HTTPException:
+        if os.path.exists(dest):
+            os.remove(dest)
+        raise
 
     interview.recording_path = dest
     await db.commit()
@@ -525,12 +561,21 @@ async def save_behavioral_signals(
 async def get_interview_replay(
     db: AsyncSession,
     interview_id: uuid.UUID,
-    company_id: uuid.UUID,  # noqa: used for future ACL; currently any company can view
+    company_id: uuid.UUID,
 ) -> InterviewReplayResponse | None:
     """Return a Q&A replay annotated with per-question analysis."""
     interview = await db.scalar(select(Interview).where(Interview.id == interview_id))
     if not interview:
         return None
+
+    if interview.company_assessment_id:
+        from app.models.company_assessment import CompanyAssessment
+
+        assessment = await db.scalar(
+            select(CompanyAssessment).where(CompanyAssessment.id == interview.company_assessment_id)
+        )
+        if not assessment or assessment.company_id != company_id:
+            return None
 
     messages = await _get_messages(db, interview.id)
     report = await db.scalar(

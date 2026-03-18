@@ -50,6 +50,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new Error(error.detail ?? "Request failed");
   }
 
+  if (res.status === 204 || res.headers.get("content-length") === "0") {
+    return undefined as T;
+  }
+
   return res.json() as Promise<T>;
 }
 
@@ -91,6 +95,9 @@ export const companyApi = {
 
   getCandidate: (candidateId: string) =>
     request<CandidateDetail>(`/api/v1/company/candidates/${candidateId}`),
+
+  getReport: (reportId: string) =>
+    request<AssessmentReport>(`/api/v1/company/reports/${reportId}`),
 
   listTemplates: () =>
     request<InterviewTemplate[]>("/api/v1/company/templates"),

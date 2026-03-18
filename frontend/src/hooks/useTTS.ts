@@ -96,7 +96,7 @@ export function useTTS(language?: string) {
         setSpeaking(false);
       }
     },
-    [enabled]
+    [enabled, language]
   );
 
   const stop = useCallback(() => {

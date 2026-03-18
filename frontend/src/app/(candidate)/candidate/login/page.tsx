@@ -5,15 +5,16 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { authApi } from "@/lib/api";
 import { getToken, setToken } from "@/lib/auth";
+import { getSafeRedirect } from "@/lib/safeRedirect";
 
 function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirect = searchParams.get("redirect");
+  const redirect = getSafeRedirect(searchParams.get("redirect"), "/candidate/dashboard");
   const [form, setForm] = useState({ email: "", password: "" });
 
   useEffect(() => {
-    if (getToken()) router.replace(redirect ?? "/candidate/dashboard");
+    if (getToken()) router.replace(redirect);
   }, [router, redirect]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -25,7 +26,7 @@ function LoginPageInner() {
     try {
       const { access_token } = await authApi.login(form);
       setToken(access_token);
-      router.push(redirect ?? "/candidate/dashboard");
+      router.push(redirect);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Invalid email or password");
     } finally {
@@ -81,7 +82,7 @@ function LoginPageInner() {
         <p className="text-center text-slate-400 mt-6 text-sm">
           Don&apos;t have an account?{" "}
           <Link
-            href={redirect ? `/candidate/register?redirect=${encodeURIComponent(redirect)}` : "/candidate/register"}
+            href={redirect !== "/candidate/dashboard" ? `/candidate/register?redirect=${encodeURIComponent(redirect)}` : "/candidate/register"}
             className="text-blue-400 hover:underline"
           >
             Register
