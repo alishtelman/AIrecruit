@@ -314,7 +314,7 @@ function CTA() {
           Ready to hire smarter?
         </h2>
         <p className="text-slate-400 text-lg mb-10">
-          Join candidates who've completed AI interviews and companies who make data-driven hiring decisions.
+          Join candidates who&apos;ve completed AI interviews and companies who make data-driven hiring decisions.
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <Link

@@ -1,18 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { authApi } from "@/lib/api";
 import { getToken, setToken } from "@/lib/auth";
+import { getSafeRedirect } from "@/lib/safeRedirect";
 
-export default function RegisterPage() {
+function RegisterPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirect = getSafeRedirect(searchParams.get("redirect"), "/candidate/dashboard");
   const [form, setForm] = useState({ full_name: "", email: "", password: "" });
 
   useEffect(() => {
-    if (getToken()) router.replace("/candidate/dashboard");
-  }, [router]);
+    if (getToken()) router.replace(redirect);
+  }, [router, redirect]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -28,7 +31,7 @@ export default function RegisterPage() {
         password: form.password,
       });
       setToken(access_token);
-      router.push("/candidate/dashboard");
+      router.push(redirect);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {
@@ -95,11 +98,22 @@ export default function RegisterPage() {
 
         <p className="text-center text-slate-400 mt-6 text-sm">
           Already have an account?{" "}
-          <Link href="/candidate/login" className="text-blue-400 hover:underline">
+          <Link
+            href={redirect !== "/candidate/dashboard" ? `/candidate/login?redirect=${encodeURIComponent(redirect)}` : "/candidate/login"}
+            className="text-blue-400 hover:underline"
+          >
             Sign in
           </Link>
         </p>
       </div>
     </div>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-900" />}>
+      <RegisterPageInner />
+    </Suspense>
   );
 }

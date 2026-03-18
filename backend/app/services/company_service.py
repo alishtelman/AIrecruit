@@ -4,6 +4,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.candidate import Candidate
+from app.models.company_assessment import CompanyAssessment
 from app.models.hire_outcome import HireOutcome
 from app.models.interview import Interview
 from app.models.report import AssessmentReport
@@ -25,6 +26,7 @@ async def list_verified_candidates(
         .join(Interview, AssessmentReport.interview_id == Interview.id)
         .join(Candidate, AssessmentReport.candidate_id == Candidate.id)
         .join(User, Candidate.user_id == User.id)
+        .where(Interview.company_assessment_id.is_(None))
         .order_by(desc(AssessmentReport.created_at))
     )
     rows = result.all()
@@ -79,7 +81,10 @@ async def get_candidate_detail(
     result = await db.execute(
         select(AssessmentReport, Interview)
         .join(Interview, AssessmentReport.interview_id == Interview.id)
-        .where(AssessmentReport.candidate_id == candidate_id)
+        .where(
+            AssessmentReport.candidate_id == candidate_id,
+            Interview.company_assessment_id.is_(None),
+        )
         .order_by(desc(AssessmentReport.created_at))
     )
     rows = result.all()
@@ -133,3 +138,30 @@ async def get_candidate_detail(
         hire_notes=hire_notes,
         reports=reports,
     )
+
+
+async def get_company_report(
+    db: AsyncSession,
+    report_id: uuid.UUID,
+    company_id: uuid.UUID,
+) -> AssessmentReport | None:
+    result = await db.execute(
+        select(AssessmentReport, Interview)
+        .join(Interview, AssessmentReport.interview_id == Interview.id)
+        .where(AssessmentReport.id == report_id)
+    )
+    row = result.first()
+    if not row:
+        return None
+
+    report, interview = row
+    if interview.company_assessment_id is None:
+        return report
+
+    assessment = await db.scalar(
+        select(CompanyAssessment).where(CompanyAssessment.id == interview.company_assessment_id)
+    )
+    if not assessment or assessment.company_id != company_id:
+        return None
+
+    return report

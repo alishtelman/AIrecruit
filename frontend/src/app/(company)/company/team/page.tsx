@@ -98,7 +98,7 @@ export default function TeamPage() {
                     <code className="bg-green-500/20 px-2 py-0.5 rounded font-mono">
                       {inviteResult.temp_password}
                     </code>
-                    <span className="text-green-500/70 ml-2 text-xs">Share this once — it won't be shown again.</span>
+                    <span className="text-green-500/70 ml-2 text-xs">Share this once — it won&apos;t be shown again.</span>
                   </div>
                 ) : (
                   <div>User already existed and has been added to your team.</div>

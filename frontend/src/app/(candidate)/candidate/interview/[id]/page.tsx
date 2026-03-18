@@ -363,7 +363,7 @@ export default function InterviewPage() {
           <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-5 text-center">
             <div className="text-white font-semibold mb-1">Interview complete!</div>
             <div className="text-slate-400 text-sm mb-4">
-              You've answered all {maxQuestions} questions. Generate your assessment report now.
+              You&apos;ve answered all {maxQuestions} questions. Generate your assessment report now.
             </div>
             <button
               onClick={handleFinish}

@@ -74,7 +74,7 @@ async def start_employee_assessment(
     db: AsyncSession = Depends(get_db),
 ):
     """Authenticated candidate starts their employee assessment via invite link."""
-    _, candidate = user_and_candidate
+    user, candidate = user_and_candidate
     from app.services.assessment_invite_service import get_assessment_by_token as _get
     assessment = await _get(db, token)
     if not assessment:
@@ -84,7 +84,8 @@ async def start_employee_assessment(
     assessment_obj, interview = await link_interview_to_assessment(
         db,
         token=token,
-        candidate_id=candidate.id,
+        candidate=candidate,
+        candidate_email=user.email,
         target_role=assessment.target_role,
         language=body.language,
     )

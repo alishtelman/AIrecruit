@@ -88,7 +88,7 @@ function StartInterviewInner() {
 
         <h1 className="text-2xl font-bold text-white mb-2">Start AI Interview</h1>
         <p className="text-slate-400 mb-8">
-          Choose your target role. You'll answer 8 questions. The interview takes 15–20 minutes.
+          Choose your target role. You&apos;ll answer 8 questions. The interview takes 15–20 minutes.
         </p>
 
         {error && (

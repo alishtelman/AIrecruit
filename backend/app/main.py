@@ -7,6 +7,8 @@ from fastapi.responses import JSONResponse
 from app.api.v1.router import api_router
 from app.core.config import settings
 
+cors_origins = settings.cors_origins
+
 app = FastAPI(
     title="AI Recruiting Platform API",
     version="0.1.0",
@@ -16,7 +18,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -26,14 +28,17 @@ app.add_middleware(
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catch-all: ensures CORS headers are present on unhandled 500s."""
-    origin = request.headers.get("origin", "*")
+    origin = request.headers.get("origin")
+    headers = {}
+    if origin and origin in cors_origins:
+        headers = {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+        }
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error"},
-        headers={
-            "Access-Control-Allow-Origin": origin,
-            "Access-Control-Allow-Credentials": "true",
-        },
+        headers=headers,
     )
 
 
@@ -44,6 +49,7 @@ app.include_router(api_router, prefix="/api/v1")
 async def startup_event():
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     os.makedirs(settings.RESUME_STORAGE_DIR, exist_ok=True)
+    os.makedirs(settings.RECORDING_STORAGE_DIR, exist_ok=True)
 
 
 @app.get("/health")
