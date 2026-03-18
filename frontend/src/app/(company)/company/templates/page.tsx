@@ -30,7 +30,7 @@ const BLANK_FORM = {
 };
 
 export default function TemplatesPage() {
-  const { loading: authLoading } = useAuth("/company/login");
+  const { user, loading: authLoading } = useAuth("/company/login");
   const [templates, setTemplates] = useState<InterviewTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -38,6 +38,7 @@ export default function TemplatesPage() {
   const [form, setForm] = useState(BLANK_FORM);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
+  const canManageTemplates = (user?.company_member_role ?? (user?.role === "company_admin" ? "admin" : null)) === "admin";
 
   useEffect(() => {
     if (authLoading) return;
@@ -65,6 +66,10 @@ export default function TemplatesPage() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
+    if (!canManageTemplates) {
+      setFormError("Only admins can manage templates");
+      return;
+    }
     setFormError("");
     const validQuestions = form.questions.map((q) => q.trim()).filter(Boolean);
     if (validQuestions.length === 0) {
@@ -91,6 +96,10 @@ export default function TemplatesPage() {
   }
 
   async function handleDelete(templateId: string) {
+    if (!canManageTemplates) {
+      setError("Only admins can manage templates");
+      return;
+    }
     try {
       await companyApi.deleteTemplate(templateId);
       setTemplates(templates.filter((t) => t.template_id !== templateId));
@@ -117,10 +126,12 @@ export default function TemplatesPage() {
             </Link>
             <h1 className="text-2xl font-bold text-white mt-3">Interview Templates</h1>
             <p className="text-slate-400 text-sm mt-1">Create custom question sets for candidates</p>
+            {!canManageTemplates && <p className="text-amber-300 text-sm mt-2">Read-only mode: only admins can create or delete templates.</p>}
           </div>
           <button
             onClick={() => setShowForm(!showForm)}
-            className="bg-blue-600 hover:bg-blue-500 text-white font-semibold px-4 py-2 rounded-lg transition-colors text-sm"
+            disabled={!canManageTemplates}
+            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg transition-colors text-sm"
           >
             {showForm ? "Cancel" : "+ New Template"}
           </button>
@@ -261,6 +272,7 @@ export default function TemplatesPage() {
                   </div>
                   <button
                     onClick={() => handleDelete(tmpl.template_id)}
+                    disabled={!canManageTemplates}
                     className="text-slate-500 hover:text-red-400 text-sm transition-colors shrink-0"
                   >
                     Delete

@@ -4,27 +4,86 @@ export interface User {
   id: string;
   email: string;
   role: "candidate" | "company_admin" | "company_member";
+  company_member_role?: "admin" | "recruiter" | "viewer" | null;
+  company_id?: string | null;
   is_active: boolean;
   created_at: string;
 }
+
+export type AssessmentType = "employee_internal" | "candidate_external";
 
 export interface CompanyAssessment {
   id: string;
   employee_email: string;
   employee_name: string;
+  assessment_type: AssessmentType;
   target_role: string;
-  status: "pending" | "in_progress" | "completed";
+  template_id: string | null;
+  template_name: string | null;
+  status: "pending" | "opened" | "in_progress" | "completed" | "expired";
   invite_token: string;
   interview_id: string | null;
   report_id: string | null;
+  deadline_at: string | null;
+  expires_at: string | null;
+  opened_at: string | null;
+  completed_at: string | null;
+  branding_name: string | null;
+  branding_logo_url: string | null;
   created_at: string;
+}
+
+export interface EmployeeInviteInfo {
+  employee_name: string;
+  employee_email: string;
+  assessment_type: AssessmentType;
+  target_role: string;
+  role_label: string;
+  status: CompanyAssessment["status"];
+  company_name: string;
+  template_name: string | null;
+  deadline_at: string | null;
+  expires_at: string | null;
+  branding_name: string | null;
+  branding_logo_url: string | null;
 }
 
 export interface CompanyMember {
   member_id: string | null;
   user_id: string;
   email: string;
-  role: "admin" | "member";
+  role: "admin" | "recruiter" | "viewer";
+  created_at: string;
+}
+
+export interface CandidateNote {
+  note_id: string;
+  body: string;
+  author_user_id: string | null;
+  author_email: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CandidateActivity {
+  activity_id: string;
+  activity_type: string;
+  summary: string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface ShortlistMembership {
+  shortlist_id: string;
+  name: string;
+}
+
+export interface CompanyShortlist {
+  shortlist_id: string;
+  name: string;
+  candidate_count: number;
   created_at: string;
 }
 
@@ -209,6 +268,23 @@ export interface CandidateListItem {
   salary_max: number | null;
   salary_currency: string;
   hire_outcome: string | null;
+  skill_tags: SkillTag[] | null;
+  shortlists: ShortlistMembership[];
+  cheat_risk_score: number | null;
+  red_flag_count: number;
+}
+
+export interface CompanyCandidateSearchParams {
+  q?: string;
+  role?: string;
+  skills?: string[];
+  min_score?: number;
+  recommendation?: HiringRecommendation | "";
+  salary_min?: number;
+  salary_max?: number;
+  hire_outcome?: HireOutcome | "";
+  shortlist_id?: string;
+  sort?: "score_desc" | "score_asc" | "latest" | "salary_asc" | "salary_desc";
 }
 
 export type HireOutcome = "hired" | "rejected" | "interviewing" | "no_show";
@@ -230,6 +306,7 @@ export interface ReplayTurn {
 
 export interface InterviewReplay {
   interview_id: string;
+  candidate_id: string;
   candidate_name: string;
   target_role: string;
   completed_at: string | null;
@@ -266,7 +343,77 @@ export interface CandidateDetail {
   salary_currency: string;
   hire_outcome: string | null;
   hire_notes: string | null;
+  shortlists: ShortlistMembership[];
   reports: ReportWithRole[];
+}
+
+export interface AnalyticsBreakdownItem {
+  key: string;
+  label: string;
+  count: number;
+}
+
+export interface AnalyticsTemplatePerformance {
+  template_id: string;
+  template_name: string;
+  target_role: string;
+  completed_count: number;
+  average_score: number | null;
+}
+
+export interface AnalyticsOverview {
+  total_candidates: number;
+  total_reports: number;
+  shortlisted_candidates: number;
+  role_breakdown: AnalyticsBreakdownItem[];
+  recommendation_breakdown: AnalyticsBreakdownItem[];
+  cheat_risk_breakdown: AnalyticsBreakdownItem[];
+  red_flag_summary: {
+    candidates_with_flags: number;
+    total_flags: number;
+  };
+  template_performance: AnalyticsTemplatePerformance[];
+}
+
+export interface AnalyticsFunnelRow {
+  recommendation: HiringRecommendation;
+  total: number;
+  unreviewed: number;
+  interviewing: number;
+  hired: number;
+  rejected: number;
+  no_show: number;
+}
+
+export interface AnalyticsFunnel {
+  rows: AnalyticsFunnelRow[];
+}
+
+export interface AnalyticsSalaryBucket {
+  score_range: string;
+  median_min: number | null;
+  median_max: number | null;
+  count: number;
+}
+
+export interface AnalyticsSalaryOutcomeTrend {
+  outcome: string;
+  median_min: number | null;
+  median_max: number | null;
+  count: number;
+}
+
+export interface AnalyticsSalaryRole {
+  role: string;
+  candidate_count: number;
+  buckets: AnalyticsSalaryBucket[];
+  outcome_trends: AnalyticsSalaryOutcomeTrend[];
+}
+
+export interface AnalyticsSalary {
+  role: string | null;
+  shortlist_id: string | null;
+  roles: AnalyticsSalaryRole[];
 }
 
 // ── Report ────────────────────────────────────────────────────────────────────

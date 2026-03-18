@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { reportApi } from "@/lib/api";
@@ -48,6 +48,7 @@ const SEVERITY_COLORS: Record<string, string> = {
 
 export default function ReportPage() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const { loading: authLoading } = useAuth();
   const [report, setReport] = useState<AssessmentReport | null>(null);
   const [error, setError] = useState("");
@@ -83,6 +84,7 @@ export default function ReportPage() {
   }
 
   const rec = RECOMMENDATION_CONFIG[report.hiring_recommendation];
+  const notice = searchParams.get("notice");
 
   return (
     <div className="min-h-screen bg-slate-900 px-4 py-10">
@@ -92,6 +94,18 @@ export default function ReportPage() {
         </Link>
 
         <h1 className="text-2xl font-bold text-white mb-2">Assessment Report</h1>
+
+        {notice === "recording_failed" && (
+          <div className="mb-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
+            Report generated successfully, but interview recording upload failed.
+          </div>
+        )}
+
+        {notice === "recording_skipped" && (
+          <div className="mb-4 rounded-lg border border-slate-700 bg-slate-800 px-4 py-3 text-sm text-slate-300">
+            Report generated without a recording upload.
+          </div>
+        )}
 
         {report.interview_summary && (
           <p className="text-slate-400 mb-6">{report.interview_summary}</p>

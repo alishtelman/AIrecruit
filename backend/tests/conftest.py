@@ -7,13 +7,14 @@ Requires `docker compose up` to be running.
 AI calls are handled by whatever interviewer is active (LLM or Mock).
 Each test creates fresh users with unique emails to avoid conflicts.
 """
+import os
 import uuid
 
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 
-BASE_URL = "http://localhost:8001"
+BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8001")
 
 
 @pytest_asyncio.fixture

@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_candidate, get_current_user
 from app.core.database import get_db
+from app.models.company import Company
+from app.models.company_member import CompanyMember
 from app.core.security import hash_password, verify_password
 from app.models.user import User
 from app.schemas.candidate import CandidateRegisterRequest, CandidateResponse, CandidateWithUserResponse
@@ -18,6 +21,33 @@ from app.services.auth_service import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+async def _build_user_response(db: AsyncSession, user: User) -> UserResponse:
+    company_member_role = None
+    company_id = None
+    if user.role == "company_admin":
+        company_member_role = "admin"
+        company = await db.scalar(select(Company).where(Company.owner_user_id == user.id))
+        if company:
+            company_id = company.id
+    elif user.role == "company_member":
+        membership = await db.scalar(
+            select(CompanyMember).where(CompanyMember.user_id == user.id)
+        )
+        if membership:
+            company_id = membership.company_id
+            company_member_role = "recruiter" if membership.role == "member" else membership.role
+
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        role=user.role,
+        company_member_role=company_member_role,
+        company_id=company_id,
+        is_active=user.is_active,
+        created_at=user.created_at,
+    )
 
 
 @router.post(
@@ -81,8 +111,11 @@ async def user_login(
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_me(current_user: User = Depends(get_current_user)):
-    return UserResponse.model_validate(current_user)
+async def get_me(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await _build_user_response(db, current_user)
 
 
 class ChangePasswordRequest(BaseModel):
@@ -107,9 +140,10 @@ async def change_password(
 @router.get("/me/candidate", response_model=CandidateWithUserResponse)
 async def get_me_candidate(
     user_and_candidate=Depends(get_current_candidate),
+    db: AsyncSession = Depends(get_db),
 ):
     user, candidate = user_and_candidate
     return CandidateWithUserResponse(
-        user=UserResponse.model_validate(user),
+        user=await _build_user_response(db, user),
         candidate=CandidateResponse.model_validate(candidate),
     )

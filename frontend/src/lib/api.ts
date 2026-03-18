@@ -1,13 +1,23 @@
 import { getToken } from "./auth";
 import type {
   ActiveResume,
+  AnalyticsFunnel,
+  AnalyticsOverview,
+  AnalyticsSalary,
   AssessmentReport,
   CandidateDetail,
+  CandidateActivity,
+  CompanyCandidateSearchParams,
   CandidateListItem,
+  CandidateNote,
   CandidateRegisterRequest,
   CandidateWithUser,
+  CompanyShortlist,
+  CompanyAssessment,
+  CompanyMember,
   CompanyRegisterRequest,
   CompanyRegisterResponse,
+  EmployeeInviteInfo,
   FinishInterviewResponse,
   HireOutcomeResponse,
   InterviewDetail,
@@ -23,8 +33,6 @@ import type {
   StartInterviewResponse,
   TokenResponse,
   User,
-  CompanyAssessment,
-  CompanyMember,
 } from "./types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -55,6 +63,22 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   return res.json() as Promise<T>;
+}
+
+function withQuery(path: string, params: Record<string, string | number | string[] | undefined | null>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value == null || value === "") continue;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item) query.append(key, item);
+      }
+      continue;
+    }
+    query.set(key, String(value));
+  }
+  const suffix = query.toString();
+  return suffix ? `${path}?${suffix}` : path;
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
@@ -90,8 +114,21 @@ export const companyAuthApi = {
 // ── Company Candidates ────────────────────────────────────────────────────────
 
 export const companyApi = {
-  listCandidates: () =>
-    request<CandidateListItem[]>("/api/v1/company/candidates"),
+  listCandidates: (params: CompanyCandidateSearchParams = {}) =>
+    request<CandidateListItem[]>(
+      withQuery("/api/v1/company/candidates", {
+        q: params.q,
+        role: params.role,
+        skills: params.skills,
+        min_score: params.min_score,
+        recommendation: params.recommendation,
+        salary_min: params.salary_min,
+        salary_max: params.salary_max,
+        hire_outcome: params.hire_outcome,
+        shortlist_id: params.shortlist_id,
+        sort: params.sort,
+      })
+    ),
 
   getCandidate: (candidateId: string) =>
     request<CandidateDetail>(`/api/v1/company/candidates/${candidateId}`),
@@ -117,7 +154,13 @@ export const companyApi = {
   inviteMember: (email: string) =>
     request<{ member: CompanyMember; temp_password: string | null }>("/api/v1/company/members/invite", {
       method: "POST",
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, role: "recruiter" }),
+    }),
+
+  inviteMemberWithRole: (email: string, role: "recruiter" | "viewer") =>
+    request<{ member: CompanyMember; temp_password: string | null }>("/api/v1/company/members/invite", {
+      method: "POST",
+      body: JSON.stringify({ email, role }),
     }),
 
   removeMember: (userId: string) =>
@@ -126,7 +169,17 @@ export const companyApi = {
   listAssessments: () =>
     request<CompanyAssessment[]>("/api/v1/company/assessments"),
 
-  createAssessment: (data: { employee_email: string; employee_name: string; target_role: string }) =>
+  createAssessment: (data: {
+    employee_email: string;
+    employee_name: string;
+    target_role: string;
+    assessment_type?: "employee_internal" | "candidate_external";
+    template_id?: string | null;
+    deadline_at?: string | null;
+    expires_at?: string | null;
+    branding_name?: string | null;
+    branding_logo_url?: string | null;
+  }) =>
     request<CompanyAssessment>("/api/v1/company/assessments", {
       method: "POST",
       body: JSON.stringify(data),
@@ -134,6 +187,28 @@ export const companyApi = {
 
   deleteAssessment: (id: string) =>
     request<void>(`/api/v1/company/assessments/${id}`, { method: "DELETE" }),
+
+  listShortlists: () =>
+    request<CompanyShortlist[]>("/api/v1/company/shortlists"),
+
+  createShortlist: (name: string) =>
+    request<CompanyShortlist>("/api/v1/company/shortlists", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+
+  deleteShortlist: (shortlistId: string) =>
+    request<void>(`/api/v1/company/shortlists/${shortlistId}`, { method: "DELETE" }),
+
+  addCandidateToShortlist: (shortlistId: string, candidateId: string) =>
+    request<void>(`/api/v1/company/shortlists/${shortlistId}/candidates/${candidateId}`, {
+      method: "POST",
+    }),
+
+  removeCandidateFromShortlist: (shortlistId: string, candidateId: string) =>
+    request<void>(`/api/v1/company/shortlists/${shortlistId}/candidates/${candidateId}`, {
+      method: "DELETE",
+    }),
 
   setOutcome: (candidateId: string, outcome: string, notes?: string) =>
     request<HireOutcomeResponse>(`/api/v1/company/candidates/${candidateId}/outcome`, {
@@ -144,8 +219,47 @@ export const companyApi = {
   getOutcome: (candidateId: string) =>
     request<HireOutcomeResponse>(`/api/v1/company/candidates/${candidateId}/outcome`),
 
+  listCandidateNotes: (candidateId: string) =>
+    request<CandidateNote[]>(`/api/v1/company/candidates/${candidateId}/notes`),
+
+  createCandidateNote: (candidateId: string, body: string) =>
+    request<CandidateNote>(`/api/v1/company/candidates/${candidateId}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }),
+
+  listCandidateActivity: (candidateId: string) =>
+    request<CandidateActivity[]>(`/api/v1/company/candidates/${candidateId}/activity`),
+
   getInterviewReplay: (interviewId: string) =>
     request<InterviewReplay>(`/api/v1/company/interviews/${interviewId}/replay`),
+
+  getAnalyticsOverview: () =>
+    request<AnalyticsOverview>("/api/v1/company/analytics/overview"),
+
+  getAnalyticsFunnel: () =>
+    request<AnalyticsFunnel>("/api/v1/company/analytics/funnel"),
+
+  getAnalyticsSalary: (params: { role?: string; shortlist_id?: string } = {}) =>
+    request<AnalyticsSalary>(
+      withQuery("/api/v1/company/analytics/salary", {
+        role: params.role,
+        shortlist_id: params.shortlist_id,
+      })
+    ),
+};
+
+// ── Employee Invites ──────────────────────────────────────────────────────────
+
+export const employeeApi = {
+  getInvite: (token: string) =>
+    request<EmployeeInviteInfo>(`/api/v1/employee/invite/${token}`),
+
+  startAssessment: (token: string, language: "ru" | "en") =>
+    request<{ interview_id: string; assessment_id: string }>(`/api/v1/employee/invite/${token}/start`, {
+      method: "POST",
+      body: JSON.stringify({ language }),
+    }),
 };
 
 // ── Public Templates ──────────────────────────────────────────────────────────
@@ -246,6 +360,27 @@ export const sttApi = {
     const form = new FormData();
     form.append("file", blob, "audio.webm");
     return request<{ text: string }>("/api/v1/stt", { method: "POST", body: form });
+  },
+};
+
+// ── TTS ───────────────────────────────────────────────────────────────────────
+
+export const ttsApi = {
+  synthesize: async (text: string): Promise<Blob> => {
+    const token = getToken();
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const res = await fetch(`${BASE_URL}/api/v1/tts`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: "Request failed" }));
+      throw new Error(error.detail ?? "Request failed");
+    }
+    return res.blob();
   },
 };
 

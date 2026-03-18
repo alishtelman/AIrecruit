@@ -12,7 +12,7 @@ class CompanyMember(Base):
     """
     Links a user to a company with a role.
     - owner: the company_admin who registered the company (managed via Company.owner_user_id)
-    - member: invited user with company_member role, can browse candidates and view reports
+    - recruiter/viewer: invited user with company_member role
     """
     __tablename__ = "company_members"
     __table_args__ = (UniqueConstraint("company_id", "user_id", name="uq_company_member"),)
@@ -24,8 +24,8 @@ class CompanyMember(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    # admin = company owner (mirrors company_admin role); member = invited recruiter
-    role: Mapped[str] = mapped_column(String(50), nullable=False, default="member")
+    # admin = company owner (mirrors company_admin role); recruiter/viewer = invited roles
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="recruiter")
     invited_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

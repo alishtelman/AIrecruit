@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.hire_outcome import HireOutcome
+from app.services.collaboration_service import log_candidate_activity
 
 
 VALID_OUTCOMES = {"hired", "rejected", "interviewing", "no_show"}
@@ -17,6 +18,7 @@ async def set_hire_outcome(
     candidate_id: uuid.UUID,
     outcome: str,
     notes: str | None = None,
+    actor_user_id: uuid.UUID | None = None,
 ) -> HireOutcome:
     if outcome not in VALID_OUTCOMES:
         raise ValueError(f"Invalid outcome '{outcome}'. Must be one of {VALID_OUTCOMES}")
@@ -28,11 +30,21 @@ async def set_hire_outcome(
         )
     )
     if existing:
+        previous_outcome = existing.outcome
         existing.outcome = outcome
         existing.notes = notes
         existing.updated_at = datetime.utcnow()
         await db.commit()
         await db.refresh(existing)
+        await log_candidate_activity(
+            db,
+            company_id=company_id,
+            candidate_id=candidate_id,
+            actor_user_id=actor_user_id,
+            activity_type="outcome_updated",
+            summary=f"Updated hiring outcome from '{previous_outcome}' to '{outcome}'",
+            metadata={"outcome": outcome, "previous_outcome": previous_outcome, "notes": notes},
+        )
         return existing
 
     record = HireOutcome(
@@ -45,6 +57,15 @@ async def set_hire_outcome(
     db.add(record)
     await db.commit()
     await db.refresh(record)
+    await log_candidate_activity(
+        db,
+        company_id=company_id,
+        candidate_id=candidate_id,
+        actor_user_id=actor_user_id,
+        activity_type="outcome_set",
+        summary=f"Set hiring outcome to '{outcome}'",
+        metadata={"outcome": outcome, "notes": notes},
+    )
     return record
 
 

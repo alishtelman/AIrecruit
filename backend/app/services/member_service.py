@@ -21,6 +21,8 @@ from app.core.security import hash_password
 from app.models.company_member import CompanyMember
 from app.models.user import User
 
+VALID_MEMBER_ROLES = {"recruiter", "viewer"}
+
 
 class MemberAlreadyExistsError(Exception):
     pass
@@ -35,11 +37,17 @@ async def invite_member(
     company_id: uuid.UUID,
     email: str,
     invited_by_user_id: uuid.UUID,
+    role: str = "recruiter",
 ) -> tuple[CompanyMember, str | None]:
     """
     Invite a user to the company.
     Returns (member, temp_password). temp_password is None if user already existed.
     """
+    if role not in VALID_MEMBER_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid member role '{role}'",
+        )
     # Check if already a member of this company
     existing_user = await db.scalar(select(User).where(User.email == email))
 
@@ -76,7 +84,7 @@ async def invite_member(
         id=uuid.uuid4(),
         company_id=company_id,
         user_id=user.id,
-        role="member",
+        role=role,
         invited_by_user_id=invited_by_user_id,
     )
     db.add(member)
@@ -106,7 +114,7 @@ async def list_members(
             "member_id": str(member.id),
             "user_id": str(user.id),
             "email": user.email,
-            "role": member.role,
+            "role": "recruiter" if member.role == "member" else member.role,
             "created_at": member.created_at.isoformat(),
         })
 

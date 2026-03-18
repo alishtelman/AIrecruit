@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { companyApi } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
-import type { CandidateDetail, HiringRecommendation, ReportWithRole, CompetencyScore, SkillTag, RedFlag, HireOutcome } from "@/lib/types";
+import type { CandidateActivity, CandidateDetail, CandidateNote, CompanyShortlist, HiringRecommendation, ReportWithRole, CompetencyScore, RedFlag } from "@/lib/types";
 
 const ROLE_LABELS: Record<string, string> = {
   backend_engineer: "Backend Engineer",
@@ -244,39 +244,112 @@ function ReportCard({ report }: { report: ReportWithRole }) {
 
 export default function CandidateDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
-  const { loading: authLoading } = useAuth("/company/login");
+  const { user, loading: authLoading } = useAuth("/company/login");
   const [candidate, setCandidate] = useState<CandidateDetail | null>(null);
+  const [shortlists, setShortlists] = useState<CompanyShortlist[]>([]);
+  const [notes, setNotes] = useState<CandidateNote[]>([]);
+  const [activity, setActivity] = useState<CandidateActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [shortlistError, setShortlistError] = useState("");
   const [outcome, setOutcome] = useState<string>("");
   const [outcomeNotes, setOutcomeNotes] = useState("");
   const [savingOutcome, setSavingOutcome] = useState(false);
   const [outcomeSaved, setOutcomeSaved] = useState(false);
+  const [noteBody, setNoteBody] = useState("");
+  const [noteError, setNoteError] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+  const companyRole = user?.company_member_role ?? (user?.role === "company_admin" ? "admin" : null);
+  const canManagePipeline = companyRole === "admin" || companyRole === "recruiter";
 
   useEffect(() => {
     if (authLoading) return;
-    companyApi.getCandidate(id)
-      .then((c) => {
+    Promise.all([
+      companyApi.getCandidate(id),
+      companyApi.listShortlists(),
+      companyApi.listCandidateNotes(id),
+      companyApi.listCandidateActivity(id),
+    ])
+      .then(([c, shortlistItems, noteItems, activityItems]) => {
         setCandidate(c);
+        setShortlists(shortlistItems);
+        setNotes(noteItems);
+        setActivity(activityItems);
         setOutcome(c.hire_outcome ?? "");
         setOutcomeNotes(c.hire_notes ?? "");
       })
       .catch((err) => setError(err.message ?? "Failed to load candidate"))
       .finally(() => setLoading(false));
-  }, [id, authLoading, router]);
+  }, [id, authLoading]);
+
+  async function reloadCandidateAndShortlists() {
+    const [candidateData, shortlistItems, noteItems, activityItems] = await Promise.all([
+      companyApi.getCandidate(id),
+      companyApi.listShortlists(),
+      companyApi.listCandidateNotes(id),
+      companyApi.listCandidateActivity(id),
+    ]);
+    setCandidate(candidateData);
+    setShortlists(shortlistItems);
+    setNotes(noteItems);
+    setActivity(activityItems);
+    setOutcome(candidateData.hire_outcome ?? "");
+    setOutcomeNotes(candidateData.hire_notes ?? "");
+  }
 
   async function handleSaveOutcome() {
     if (!outcome) return;
+    if (!canManagePipeline) {
+      setError("Viewer access is read-only");
+      return;
+    }
     setSavingOutcome(true);
     try {
       await companyApi.setOutcome(id, outcome, outcomeNotes || undefined);
+      await reloadCandidateAndShortlists();
       setOutcomeSaved(true);
       setTimeout(() => setOutcomeSaved(false), 2000);
     } catch {
       // ignore
     } finally {
       setSavingOutcome(false);
+    }
+  }
+
+  async function toggleShortlist(shortlistId: string, isMember: boolean) {
+    if (!canManagePipeline) {
+      setShortlistError("Viewer access is read-only");
+      return;
+    }
+    setShortlistError("");
+    try {
+      if (isMember) {
+        await companyApi.removeCandidateFromShortlist(shortlistId, id);
+      } else {
+        await companyApi.addCandidateToShortlist(shortlistId, id);
+      }
+      await reloadCandidateAndShortlists();
+    } catch (err: unknown) {
+      setShortlistError(err instanceof Error ? err.message : "Failed to update shortlist");
+    }
+  }
+
+  async function handleAddNote() {
+    if (!noteBody.trim()) return;
+    if (!canManagePipeline) {
+      setNoteError("Viewer access is read-only");
+      return;
+    }
+    setSavingNote(true);
+    setNoteError("");
+    try {
+      await companyApi.createCandidateNote(id, noteBody.trim());
+      setNoteBody("");
+      await reloadCandidateAndShortlists();
+    } catch (err: unknown) {
+      setNoteError(err instanceof Error ? err.message : "Failed to add note");
+    } finally {
+      setSavingNote(false);
     }
   }
 
@@ -306,6 +379,9 @@ export default function CandidateDetailPage() {
               <p className="text-slate-500 text-sm mt-0.5">
                 {candidate.reports.length} interview{candidate.reports.length !== 1 ? "s" : ""} completed
               </p>
+              {companyRole === "viewer" && (
+                <p className="text-amber-300 text-sm mt-2">Viewer mode: you can review notes, reports, and replay, but not modify pipeline state.</p>
+              )}
 
               {/* Salary expectation */}
               {(candidate.salary_min || candidate.salary_max) && (
@@ -318,6 +394,51 @@ export default function CandidateDetailPage() {
                 </p>
               )}
 
+              <div className="mt-4 p-4 bg-slate-800 border border-slate-700 rounded-xl space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">Shortlists</p>
+                    <p className="text-slate-500 text-sm mt-1">Organize this candidate into reusable hiring buckets.</p>
+                  </div>
+                  <Link href="/company/dashboard" className="text-blue-400 hover:text-blue-300 text-sm transition-colors">
+                    Manage on dashboard
+                  </Link>
+                </div>
+                {shortlistError && <p className="text-red-400 text-sm">{shortlistError}</p>}
+                {candidate.shortlists.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {candidate.shortlists.map((membership) => (
+                      <span key={membership.shortlist_id} className="px-2.5 py-1 rounded-full border border-blue-500/20 bg-blue-500/10 text-blue-300 text-xs">
+                        {membership.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {shortlists.length === 0 ? (
+                  <p className="text-slate-500 text-sm">No shortlists created yet.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {shortlists.map((shortlist) => {
+                      const isMember = candidate.shortlists.some((membership) => membership.shortlist_id === shortlist.shortlist_id);
+                      return (
+                        <button
+                          key={shortlist.shortlist_id}
+                          onClick={() => toggleShortlist(shortlist.shortlist_id, isMember)}
+                          disabled={!canManagePipeline}
+                          className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                            isMember
+                              ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
+                              : "border-slate-600 text-slate-400 hover:text-white"
+                          }`}
+                        >
+                          {isMember ? `Remove ${shortlist.name}` : `Add ${shortlist.name}`}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {/* Hire outcome */}
               <div className="mt-4 p-4 bg-slate-800 border border-slate-700 rounded-xl space-y-3">
                 <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">Hiring Decision</p>
@@ -328,6 +449,7 @@ export default function CandidateDetailPage() {
                       <button
                         key={o}
                         onClick={() => setOutcome(o)}
+                        disabled={!canManagePipeline}
                         className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
                           outcome === o ? cfg.cls : "border-slate-600 text-slate-500 hover:border-slate-500"
                         }`}
@@ -342,15 +464,70 @@ export default function CandidateDetailPage() {
                   placeholder="Notes (optional)"
                   value={outcomeNotes}
                   onChange={(e) => setOutcomeNotes(e.target.value)}
+                  disabled={!canManagePipeline}
                   className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
                 />
                 <button
                   onClick={handleSaveOutcome}
-                  disabled={!outcome || savingOutcome}
+                  disabled={!outcome || savingOutcome || !canManagePipeline}
                   className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
                 >
                   {outcomeSaved ? "Saved ✓" : savingOutcome ? "Saving…" : "Save Decision"}
                 </button>
+              </div>
+
+              <div className="mt-4 p-4 bg-slate-800 border border-slate-700 rounded-xl space-y-3">
+                <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">Shared Notes</p>
+                {noteError && <p className="text-red-400 text-sm">{noteError}</p>}
+                <div className="space-y-2">
+                  <textarea
+                    value={noteBody}
+                    onChange={(e) => setNoteBody(e.target.value)}
+                    disabled={!canManagePipeline}
+                    rows={3}
+                    placeholder="Add context for your team: interview feedback, follow-up ideas, concerns."
+                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 resize-y"
+                  />
+                  <button
+                    onClick={handleAddNote}
+                    disabled={savingNote || !noteBody.trim() || !canManagePipeline}
+                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+                  >
+                    {savingNote ? "Saving note…" : "Add Note"}
+                  </button>
+                </div>
+                {notes.length === 0 ? (
+                  <p className="text-slate-500 text-sm">No team notes yet.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {notes.map((note) => (
+                      <div key={note.note_id} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-3">
+                        <p className="text-slate-200 text-sm whitespace-pre-wrap">{note.body}</p>
+                        <p className="text-slate-500 text-xs mt-2">
+                          {note.author_email ?? "Unknown"} · {new Date(note.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-4 p-4 bg-slate-800 border border-slate-700 rounded-xl space-y-3">
+                <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">Activity Log</p>
+                {activity.length === 0 ? (
+                  <p className="text-slate-500 text-sm">No collaboration activity yet.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {activity.map((item) => (
+                      <div key={item.activity_id} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-3">
+                        <p className="text-slate-200 text-sm">{item.summary}</p>
+                        <p className="text-slate-500 text-xs mt-1">
+                          {item.actor_email ?? "System"} · {new Date(item.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 

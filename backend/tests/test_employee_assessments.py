@@ -1,6 +1,7 @@
 """Tests for company-owned employee assessments and their access controls."""
 import io
 import uuid
+from datetime import datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -45,7 +46,31 @@ async def _upload_resume(client: AsyncClient, token: str) -> None:
     assert resp.status_code == 200, resp.text
 
 
-async def _create_assessment(client: AsyncClient, company_token: str, employee_email: str, employee_name: str) -> dict:
+async def _create_template(client: AsyncClient, company_token: str, name: str, target_role: str) -> dict:
+    resp = await client.post(
+        "/api/v1/company/templates",
+        headers=auth_headers(company_token),
+        json={
+            "name": name,
+            "target_role": target_role,
+            "questions": [
+                "Tell us about a project you shipped.",
+                "How do you handle feedback?",
+            ],
+            "is_public": False,
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def _create_assessment(
+    client: AsyncClient,
+    company_token: str,
+    employee_email: str,
+    employee_name: str,
+    **extra: object,
+) -> dict:
     resp = await client.post(
         "/api/v1/company/assessments",
         headers=auth_headers(company_token),
@@ -53,6 +78,7 @@ async def _create_assessment(client: AsyncClient, company_token: str, employee_e
             "employee_email": employee_email,
             "employee_name": employee_name,
             "target_role": "backend_engineer",
+            **extra,
         },
     )
     assert resp.status_code == 201, resp.text
@@ -179,3 +205,83 @@ async def test_private_employee_assessment_stays_private(client: AsyncClient, co
     assert candidates_resp.status_code == 200
     emails = {row["email"] for row in candidates_resp.json()}
     assert employee_email not in emails
+
+
+@pytest.mark.asyncio
+async def test_candidate_external_campaign_tracks_branding_template_and_opened_status(
+    client: AsyncClient,
+    company_token: str,
+):
+    template = await _create_template(
+        client,
+        company_token,
+        name=f"Frontend Campaign {uuid.uuid4().hex[:6]}",
+        target_role="frontend_engineer",
+    )
+    candidate_email = f"campaign_{uuid.uuid4().hex[:8]}@example.com"
+    created = await _create_assessment(
+        client,
+        company_token,
+        employee_email=candidate_email,
+        employee_name="Frontend Candidate",
+        assessment_type="candidate_external",
+        target_role="frontend_engineer",
+        template_id=template["template_id"],
+        branding_name="Spring Hiring Sprint",
+        branding_logo_url="https://example.com/logo.png",
+        deadline_at=(datetime.utcnow() + timedelta(days=2)).isoformat(),
+    )
+
+    assessments_resp = await client.get(
+        "/api/v1/company/assessments",
+        headers=auth_headers(company_token),
+    )
+    assert assessments_resp.status_code == 200, assessments_resp.text
+    saved = next(row for row in assessments_resp.json() if row["id"] == created["id"])
+    assert saved["assessment_type"] == "candidate_external"
+    assert saved["template_id"] == template["template_id"]
+    assert saved["template_name"] == template["name"]
+    assert saved["branding_name"] == "Spring Hiring Sprint"
+    assert saved["status"] == "pending"
+
+    invite_resp = await client.get(f"/api/v1/employee/invite/{created['invite_token']}")
+    assert invite_resp.status_code == 200, invite_resp.text
+    invite = invite_resp.json()
+    assert invite["assessment_type"] == "candidate_external"
+    assert invite["template_name"] == template["name"]
+    assert invite["branding_name"] == "Spring Hiring Sprint"
+    assert invite["status"] == "opened"
+
+    assessments_resp = await client.get(
+        "/api/v1/company/assessments",
+        headers=auth_headers(company_token),
+    )
+    assert assessments_resp.status_code == 200, assessments_resp.text
+    reopened = next(row for row in assessments_resp.json() if row["id"] == created["id"])
+    assert reopened["status"] == "opened"
+    assert reopened["opened_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_assessment_invite_rejects_deadline_passed_campaign(client: AsyncClient, company_token: str):
+    employee_email = f"expired_{uuid.uuid4().hex[:8]}@example.com"
+    assessment = await _create_assessment(
+        client,
+        company_token,
+        employee_email=employee_email,
+        employee_name="Expired Invitee",
+        deadline_at=(datetime.utcnow() - timedelta(minutes=5)).isoformat(),
+    )
+    candidate_token = await _register_candidate(client, employee_email, "Expired Invitee")
+    await _upload_resume(client, candidate_token)
+
+    info_resp = await client.get(f"/api/v1/employee/invite/{assessment['invite_token']}")
+    assert info_resp.status_code == 200, info_resp.text
+    assert info_resp.json()["status"] == "expired"
+
+    start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert start_resp.status_code == 410, start_resp.text

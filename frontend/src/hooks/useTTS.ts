@@ -1,9 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getToken } from "@/lib/auth";
-
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { ttsApi } from "@/lib/api";
 
 /**
  * useTTS — text-to-speech hook.
@@ -46,42 +44,26 @@ export function useTTS(language?: string) {
       setSpeaking(true);
 
       // Try Groq TTS first
-      const token = getToken();
-      if (token) {
-        try {
-          const res = await fetch(`${BASE_URL}/api/v1/tts`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ text }),
-          });
+      try {
+        const blob = await ttsApi.synthesize(text);
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audioRef.current = audio;
 
-          if (res.ok) {
-            const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
-            const audio = new Audio(url);
-            audioRef.current = audio;
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          audioRef.current = null;
+          setSpeaking(false);
+        };
+        audio.onerror = () => {
+          URL.revokeObjectURL(url);
+          audioRef.current = null;
+          setSpeaking(false);
+        };
 
-            audio.onended = () => {
-              URL.revokeObjectURL(url);
-              audioRef.current = null;
-              setSpeaking(false);
-            };
-            audio.onerror = () => {
-              URL.revokeObjectURL(url);
-              audioRef.current = null;
-              setSpeaking(false);
-            };
-
-            await audio.play();
-            return;
-          }
-        } catch {
-          // Fall through to browser TTS
-        }
-      }
+        await audio.play();
+        return;
+      } catch {}
 
       // Fallback: browser SpeechSynthesis
       if (typeof window !== "undefined" && "speechSynthesis" in window) {

@@ -26,6 +26,9 @@ export default function InterviewPage() {
   const [sending, setSending] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [error, setError] = useState("");
+  const [answerMode, setAnswerMode] = useState<"text" | "voice">("text");
+  const [latestTranscript, setLatestTranscript] = useState("");
+  const [recordingUploadState, setRecordingUploadState] = useState<"idle" | "uploading" | "uploaded" | "failed" | "skipped">("idle");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Behavioral signals tracking (Feature 7)
@@ -45,10 +48,13 @@ export default function InterviewPage() {
   // Language is loaded from interview, default "ru" until loaded
   const [interviewLanguage, setInterviewLanguage] = useState<string>("ru");
   const { enabled: ttsEnabled, speaking, speak, stop, toggle: toggleTTS } = useTTS(interviewLanguage);
-  const { isRecording, previewRef, startRecording, stopRecording, getBlob } = useMediaRecorder();
+  const { isRecording, previewRef, startRecording, stopRecording, getBlob, clearRecording, errorMessage: recordingError } = useMediaRecorder();
   const { faceAwayPct, isModelLoaded: faceModelLoaded } = useFaceDetection(previewRef, recordingConsent);
-  const { state: voiceState, start: startVoice, stop: stopVoice } = useVoiceInput({
-    onTranscript: (text) => setInput((prev) => prev ? prev + " " + text : text),
+  const { state: voiceState, start: startVoice, stop: stopVoice, errorMessage: voiceError, clearError: clearVoiceError } = useVoiceInput({
+    onTranscript: (text) => {
+      setLatestTranscript(text);
+      setInput((prev) => (prev ? `${prev} ${text}` : text));
+    },
   });
 
   // Load interview on mount
@@ -125,9 +131,11 @@ export default function InterviewPage() {
     questionStartTimeRef.current = Date.now();
 
     setInput("");
+    setLatestTranscript("");
     setSending(true);
     setError("");
     stop();
+    clearVoiceError();
 
     const optimistic: InterviewMessage = {
       role: "candidate",
@@ -170,15 +178,30 @@ export default function InterviewPage() {
     setFinishing(true);
     setError("");
     try {
+      let recordingNotice: string | null = null;
       // Stop recording and upload
+      const recordingBlob =
+        isRecording
+          ? (stopRecording(), await new Promise((resolve) => setTimeout(resolve, 300)), getBlob())
+          : getBlob();
+
       if (isRecording) {
-        stopRecording();
-        // Small wait for ondataavailable to fire
-        await new Promise((resolve) => setTimeout(resolve, 300));
-        const blob = getBlob();
-        if (blob && blob.size > 0) {
-          await interviewApi.uploadRecording(id, blob).catch(() => null);
+        // handled above
+      }
+      if (recordingBlob && recordingBlob.size > 0) {
+        setRecordingUploadState("uploading");
+        try {
+          await interviewApi.uploadRecording(id, recordingBlob);
+          setRecordingUploadState("uploaded");
+          clearRecording();
+        } catch (uploadErr: unknown) {
+          setRecordingUploadState("failed");
+          setError(uploadErr instanceof Error ? uploadErr.message : "Recording upload failed");
+          recordingNotice = "recording_failed";
         }
+      } else {
+        setRecordingUploadState("skipped");
+        recordingNotice = "recording_skipped";
       }
       // Submit behavioral signals before finishing
       await interviewApi.submitSignals(id, {
@@ -189,7 +212,8 @@ export default function InterviewPage() {
       }).catch(() => null);
 
       const res = await interviewApi.finish(id);
-      router.push(`/candidate/reports/${res.report_id}`);
+      const suffix = recordingNotice ? `?notice=${recordingNotice}` : "";
+      router.push(`/candidate/reports/${res.report_id}${suffix}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to finish interview");
       setFinishing(false);
@@ -211,6 +235,17 @@ export default function InterviewPage() {
 
   const roleLabel = interview.target_role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   const progress = Math.round((questionCount / maxQuestions) * 100);
+  const voiceMode = answerMode === "voice";
+  const uploadStatusLabel =
+    recordingUploadState === "uploading"
+      ? "Uploading recording…"
+      : recordingUploadState === "uploaded"
+      ? "Recording uploaded"
+      : recordingUploadState === "failed"
+      ? "Recording upload failed"
+      : recordingUploadState === "skipped"
+      ? "Interview finished without recording upload"
+      : null;
 
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col">
@@ -365,6 +400,11 @@ export default function InterviewPage() {
             <div className="text-slate-400 text-sm mb-4">
               You&apos;ve answered all {maxQuestions} questions. Generate your assessment report now.
             </div>
+            {uploadStatusLabel && (
+              <div className={`mb-4 text-sm ${recordingUploadState === "failed" ? "text-red-400" : "text-slate-300"}`}>
+                {uploadStatusLabel}
+              </div>
+            )}
             <button
               onClick={handleFinish}
               disabled={finishing}
@@ -379,7 +419,50 @@ export default function InterviewPage() {
       {/* Input */}
       {!canFinish && interview.status === "in_progress" && (
         <div className="border-t border-slate-800 px-4 py-4 shrink-0">
-          <div className="max-w-2xl mx-auto flex gap-3">
+          <div className="max-w-2xl mx-auto space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setAnswerMode("text")}
+                  className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                    !voiceMode
+                      ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
+                      : "border-slate-700 text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  Text mode
+                </button>
+                <button
+                  onClick={() => setAnswerMode("voice")}
+                  className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                    voiceMode
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                      : "border-slate-700 text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  Voice mode
+                </button>
+              </div>
+              {voiceMode && (
+                <p className="text-xs text-slate-500">
+                  Hold the mic, then review the transcript before sending.
+                </p>
+              )}
+            </div>
+
+            {(voiceMode || voiceError || recordingError || latestTranscript) && (
+              <div className="rounded-xl border border-slate-800 bg-slate-800/60 px-4 py-3 text-sm">
+                {latestTranscript && (
+                  <p className="text-slate-300">
+                    Latest transcript captured. Edit the draft below before sending.
+                  </p>
+                )}
+                {voiceError && <p className="text-red-400 mt-1">{voiceError}</p>}
+                {recordingError && <p className="text-yellow-400 mt-1">{recordingError}</p>}
+              </div>
+            )}
+
+            <div className="flex gap-3">
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -391,35 +474,38 @@ export default function InterviewPage() {
                 }
               }}
               placeholder={
-                voiceState === "recording"
+                voiceMode && voiceState === "recording"
                   ? "🎙 Listening…"
-                  : voiceState === "transcribing"
+                  : voiceMode && voiceState === "transcribing"
                   ? "⏳ Transcribing…"
+                  : voiceMode
+                  ? "Transcript preview. Edit before sending…"
                   : "Type your answer… (Enter to send, Shift+Enter for new line)"
               }
               rows={2}
               className="flex-1 bg-slate-800 border border-slate-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500 resize-none"
             />
-            {/* Mic button */}
-            <button
-              onMouseDown={startVoice}
-              onMouseUp={stopVoice}
-              onTouchStart={startVoice}
-              onTouchEnd={stopVoice}
-              disabled={sending || voiceState === "transcribing"}
-              title="Hold to speak"
-              className={`px-4 rounded-xl transition-colors font-medium border select-none ${
-                voiceState === "recording"
-                  ? "bg-red-500/20 border-red-500/50 text-red-400 animate-pulse"
-                  : voiceState === "transcribing"
-                  ? "bg-slate-700 border-slate-600 text-slate-400 opacity-60"
-                  : voiceState === "error"
-                  ? "bg-red-500/10 border-red-500/30 text-red-400"
-                  : "bg-slate-700 border-slate-600 text-slate-300 hover:border-slate-500"
-              }`}
-            >
-              {voiceState === "recording" ? "🔴" : voiceState === "transcribing" ? "⏳" : "🎙"}
-            </button>
+            {voiceMode && (
+              <button
+                onMouseDown={startVoice}
+                onMouseUp={stopVoice}
+                onTouchStart={startVoice}
+                onTouchEnd={stopVoice}
+                disabled={sending || voiceState === "transcribing"}
+                title="Hold to speak"
+                className={`px-4 rounded-xl transition-colors font-medium border select-none ${
+                  voiceState === "recording"
+                    ? "bg-red-500/20 border-red-500/50 text-red-400 animate-pulse"
+                    : voiceState === "transcribing"
+                    ? "bg-slate-700 border-slate-600 text-slate-400 opacity-60"
+                    : voiceState === "error"
+                    ? "bg-red-500/10 border-red-500/30 text-red-400"
+                    : "bg-slate-700 border-slate-600 text-slate-300 hover:border-slate-500"
+                }`}
+              >
+                {voiceState === "recording" ? "🔴" : voiceState === "transcribing" ? "⏳" : "🎙"}
+              </button>
+            )}
             <button
               onClick={handleSend}
               disabled={!input.trim() || sending}
@@ -427,6 +513,7 @@ export default function InterviewPage() {
             >
               {sending ? "…" : "Send"}
             </button>
+            </div>
           </div>
         </div>
       )}

@@ -104,6 +104,7 @@ class ReplayTurn(BaseModel):
 
 class InterviewReplayResponse(BaseModel):
     interview_id: uuid.UUID
+    candidate_id: uuid.UUID
     candidate_name: str
     target_role: str
     completed_at: datetime | None

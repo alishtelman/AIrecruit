@@ -13,6 +13,7 @@ from app.models.candidate import Candidate
 from app.models.user import User
 from app.services.assessment_invite_service import (
     get_assessment_by_token,
+    get_assessment_for_invite_view,
     link_interview_to_assessment,
 )
 
@@ -33,10 +34,16 @@ _ROLE_LABELS = {
 class InviteInfoResponse(BaseModel):
     employee_name: str
     employee_email: str
+    assessment_type: str
     target_role: str
     role_label: str
     status: str
     company_name: str
+    template_name: str | None = None
+    deadline_at: str | None = None
+    expires_at: str | None = None
+    branding_name: str | None = None
+    branding_logo_url: str | None = None
 
 
 class StartAssessmentRequest(BaseModel):
@@ -52,17 +59,23 @@ class StartAssessmentResponse(BaseModel):
 async def get_invite_info(token: str, db: AsyncSession = Depends(get_db)):
     """Public endpoint — returns invite details so employee can see who invited them."""
     from fastapi import HTTPException, status
-    assessment = await get_assessment_by_token(db, token)
+    assessment = await get_assessment_for_invite_view(db, token)
     if not assessment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invite not found or expired")
 
     return InviteInfoResponse(
         employee_name=assessment.employee_name,
         employee_email=assessment.employee_email,
+        assessment_type=assessment.assessment_type,
         target_role=assessment.target_role,
         role_label=_ROLE_LABELS.get(assessment.target_role, assessment.target_role),
         status=assessment.status,
         company_name=assessment.company.name,
+        template_name=assessment.template.name if assessment.template else None,
+        deadline_at=assessment.deadline_at.isoformat() if assessment.deadline_at else None,
+        expires_at=assessment.expires_at.isoformat() if assessment.expires_at else None,
+        branding_name=assessment.branding_name,
+        branding_logo_url=assessment.branding_logo_url,
     )
 
 

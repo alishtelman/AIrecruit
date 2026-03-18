@@ -12,11 +12,13 @@ export default function TeamPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [email, setEmail] = useState("");
+  const [role, setRole] = useState<"recruiter" | "viewer">("recruiter");
   const [inviting, setInviting] = useState(false);
   const [inviteResult, setInviteResult] = useState<{ email: string; temp_password: string | null } | null>(null);
   const [formError, setFormError] = useState("");
 
-  const isAdmin = user?.role === "company_admin";
+  const companyRole = user?.company_member_role ?? (user?.role === "company_admin" ? "admin" : null);
+  const isAdmin = companyRole === "admin";
 
   useEffect(() => {
     if (authLoading) return;
@@ -33,10 +35,11 @@ export default function TeamPage() {
     setInviteResult(null);
     setInviting(true);
     try {
-      const res = await companyApi.inviteMember(email);
+      const res = await companyApi.inviteMemberWithRole(email, role);
       setMembers((prev) => [...prev, res.member]);
       setInviteResult({ email: res.member.email, temp_password: res.temp_password });
       setEmail("");
+      setRole("recruiter");
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : "Failed to invite");
     } finally {
@@ -114,6 +117,14 @@ export default function TeamPage() {
                 placeholder="colleague@company.com"
                 className="flex-1 bg-slate-700 border border-slate-600 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"
               />
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value as "recruiter" | "viewer")}
+                className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="recruiter">Recruiter</option>
+                <option value="viewer">Viewer</option>
+              </select>
               <button
                 type="submit"
                 disabled={inviting || !email.trim()}
@@ -138,9 +149,11 @@ export default function TeamPage() {
                   <span className={`text-xs px-2 py-0.5 rounded-full border ${
                     m.role === "admin"
                       ? "bg-blue-500/10 border-blue-500/20 text-blue-400"
-                      : "bg-slate-600/30 border-slate-600/50 text-slate-400"
+                      : m.role === "recruiter"
+                      ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300"
+                      : "bg-slate-600/30 border-slate-600/50 text-slate-300"
                   }`}>
-                    {m.role === "admin" ? "Admin" : "Member"}
+                    {m.role === "admin" ? "Admin" : m.role === "recruiter" ? "Recruiter" : "Viewer"}
                   </span>
                   <span className="text-slate-500 text-xs">
                     Joined {new Date(m.created_at).toLocaleDateString()}

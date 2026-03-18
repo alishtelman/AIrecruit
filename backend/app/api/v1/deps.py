@@ -82,3 +82,35 @@ async def get_current_company(
     if company is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company profile not found")
     return current_user, company
+
+
+async def get_current_company_context(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> tuple[User, Company, str]:
+    user, company = await get_current_company(current_user=current_user, db=db)
+    if current_user.role == "company_admin":
+        return user, company, "admin"
+
+    membership = await db.scalar(
+        select(CompanyMember).where(
+            CompanyMember.user_id == current_user.id,
+            CompanyMember.company_id == company.id,
+        )
+    )
+    if membership is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this company")
+
+    role = "recruiter" if membership.role == "member" else membership.role
+    return user, company, role
+
+
+async def get_current_company_recruiter(
+    context: tuple[User, Company, str] = Depends(get_current_company_context),
+) -> tuple[User, Company, str]:
+    if context[2] not in ("admin", "recruiter"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Recruiter or admin access required",
+        )
+    return context

@@ -614,6 +614,7 @@ async def get_interview_replay(
 
     return InterviewReplayResponse(
         interview_id=interview.id,
+        candidate_id=interview.candidate_id,
         candidate_name=candidate_name,
         target_role=interview.target_role,
         completed_at=interview.completed_at,

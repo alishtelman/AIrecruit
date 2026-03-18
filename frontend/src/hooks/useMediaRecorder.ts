@@ -11,12 +11,14 @@ import { useCallback, useRef, useState } from "react";
  */
 export function useMediaRecorder() {
   const [isRecording, setIsRecording] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const previewRef = useRef<HTMLVideoElement | null>(null);
 
   const startRecording = useCallback(async () => {
+    setErrorMessage("");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       streamRef.current = stream;
@@ -44,7 +46,7 @@ export function useMediaRecorder() {
       recorder.start(1000); // collect chunks every second
       setIsRecording(true);
     } catch {
-      // Permission denied or not supported — silent fail
+      setErrorMessage("Camera or microphone permission denied. Interview will continue without recording.");
       setIsRecording(false);
     }
   }, []);
@@ -69,5 +71,9 @@ export function useMediaRecorder() {
     return new Blob(chunksRef.current, { type: mimeType });
   }, []);
 
-  return { isRecording, previewRef, startRecording, stopRecording, getBlob };
+  const clearRecording = useCallback(() => {
+    chunksRef.current = [];
+  }, []);
+
+  return { isRecording, previewRef, startRecording, stopRecording, getBlob, clearRecording, errorMessage };
 }

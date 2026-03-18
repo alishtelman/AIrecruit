@@ -14,12 +14,14 @@ export type VoiceInputState = "idle" | "recording" | "transcribing" | "error";
  */
 export function useVoiceInput({ onTranscript }: { onTranscript: (text: string) => void }) {
   const [state, setState] = useState<VoiceInputState>("idle");
+  const [errorMessage, setErrorMessage] = useState("");
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
   const start = useCallback(async () => {
     if (state !== "idle") return;
     chunksRef.current = [];
+    setErrorMessage("");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = MediaRecorder.isTypeSupported("audio/webm")
@@ -46,8 +48,9 @@ export function useVoiceInput({ onTranscript }: { onTranscript: (text: string) =
           const { text } = await sttApi.transcribe(blob);
           if (text.trim()) onTranscript(text.trim());
           setState("idle");
-        } catch {
+        } catch (err: unknown) {
           setState("error");
+          setErrorMessage(err instanceof Error ? err.message : "Voice transcription failed");
           setTimeout(() => setState("idle"), 2000);
         }
       };
@@ -55,8 +58,9 @@ export function useVoiceInput({ onTranscript }: { onTranscript: (text: string) =
       recorder.start();
       setState("recording");
     } catch {
-      // Mic permission denied or not available
-      setState("idle");
+      setState("error");
+      setErrorMessage("Microphone permission denied or unavailable");
+      setTimeout(() => setState("idle"), 2000);
     }
   }, [state, onTranscript]);
 
@@ -66,5 +70,7 @@ export function useVoiceInput({ onTranscript }: { onTranscript: (text: string) =
     }
   }, []);
 
-  return { state, start, stop };
+  const clearError = useCallback(() => setErrorMessage(""), []);
+
+  return { state, start, stop, errorMessage, clearError };
 }
