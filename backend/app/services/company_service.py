@@ -6,7 +6,7 @@ from statistics import median
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.candidate import Candidate
+from app.models.candidate import Candidate, PROFILE_VISIBILITY_MARKETPLACE
 from app.models.company_assessment import CompanyAssessment
 from app.models.hire_outcome import HireOutcome
 from app.models.interview import Interview
@@ -20,6 +20,7 @@ from app.schemas.company import (
     AnalyticsFunnelRowResponse,
     AnalyticsOverviewResponse,
     AnalyticsRedFlagSummaryResponse,
+    AnalyticsSalaryBandResponse,
     AnalyticsSalaryBucketResponse,
     AnalyticsSalaryOutcomeTrendResponse,
     AnalyticsSalaryResponse,
@@ -59,6 +60,10 @@ def _normalize_skill_name(value: str) -> str:
     return value.strip().lower()
 
 
+def _is_marketplace_candidate(candidate: Candidate) -> bool:
+    return candidate.profile_visibility == PROFILE_VISIBILITY_MARKETPLACE
+
+
 def _score_bucket(score: float | None) -> str:
     if score is None or score <= 4:
         return "0-4"
@@ -71,6 +76,21 @@ def _score_bucket(score: float | None) -> str:
 
 def _median(values: list[int]) -> float | None:
     return float(median(values)) if values else None
+
+
+def _build_salary_band(ranges: list[tuple[int, int]]) -> AnalyticsSalaryBandResponse:
+    if not ranges:
+        return AnalyticsSalaryBandResponse(candidate_count=0)
+
+    lows = [low for low, _ in ranges]
+    highs = [high for _, high in ranges]
+    return AnalyticsSalaryBandResponse(
+        candidate_count=len(ranges),
+        range_min=float(min(lows)),
+        median_min=_median(lows),
+        median_max=_median(highs),
+        range_max=float(max(highs)),
+    )
 
 
 def _salary_matches(
@@ -144,7 +164,10 @@ async def _load_marketplace_snapshot(
         .join(Interview, AssessmentReport.interview_id == Interview.id)
         .join(Candidate, AssessmentReport.candidate_id == Candidate.id)
         .join(User, Candidate.user_id == User.id)
-        .where(Interview.company_assessment_id.is_(None))
+        .where(
+            Interview.company_assessment_id.is_(None),
+            Candidate.profile_visibility == PROFILE_VISIBILITY_MARKETPLACE,
+        )
         .order_by(desc(AssessmentReport.created_at))
     )
     rows = result.all()
@@ -328,6 +351,8 @@ async def get_candidate_detail(
     candidate = await db.scalar(select(Candidate).where(Candidate.id == candidate_id))
     if not candidate:
         return None
+    if company_id is not None and not _is_marketplace_candidate(candidate):
+        return None
 
     user = await db.scalar(select(User).where(User.id == candidate.user_id))
     if not user:
@@ -416,6 +441,9 @@ async def get_company_report(
 
     report, interview = row
     if interview.company_assessment_id is None:
+        candidate = await db.scalar(select(Candidate).where(Candidate.id == report.candidate_id))
+        if not candidate or not _is_marketplace_candidate(candidate):
+            return None
         return report
 
     assessment = await db.scalar(
@@ -588,22 +616,30 @@ async def get_salary_analytics(
         sort="score_desc",
     )
 
-    grouped: dict[str, list[CandidateListItemResponse]] = defaultdict(list)
+    grouped: dict[tuple[str, str], list[CandidateListItemResponse]] = defaultdict(list)
     for item in items:
         if item.salary_min is None and item.salary_max is None:
             continue
-        grouped[item.target_role].append(item)
+        grouped[(item.target_role, item.salary_currency or "USD")].append(item)
 
     roles: list[AnalyticsSalaryRoleResponse] = []
-    for target_role, role_items in sorted(grouped.items(), key=lambda item: _ROLE_LABELS.get(item[0], item[0])):
+    for (target_role, currency), role_items in sorted(
+        grouped.items(),
+        key=lambda item: (_ROLE_LABELS.get(item[0][0], item[0][0]), item[0][1]),
+    ):
         buckets_data: dict[str, list[tuple[int, int]]] = defaultdict(list)
         outcome_data: dict[str, list[tuple[int, int]]] = defaultdict(list)
+        all_ranges: list[tuple[int, int]] = []
+        shortlisted_ranges: list[tuple[int, int]] = []
 
         for item in role_items:
             low = item.salary_min if item.salary_min is not None else item.salary_max
             high = item.salary_max if item.salary_max is not None else item.salary_min
             if low is None or high is None:
                 continue
+            all_ranges.append((low, high))
+            if item.shortlists:
+                shortlisted_ranges.append((low, high))
             buckets_data[_score_bucket(item.overall_score)].append((low, high))
             outcome_data[item.hire_outcome or "unreviewed"].append((low, high))
 
@@ -632,7 +668,10 @@ async def get_salary_analytics(
         roles.append(
             AnalyticsSalaryRoleResponse(
                 role=target_role,
+                currency=currency,
                 candidate_count=len(role_items),
+                market_band=_build_salary_band(all_ranges),
+                shortlisted_band=_build_salary_band(shortlisted_ranges) if shortlisted_ranges else None,
                 buckets=buckets,
                 outcome_trends=outcome_trends,
             )

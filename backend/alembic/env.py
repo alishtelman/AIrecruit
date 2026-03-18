@@ -18,6 +18,7 @@ from app.models.template import InterviewTemplate  # noqa: F401
 from app.models.company_member import CompanyMember  # noqa: F401
 from app.models.company_assessment import CompanyAssessment  # noqa: F401
 from app.models.skill import CandidateSkill  # noqa: F401
+from app.models.hire_outcome import HireOutcome  # noqa: F401
 from app.models.shortlist import CompanyShortlist, CompanyShortlistCandidate  # noqa: F401
 from app.models.collaboration import CompanyCandidateActivity, CompanyCandidateNote  # noqa: F401
 from app.core.database import Base

@@ -117,6 +117,35 @@ export interface CandidateWithUser {
   candidate: Candidate;
 }
 
+export type ProfileVisibility = "private" | "marketplace" | "direct_link" | "request_only";
+
+export interface CandidatePrivacy {
+  visibility: ProfileVisibility;
+  share_token: string | null;
+}
+
+export interface SharedCandidateReport {
+  report_id: string;
+  interview_id: string | null;
+  target_role: string;
+  overall_score: number | null;
+  hiring_recommendation: HiringRecommendation;
+  interview_summary: string | null;
+  completed_at: string | null;
+  strengths: string[];
+  recommendations: string[];
+  skill_tags: SkillTag[] | null;
+}
+
+export interface SharedCandidateProfile {
+  candidate_id: string;
+  full_name: string;
+  salary_min: number | null;
+  salary_max: number | null;
+  salary_currency: string;
+  reports: SharedCandidateReport[];
+}
+
 // ── Resume ────────────────────────────────────────────────────────────────────
 
 export interface ResumeUploadResponse {
@@ -403,9 +432,20 @@ export interface AnalyticsSalaryOutcomeTrend {
   count: number;
 }
 
+export interface AnalyticsSalaryBand {
+  candidate_count: number;
+  range_min: number | null;
+  median_min: number | null;
+  median_max: number | null;
+  range_max: number | null;
+}
+
 export interface AnalyticsSalaryRole {
   role: string;
+  currency: string;
   candidate_count: number;
+  market_band: AnalyticsSalaryBand;
+  shortlisted_band: AnalyticsSalaryBand | null;
   buckets: AnalyticsSalaryBucket[];
   outcome_trends: AnalyticsSalaryOutcomeTrend[];
 }

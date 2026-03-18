@@ -1,13 +1,21 @@
+import secrets
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from pydantic import BaseModel
-from sqlalchemy import select, func
+from pydantic import BaseModel, field_validator
+from sqlalchemy import desc, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_candidate
 from app.core.database import get_db
-from app.models.candidate import Candidate
+from app.models.candidate import (
+    Candidate,
+    PROFILE_VISIBILITIES,
+    PROFILE_VISIBILITY_DIRECT_LINK,
+    PROFILE_VISIBILITY_MARKETPLACE,
+    PROFILE_VISIBILITY_PRIVATE,
+    PROFILE_VISIBILITY_REQUEST_ONLY,
+)
 from app.models.interview import Interview
 from app.models.report import AssessmentReport
 from app.models.resume import Resume
@@ -143,6 +151,70 @@ class SalaryBenchmarkResponse(BaseModel):
     buckets: list[BenchmarkBucket]
 
 
+class CandidatePrivacyResponse(BaseModel):
+    visibility: str
+    share_token: str | None = None
+
+
+class CandidatePrivacyUpdateRequest(BaseModel):
+    visibility: str
+
+    @field_validator("visibility")
+    @classmethod
+    def visibility_must_be_supported(cls, v: str) -> str:
+        if v not in PROFILE_VISIBILITIES:
+            raise ValueError("Unsupported visibility value.")
+        return v
+
+
+class SharedCandidateReportResponse(BaseModel):
+    report_id: str
+    interview_id: str | None
+    target_role: str
+    overall_score: float | None
+    hiring_recommendation: str
+    interview_summary: str | None
+    completed_at: datetime | None
+    strengths: list[str]
+    recommendations: list[str]
+    skill_tags: list[dict] | None = None
+
+
+class SharedCandidateProfileResponse(BaseModel):
+    candidate_id: str
+    full_name: str
+    salary_min: int | None
+    salary_max: int | None
+    salary_currency: str
+    reports: list[SharedCandidateReportResponse]
+
+
+async def _ensure_share_token(db: AsyncSession, candidate: Candidate) -> str:
+    if candidate.public_share_token:
+        return candidate.public_share_token
+
+    while True:
+        token = secrets.token_urlsafe(24)
+        existing = await db.scalar(
+            select(Candidate).where(Candidate.public_share_token == token)
+        )
+        if existing is None:
+            candidate.public_share_token = token
+            return token
+
+
+def _build_privacy_response(candidate: Candidate) -> CandidatePrivacyResponse:
+    share_token = (
+        candidate.public_share_token
+        if candidate.profile_visibility == PROFILE_VISIBILITY_DIRECT_LINK
+        else None
+    )
+    return CandidatePrivacyResponse(
+        visibility=candidate.profile_visibility,
+        share_token=share_token,
+    )
+
+
 @router.patch("/salary", response_model=SalaryResponse)
 async def update_salary(
     body: SalaryUpdateRequest,
@@ -189,6 +261,7 @@ async def salary_benchmark(
         .where(
             Interview.target_role == role,
             Candidate.salary_min.isnot(None),
+            Candidate.profile_visibility == PROFILE_VISIBILITY_MARKETPLACE,
         )
     )
     rows = result.all()
@@ -232,6 +305,79 @@ async def salary_benchmark(
         ))
 
     return SalaryBenchmarkResponse(role=role, buckets=result_buckets)
+
+
+@router.get("/privacy", response_model=CandidatePrivacyResponse)
+async def get_privacy(
+    user_and_candidate: tuple[User, Candidate] = Depends(get_current_candidate),
+):
+    _, candidate = user_and_candidate
+    return _build_privacy_response(candidate)
+
+
+@router.patch("/privacy", response_model=CandidatePrivacyResponse)
+async def update_privacy(
+    body: CandidatePrivacyUpdateRequest,
+    user_and_candidate: tuple[User, Candidate] = Depends(get_current_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    _, candidate = user_and_candidate
+    candidate.profile_visibility = body.visibility
+    if body.visibility == PROFILE_VISIBILITY_DIRECT_LINK:
+        await _ensure_share_token(db, candidate)
+    await db.commit()
+    await db.refresh(candidate)
+    return _build_privacy_response(candidate)
+
+
+@router.get("/share/{share_token}", response_model=SharedCandidateProfileResponse)
+async def get_shared_candidate_profile(
+    share_token: str,
+    db: AsyncSession = Depends(get_db),
+):
+    candidate = await db.scalar(
+        select(Candidate).where(Candidate.public_share_token == share_token)
+    )
+    if not candidate or candidate.profile_visibility not in {
+        PROFILE_VISIBILITY_MARKETPLACE,
+        PROFILE_VISIBILITY_DIRECT_LINK,
+    }:
+        raise HTTPException(status_code=404, detail="Shared candidate profile not found.")
+
+    result = await db.execute(
+        select(AssessmentReport, Interview)
+        .join(Interview, AssessmentReport.interview_id == Interview.id)
+        .where(
+            AssessmentReport.candidate_id == candidate.id,
+            Interview.company_assessment_id.is_(None),
+        )
+        .order_by(desc(AssessmentReport.created_at))
+    )
+
+    reports = [
+        SharedCandidateReportResponse(
+            report_id=str(report.id),
+            interview_id=str(interview.id) if interview else None,
+            target_role=interview.target_role,
+            overall_score=report.overall_score,
+            hiring_recommendation=report.hiring_recommendation,
+            interview_summary=report.interview_summary,
+            completed_at=interview.completed_at,
+            strengths=report.strengths,
+            recommendations=report.recommendations,
+            skill_tags=report.skill_tags,
+        )
+        for report, interview in result.all()
+    ]
+
+    return SharedCandidateProfileResponse(
+        candidate_id=str(candidate.id),
+        full_name=candidate.full_name,
+        salary_min=candidate.salary_min,
+        salary_max=candidate.salary_max,
+        salary_currency=candidate.salary_currency,
+        reports=reports,
+    )
 
 
 @router.post(

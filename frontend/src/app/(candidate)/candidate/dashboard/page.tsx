@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { candidateApi } from "@/lib/api";
+import type { CandidatePrivacy, ProfileVisibility } from "@/lib/types";
 
 interface Stats {
   has_resume: boolean;
@@ -18,6 +19,25 @@ interface Salary {
   salary_currency: string;
 }
 
+const VISIBILITY_HELP: Record<ProfileVisibility, { title: string; body: string }> = {
+  private: {
+    title: "Private",
+    body: "Your profile stays hidden from marketplace companies and direct links.",
+  },
+  marketplace: {
+    title: "Marketplace",
+    body: "Companies can discover your profile, reports, and salary expectations in the public talent database.",
+  },
+  direct_link: {
+    title: "Direct Link",
+    body: "Your profile is hidden from marketplace search, but anyone with your link can open the shared profile.",
+  },
+  request_only: {
+    title: "Request Only",
+    body: "Your profile is hidden from marketplace search. Company approval flows will build on this mode later.",
+  },
+};
+
 export default function DashboardPage() {
   const { user, loading, logout } = useAuth();
   const [stats, setStats] = useState<Stats | null>(null);
@@ -27,6 +47,10 @@ export default function DashboardPage() {
   const [salaryCurrency, setSalaryCurrency] = useState("USD");
   const [savingSalary, setSavingSalary] = useState(false);
   const [salarySaved, setSalarySaved] = useState(false);
+  const [privacy, setPrivacy] = useState<CandidatePrivacy>({ visibility: "marketplace", share_token: null });
+  const [savingPrivacy, setSavingPrivacy] = useState(false);
+  const [privacySaved, setPrivacySaved] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   useEffect(() => {
     if (loading) return;
@@ -37,6 +61,7 @@ export default function DashboardPage() {
       setSalaryMax(s.salary_max?.toString() ?? "");
       setSalaryCurrency(s.salary_currency ?? "USD");
     }).catch(() => null);
+    candidateApi.getPrivacy().then(setPrivacy).catch(() => null);
   }, [loading]);
 
   async function handleSaveSalary() {
@@ -54,6 +79,32 @@ export default function DashboardPage() {
       // ignore
     } finally {
       setSavingSalary(false);
+    }
+  }
+
+  async function handleSavePrivacy() {
+    setSavingPrivacy(true);
+    try {
+      const updated = await candidateApi.updatePrivacy(privacy.visibility);
+      setPrivacy(updated);
+      setPrivacySaved(true);
+      setTimeout(() => setPrivacySaved(false), 2000);
+    } catch {
+      // ignore
+    } finally {
+      setSavingPrivacy(false);
+    }
+  }
+
+  async function handleCopyShareLink() {
+    if (!privacy.share_token || typeof window === "undefined") return;
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/candidate/share/${privacy.share_token}`);
+      setCopyState("copied");
+      setTimeout(() => setCopyState("idle"), 2000);
+    } catch {
+      setCopyState("failed");
+      setTimeout(() => setCopyState("idle"), 2000);
     }
   }
 
@@ -142,6 +193,57 @@ export default function DashboardPage() {
               {salarySaved ? "Saved ✓" : savingSalary ? "Saving…" : "Save"}
             </button>
           </div>
+        </div>
+
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 mb-6">
+          <h2 className="text-white font-semibold mb-3 text-sm">🔐 Profile Visibility</h2>
+          <div className="flex flex-wrap gap-3 items-end">
+            <div className="min-w-[220px]">
+              <label className="text-slate-400 text-xs mb-1 block">Visibility</label>
+              <select
+                value={privacy.visibility}
+                onChange={(e) => setPrivacy((current) => ({ ...current, visibility: e.target.value as ProfileVisibility }))}
+                className="w-full bg-slate-700 border border-slate-600 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-500"
+              >
+                <option value="marketplace">Marketplace</option>
+                <option value="direct_link">Direct Link</option>
+                <option value="request_only">Request Only</option>
+                <option value="private">Private</option>
+              </select>
+            </div>
+            <button
+              onClick={handleSavePrivacy}
+              disabled={savingPrivacy}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+            >
+              {privacySaved ? "Saved ✓" : savingPrivacy ? "Saving…" : "Save"}
+            </button>
+          </div>
+          <div className="mt-3 rounded-lg border border-slate-700 bg-slate-900 px-4 py-3">
+            <p className="text-white text-sm font-medium">{VISIBILITY_HELP[privacy.visibility].title}</p>
+            <p className="text-slate-400 text-sm mt-1">{VISIBILITY_HELP[privacy.visibility].body}</p>
+          </div>
+          {privacy.visibility === "direct_link" && privacy.share_token && (
+            <div className="mt-3 rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3">
+              <p className="text-blue-300 text-sm font-medium mb-1">Shareable profile link</p>
+              <p className="text-slate-300 text-sm break-all">/candidate/share/{privacy.share_token}</p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                <button
+                  onClick={handleCopyShareLink}
+                  className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors"
+                >
+                  {copyState === "copied" ? "Copied ✓" : copyState === "failed" ? "Copy failed" : "Copy full link"}
+                </button>
+                <Link
+                  href={`/candidate/share/${privacy.share_token}`}
+                  target="_blank"
+                  className="px-3 py-2 border border-slate-600 text-slate-200 hover:text-white hover:border-slate-500 text-sm rounded-lg transition-colors"
+                >
+                  Open shared profile
+                </Link>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="grid gap-4">

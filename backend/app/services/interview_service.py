@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.assessor import AssessmentResult, assessor
 from app.ai.competencies import build_question_plan
 from app.ai.interviewer import MAX_QUESTIONS, InterviewContext, interviewer
-from app.models.candidate import Candidate
+from app.models.candidate import Candidate, PROFILE_VISIBILITY_MARKETPLACE
 from app.models.interview import Interview, InterviewMessage
 from app.models.report import AssessmentReport
 from app.models.resume import Resume
@@ -584,6 +584,8 @@ async def get_interview_replay(
 
     # Load candidate name
     candidate = await db.scalar(select(Candidate).where(Candidate.id == interview.candidate_id))
+    if interview.company_assessment_id is None and (not candidate or candidate.profile_visibility != PROFILE_VISIBILITY_MARKETPLACE):
+        return None
     candidate_name = candidate.full_name if candidate else "Unknown"
 
     # Build turns: pair assistant messages with following candidate messages

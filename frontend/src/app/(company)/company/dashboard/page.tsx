@@ -104,6 +104,22 @@ function formatSalary(candidate: CandidateListItem) {
     : `${low.toLocaleString()}–${high.toLocaleString()} ${candidate.salary_currency}`;
 }
 
+function formatSalaryBand(
+  band: {
+    candidate_count: number;
+    range_min: number | null;
+    median_min: number | null;
+    median_max: number | null;
+    range_max: number | null;
+  } | null,
+  currency: string,
+) {
+  if (!band || band.candidate_count === 0 || band.range_min == null || band.range_max == null) {
+    return "No data";
+  }
+  return `${Math.round(band.range_min).toLocaleString()}–${Math.round(band.range_max).toLocaleString()} ${currency}`;
+}
+
 function MetricCard({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "good" | "warn" }) {
   const toneClass =
     tone === "good"
@@ -802,9 +818,22 @@ export default function CompanyDashboardPage() {
                         <div key={roleBlock.role} className="rounded-xl border border-slate-700 bg-slate-900 p-4">
                           <div className="flex items-center justify-between mb-4">
                             <div>
-                              <h3 className="text-white font-semibold">{ROLE_LABELS[roleBlock.role] ?? roleBlock.role}</h3>
+                              <h3 className="text-white font-semibold">
+                                {ROLE_LABELS[roleBlock.role] ?? roleBlock.role} <span className="text-slate-500">· {roleBlock.currency}</span>
+                              </h3>
                               <p className="text-slate-500 text-sm">{roleBlock.candidate_count} candidates with salary data</p>
                             </div>
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-2 mb-4">
+                            <MetricCard
+                              label="Market Band"
+                              value={formatSalaryBand(roleBlock.market_band, roleBlock.currency)}
+                            />
+                            <MetricCard
+                              label="Shortlist Spread"
+                              value={formatSalaryBand(roleBlock.shortlisted_band, roleBlock.currency)}
+                              tone="good"
+                            />
                           </div>
                           <div className="grid gap-4 xl:grid-cols-2">
                             <div>
@@ -816,7 +845,7 @@ export default function CompanyDashboardPage() {
                                     <span className="text-slate-400 text-sm">
                                       {bucket.count === 0 || bucket.median_min == null || bucket.median_max == null
                                         ? "No data"
-                                        : `${Math.round(bucket.median_min).toLocaleString()}–${Math.round(bucket.median_max).toLocaleString()}`}
+                                        : `${Math.round(bucket.median_min).toLocaleString()}–${Math.round(bucket.median_max).toLocaleString()} ${roleBlock.currency}`}
                                     </span>
                                   </div>
                                 ))}
@@ -831,7 +860,7 @@ export default function CompanyDashboardPage() {
                                     <span className="text-slate-400 text-sm">
                                       {trend.count === 0 || trend.median_min == null || trend.median_max == null
                                         ? "No data"
-                                        : `${Math.round(trend.median_min).toLocaleString()}–${Math.round(trend.median_max).toLocaleString()}`}
+                                        : `${Math.round(trend.median_min).toLocaleString()}–${Math.round(trend.median_max).toLocaleString()} ${roleBlock.currency}`}
                                     </span>
                                   </div>
                                 ))}

@@ -11,6 +11,7 @@ import type {
   CandidateListItem,
   CandidateNote,
   CandidateRegisterRequest,
+  CandidatePrivacy,
   CandidateWithUser,
   CompanyShortlist,
   CompanyAssessment,
@@ -27,6 +28,7 @@ import type {
   LoginRequest,
   ResumeTextResponse,
   ResumeUploadResponse,
+  SharedCandidateProfile,
   SendMessageRequest,
   SendMessageResponse,
   StartInterviewRequest,
@@ -292,10 +294,22 @@ export const candidateApi = {
       body: JSON.stringify(data),
     }),
 
+  getPrivacy: () =>
+    request<CandidatePrivacy>("/api/v1/candidate/privacy"),
+
+  updatePrivacy: (visibility: CandidatePrivacy["visibility"]) =>
+    request<CandidatePrivacy>("/api/v1/candidate/privacy", {
+      method: "PATCH",
+      body: JSON.stringify({ visibility }),
+    }),
+
   salaryBenchmark: (role: string) =>
     request<{ role: string; buckets: { score_range: string; median_min: number | null; median_max: number | null; count: number }[] }>(
       `/api/v1/candidate/salary/benchmark?role=${encodeURIComponent(role)}`
     ),
+
+  getSharedProfile: (shareToken: string) =>
+    request<SharedCandidateProfile>(`/api/v1/candidate/share/${encodeURIComponent(shareToken)}`),
 };
 
 // ── Resume ────────────────────────────────────────────────────────────────────

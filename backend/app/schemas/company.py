@@ -213,9 +213,20 @@ class AnalyticsSalaryOutcomeTrendResponse(BaseModel):
     count: int
 
 
+class AnalyticsSalaryBandResponse(BaseModel):
+    candidate_count: int
+    range_min: float | None = None
+    median_min: float | None = None
+    median_max: float | None = None
+    range_max: float | None = None
+
+
 class AnalyticsSalaryRoleResponse(BaseModel):
     role: str
+    currency: str
     candidate_count: int
+    market_band: AnalyticsSalaryBandResponse
+    shortlisted_band: AnalyticsSalaryBandResponse | None = None
     buckets: list[AnalyticsSalaryBucketResponse]
     outcome_trends: list[AnalyticsSalaryOutcomeTrendResponse]
 
