@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { candidateApi } from "@/lib/api";
-import type { SharedCandidateProfile } from "@/lib/types";
+import { authApi, candidateApi, companyApi } from "@/lib/api";
+import { getToken } from "@/lib/auth";
+import type { CompanyShareAccessStatus, SharedCandidateProfile, User } from "@/lib/types";
 
 function formatSalary(profile: SharedCandidateProfile): string {
   if (profile.salary_min == null && profile.salary_max == null) {
@@ -25,6 +26,9 @@ export default function SharedCandidatePage() {
   const [profile, setProfile] = useState<SharedCandidateProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [viewer, setViewer] = useState<User | null>(null);
+  const [accessStatus, setAccessStatus] = useState<CompanyShareAccessStatus | null>(null);
+  const [requestingAccess, setRequestingAccess] = useState(false);
 
   useEffect(() => {
     const token = Array.isArray(params.token) ? params.token[0] : params.token;
@@ -40,6 +44,35 @@ export default function SharedCandidatePage() {
       })
       .finally(() => setLoading(false));
   }, [params.token]);
+
+  useEffect(() => {
+    const token = Array.isArray(params.token) ? params.token[0] : params.token;
+    if (!token || !profile || profile.visibility !== "request_only" || !getToken()) return;
+
+    authApi.me()
+      .then((user) => {
+        setViewer(user);
+        if (user.role === "company_admin" || user.role === "company_member") {
+          return companyApi.getShareLinkAccessStatus(token).then(setAccessStatus);
+        }
+        return null;
+      })
+      .catch(() => null);
+  }, [params.token, profile]);
+
+  async function handleRequestAccess() {
+    const token = Array.isArray(params.token) ? params.token[0] : params.token;
+    if (!token) return;
+    setRequestingAccess(true);
+    try {
+      const response = await companyApi.requestShareLinkAccess(token);
+      setAccessStatus(response);
+    } catch {
+      // ignore
+    } finally {
+      setRequestingAccess(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -70,17 +103,76 @@ export default function SharedCandidatePage() {
           <p className="text-blue-300 text-sm uppercase tracking-[0.2em] mb-3">Shared Candidate Profile</p>
           <h1 className="text-4xl font-bold mb-3">{profile.full_name}</h1>
           <p className="text-slate-300 max-w-2xl">
-            Structured interview results shared directly by the candidate. Marketplace discovery is disabled for this profile.
+            {profile.requires_approval
+              ? "This candidate uses request-only visibility. Companies need explicit approval before workspace access is granted."
+              : "Structured interview results shared directly by the candidate. Marketplace discovery is disabled for this profile."}
           </p>
           <div className="mt-6 inline-flex items-center rounded-full border border-slate-700 bg-slate-900/80 px-4 py-2 text-sm text-slate-300">
             Salary expectation: {formatSalary(profile)}
           </div>
         </div>
 
+        {profile.requires_approval && (
+          <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-6 mb-6">
+            <p className="text-blue-300 font-medium mb-2">Request-only access</p>
+            <p className="text-slate-300 text-sm">
+              Reports stay hidden on this page until the candidate approves a company access request.
+            </p>
+            {(viewer?.role === "company_admin" || viewer?.role === "company_member") ? (
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                {accessStatus?.request_status === "approved" ? (
+                  <>
+                    <span className="px-3 py-1 rounded-full text-xs border bg-green-500/15 text-green-400 border-green-500/30">
+                      Access approved
+                    </span>
+                    {accessStatus.can_open_company_workspace && (
+                      <Link
+                        href={`/company/candidates/${profile.candidate_id}`}
+                        className="px-3 py-2 bg-green-600 hover:bg-green-500 text-white text-sm rounded-lg transition-colors"
+                      >
+                        Open in company workspace
+                      </Link>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <span className={`px-3 py-1 rounded-full text-xs border ${
+                      accessStatus?.request_status === "pending"
+                        ? "bg-blue-500/15 text-blue-400 border-blue-500/30"
+                        : accessStatus?.request_status === "denied"
+                          ? "bg-red-500/15 text-red-400 border-red-500/30"
+                          : "bg-slate-700 text-slate-300 border-slate-600"
+                    }`}>
+                      {accessStatus?.request_status === "pending"
+                        ? "Request pending"
+                        : accessStatus?.request_status === "denied"
+                          ? "Request denied"
+                          : "No request sent"}
+                    </span>
+                    <button
+                      onClick={handleRequestAccess}
+                      disabled={requestingAccess || accessStatus?.request_status === "pending"}
+                      className="px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+                    >
+                      {requestingAccess ? "Requesting…" : accessStatus?.request_status === "denied" ? "Request again" : "Request access"}
+                    </button>
+                  </>
+                )}
+              </div>
+            ) : (
+              <p className="text-slate-400 text-sm mt-4">Sign in as a company user to request workspace access.</p>
+            )}
+          </div>
+        )}
+
         <div className="space-y-5">
           {profile.reports.length === 0 ? (
             <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-              <p className="text-slate-400">No public interview reports are attached to this shared profile yet.</p>
+              <p className="text-slate-400">
+                {profile.requires_approval
+                  ? "Interview reports are hidden until access is approved."
+                  : "No public interview reports are attached to this shared profile yet."}
+              </p>
             </div>
           ) : (
             profile.reports.map((report) => (

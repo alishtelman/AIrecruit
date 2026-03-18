@@ -33,6 +33,10 @@ from app.services.company_service import (
     get_salary_analytics,
     list_verified_candidates,
 )
+from app.services.candidate_access_service import (
+    create_share_link_access_request,
+    get_share_link_access_status,
+)
 from app.services.collaboration_service import (
     create_candidate_note,
     list_candidate_activity,
@@ -67,6 +71,20 @@ from app.services.template_service import (
 )
 
 router = APIRouter(prefix="/company", tags=["company"])
+
+
+class ShareLinkAccessStatusResponse(BaseModel):
+    candidate_id: uuid.UUID
+    full_name: str
+    request_status: str | None = None
+    can_open_company_workspace: bool = False
+
+
+class ShareLinkRequestResponse(BaseModel):
+    candidate_id: uuid.UUID
+    full_name: str
+    request_status: str
+    can_open_company_workspace: bool = False
 
 
 @router.get("/candidates", response_model=list[CandidateListItemResponse])
@@ -112,6 +130,48 @@ async def get_candidate(
     if not result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
     return result
+
+
+@router.get("/share-links/{share_token}", response_model=ShareLinkAccessStatusResponse)
+async def get_share_link_status(
+    share_token: str,
+    db: AsyncSession = Depends(get_db),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    _, company = user_and_company
+    candidate, request, can_open_company_workspace = await get_share_link_access_status(db, share_token, company.id)
+    return ShareLinkAccessStatusResponse(
+        candidate_id=candidate.id,
+        full_name=candidate.full_name,
+        request_status=request.status if request else None,
+        can_open_company_workspace=can_open_company_workspace,
+    )
+
+
+@router.post("/share-links/{share_token}/request-access", response_model=ShareLinkRequestResponse)
+async def request_share_link_access(
+    share_token: str,
+    db: AsyncSession = Depends(get_db),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    user, company = user_and_company
+    request = await create_share_link_access_request(db, share_token, company.id, user.id)
+    await log_candidate_activity(
+        db,
+        company_id=company.id,
+        candidate_id=request.candidate_id,
+        actor_user_id=user.id,
+        activity_type="access_requested",
+        summary="Requested candidate workspace access",
+        metadata={"access_request_id": str(request.id), "status": request.status},
+    )
+    candidate, refreshed_request, can_open_company_workspace = await get_share_link_access_status(db, share_token, company.id)
+    return ShareLinkRequestResponse(
+        candidate_id=request.candidate_id,
+        full_name=candidate.full_name,
+        request_status=refreshed_request.status if refreshed_request else request.status,
+        can_open_company_workspace=can_open_company_workspace,
+    )
 
 
 @router.post("/candidates/{candidate_id}/outcome", response_model=HireOutcomeResponse)

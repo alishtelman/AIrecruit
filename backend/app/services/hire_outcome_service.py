@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.hire_outcome import HireOutcome
+from app.services.candidate_access_service import ensure_company_candidate_workspace_access
 from app.services.collaboration_service import log_candidate_activity
 
 
@@ -20,6 +21,8 @@ async def set_hire_outcome(
     notes: str | None = None,
     actor_user_id: uuid.UUID | None = None,
 ) -> HireOutcome:
+    await ensure_company_candidate_workspace_access(db, company_id, candidate_id)
+
     if outcome not in VALID_OUTCOMES:
         raise ValueError(f"Invalid outcome '{outcome}'. Must be one of {VALID_OUTCOMES}")
 
@@ -74,6 +77,7 @@ async def get_hire_outcome(
     company_id: uuid.UUID,
     candidate_id: uuid.UUID,
 ) -> HireOutcome | None:
+    await ensure_company_candidate_workspace_access(db, company_id, candidate_id)
     return await db.scalar(
         select(HireOutcome).where(
             HireOutcome.company_id == company_id,

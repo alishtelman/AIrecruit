@@ -30,6 +30,7 @@ from app.schemas.company import (
     CandidateListItemResponse,
     ReportWithRoleResponse,
 )
+from app.services.candidate_access_service import has_company_candidate_workspace_access
 from app.services.shortlist_service import get_candidate_shortlists_map
 
 _ROLE_LABELS = {
@@ -351,7 +352,7 @@ async def get_candidate_detail(
     candidate = await db.scalar(select(Candidate).where(Candidate.id == candidate_id))
     if not candidate:
         return None
-    if company_id is not None and not _is_marketplace_candidate(candidate):
+    if company_id is not None and not await has_company_candidate_workspace_access(db, company_id, candidate):
         return None
 
     user = await db.scalar(select(User).where(User.id == candidate.user_id))
@@ -442,7 +443,7 @@ async def get_company_report(
     report, interview = row
     if interview.company_assessment_id is None:
         candidate = await db.scalar(select(Candidate).where(Candidate.id == report.candidate_id))
-        if not candidate or not _is_marketplace_candidate(candidate):
+        if not candidate or not await has_company_candidate_workspace_access(db, company_id, candidate):
             return None
         return report
 

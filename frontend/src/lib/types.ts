@@ -118,10 +118,29 @@ export interface CandidateWithUser {
 }
 
 export type ProfileVisibility = "private" | "marketplace" | "direct_link" | "request_only";
+export type AccessRequestStatus = "pending" | "approved" | "denied";
 
 export interface CandidatePrivacy {
   visibility: ProfileVisibility;
   share_token: string | null;
+}
+
+export interface CandidateAccessRequest {
+  request_id: string;
+  company_id: string;
+  company_name: string;
+  requested_by_user_id: string | null;
+  requested_by_email: string | null;
+  status: AccessRequestStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CompanyShareAccessStatus {
+  candidate_id: string;
+  full_name: string;
+  request_status: AccessRequestStatus | null;
+  can_open_company_workspace: boolean;
 }
 
 export interface SharedCandidateReport {
@@ -140,6 +159,8 @@ export interface SharedCandidateReport {
 export interface SharedCandidateProfile {
   candidate_id: string;
   full_name: string;
+  visibility: ProfileVisibility;
+  requires_approval: boolean;
   salary_min: number | null;
   salary_max: number | null;
   salary_currency: string;

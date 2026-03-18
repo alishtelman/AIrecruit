@@ -1,40 +1,21 @@
 import uuid
-from datetime import datetime
 
-from fastapi import HTTPException, status
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.candidate import Candidate
 from app.models.collaboration import CompanyCandidateActivity, CompanyCandidateNote
-from app.models.interview import Interview
-from app.models.report import AssessmentReport
 from app.models.user import User
 from app.schemas.company import CandidateActivityResponse, CandidateNoteResponse
+from app.services.candidate_access_service import ensure_company_candidate_workspace_access
 
 
 async def ensure_company_candidate_access(
     db: AsyncSession,
     company_id: uuid.UUID,
     candidate_id: uuid.UUID,
-) -> Candidate:
-    candidate = await db.scalar(select(Candidate).where(Candidate.id == candidate_id))
-    if not candidate:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
-
-    report_exists = await db.scalar(
-        select(AssessmentReport.id)
-        .join(Interview, AssessmentReport.interview_id == Interview.id)
-        .where(
-            AssessmentReport.candidate_id == candidate_id,
-            Interview.company_assessment_id.is_(None),
-        )
-    )
-    if report_exists is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
-
-    return candidate
+):
+    return await ensure_company_candidate_workspace_access(db, company_id, candidate_id)
 
 
 async def log_candidate_activity(

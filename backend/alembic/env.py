@@ -10,6 +10,7 @@ from alembic import context
 # Import all models so autogenerate can detect them
 from app.models.user import User  # noqa: F401
 from app.models.candidate import Candidate  # noqa: F401
+from app.models.candidate_access_request import CandidateAccessRequest  # noqa: F401
 from app.models.company import Company  # noqa: F401
 from app.models.resume import Resume  # noqa: F401
 from app.models.interview import Interview, InterviewMessage  # noqa: F401

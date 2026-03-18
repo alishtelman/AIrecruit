@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { candidateApi } from "@/lib/api";
-import type { CandidatePrivacy, ProfileVisibility } from "@/lib/types";
+import type { CandidateAccessRequest, CandidatePrivacy, ProfileVisibility } from "@/lib/types";
 
 interface Stats {
   has_resume: boolean;
@@ -34,7 +34,7 @@ const VISIBILITY_HELP: Record<ProfileVisibility, { title: string; body: string }
   },
   request_only: {
     title: "Request Only",
-    body: "Your profile is hidden from marketplace search. Company approval flows will build on this mode later.",
+    body: "Your profile is hidden from marketplace search. Companies need your approval before they can open it in their workspace.",
   },
 };
 
@@ -51,6 +51,8 @@ export default function DashboardPage() {
   const [savingPrivacy, setSavingPrivacy] = useState(false);
   const [privacySaved, setPrivacySaved] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [accessRequests, setAccessRequests] = useState<CandidateAccessRequest[]>([]);
+  const [accessActionId, setAccessActionId] = useState<string | null>(null);
 
   useEffect(() => {
     if (loading) return;
@@ -62,6 +64,7 @@ export default function DashboardPage() {
       setSalaryCurrency(s.salary_currency ?? "USD");
     }).catch(() => null);
     candidateApi.getPrivacy().then(setPrivacy).catch(() => null);
+    candidateApi.listAccessRequests().then(setAccessRequests).catch(() => null);
   }, [loading]);
 
   async function handleSaveSalary() {
@@ -105,6 +108,20 @@ export default function DashboardPage() {
     } catch {
       setCopyState("failed");
       setTimeout(() => setCopyState("idle"), 2000);
+    }
+  }
+
+  async function handleAccessRequestAction(requestId: string, action: "approve" | "deny") {
+    setAccessActionId(requestId);
+    try {
+      const updated = action === "approve"
+        ? await candidateApi.approveAccessRequest(requestId)
+        : await candidateApi.denyAccessRequest(requestId);
+      setAccessRequests((current) => current.map((item) => (item.request_id === requestId ? updated : item)));
+    } catch {
+      // ignore
+    } finally {
+      setAccessActionId(null);
     }
   }
 
@@ -223,10 +240,17 @@ export default function DashboardPage() {
             <p className="text-white text-sm font-medium">{VISIBILITY_HELP[privacy.visibility].title}</p>
             <p className="text-slate-400 text-sm mt-1">{VISIBILITY_HELP[privacy.visibility].body}</p>
           </div>
-          {privacy.visibility === "direct_link" && privacy.share_token && (
+          {(privacy.visibility === "direct_link" || privacy.visibility === "request_only") && privacy.share_token && (
             <div className="mt-3 rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3">
-              <p className="text-blue-300 text-sm font-medium mb-1">Shareable profile link</p>
+              <p className="text-blue-300 text-sm font-medium mb-1">
+                {privacy.visibility === "direct_link" ? "Shareable profile link" : "Request-access link"}
+              </p>
               <p className="text-slate-300 text-sm break-all">/candidate/share/{privacy.share_token}</p>
+              <p className="text-slate-400 text-sm mt-2">
+                {privacy.visibility === "direct_link"
+                  ? "Anyone with this link can open the shared profile."
+                  : "Companies with this link can request workspace access. You approve or deny those requests below."}
+              </p>
               <div className="mt-3 flex flex-wrap gap-3">
                 <button
                   onClick={handleCopyShareLink}
@@ -242,6 +266,57 @@ export default function DashboardPage() {
                   Open shared profile
                 </Link>
               </div>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 mb-6">
+          <h2 className="text-white font-semibold mb-3 text-sm">🏢 Company Access Requests</h2>
+          {accessRequests.length === 0 ? (
+            <p className="text-slate-500 text-sm">No company access requests yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {accessRequests.map((request) => (
+                <div key={request.request_id} className="rounded-lg border border-slate-700 bg-slate-900 px-4 py-3">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <p className="text-white text-sm font-medium">{request.company_name}</p>
+                      <p className="text-slate-400 text-xs mt-1">
+                        Requested by {request.requested_by_email ?? "company member"} on {new Date(request.updated_at).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2.5 py-1 rounded-full text-xs border ${
+                        request.status === "approved"
+                          ? "bg-green-500/15 text-green-400 border-green-500/30"
+                          : request.status === "denied"
+                            ? "bg-red-500/15 text-red-400 border-red-500/30"
+                            : "bg-blue-500/15 text-blue-400 border-blue-500/30"
+                      }`}>
+                        {request.status === "approved" ? "Approved" : request.status === "denied" ? "Denied" : "Pending"}
+                      </span>
+                      {request.status === "pending" && (
+                        <>
+                          <button
+                            onClick={() => handleAccessRequestAction(request.request_id, "approve")}
+                            disabled={accessActionId === request.request_id}
+                            className="px-3 py-2 bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white text-xs rounded-lg transition-colors"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            onClick={() => handleAccessRequestAction(request.request_id, "deny")}
+                            disabled={accessActionId === request.request_id}
+                            className="px-3 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-xs rounded-lg transition-colors"
+                          >
+                            Deny
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

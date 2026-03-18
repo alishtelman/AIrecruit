@@ -108,6 +108,124 @@ async def test_direct_link_visibility_hides_candidate_from_company_marketplace(
 
 
 @pytest.mark.asyncio
+async def test_request_only_access_requires_candidate_approval_before_company_workspace_opens(
+    client: AsyncClient,
+    company_token: str,
+    candidate_token: str,
+):
+    finish = await _complete_interview(client, candidate_token, role="qa_engineer")
+    candidate = await _candidate_profile(client, candidate_token)
+    candidate_id = candidate["id"]
+    report_id = finish["report_id"]
+    interview_id = finish["interview_id"]
+
+    privacy = await client.patch(
+        "/api/v1/candidate/privacy",
+        headers=auth_headers(candidate_token),
+        json={"visibility": "request_only"},
+    )
+    assert privacy.status_code == 200, privacy.text
+    share_token = privacy.json()["share_token"]
+    assert share_token
+
+    shared_before = await client.get(f"/api/v1/candidate/share/{share_token}")
+    assert shared_before.status_code == 200, shared_before.text
+    assert shared_before.json()["requires_approval"] is True
+    assert shared_before.json()["reports"] == []
+
+    share_status_before = await client.get(
+        f"/api/v1/company/share-links/{share_token}",
+        headers=auth_headers(company_token),
+    )
+    assert share_status_before.status_code == 200, share_status_before.text
+    assert share_status_before.json()["request_status"] is None
+    assert share_status_before.json()["can_open_company_workspace"] is False
+
+    detail_before = await client.get(
+        f"/api/v1/company/candidates/{candidate_id}",
+        headers=auth_headers(company_token),
+    )
+    assert detail_before.status_code == 404, detail_before.text
+
+    request_access = await client.post(
+        f"/api/v1/company/share-links/{share_token}/request-access",
+        headers=auth_headers(company_token),
+    )
+    assert request_access.status_code == 200, request_access.text
+    assert request_access.json()["request_status"] == "pending"
+
+    requests = await client.get(
+        "/api/v1/candidate/access-requests",
+        headers=auth_headers(candidate_token),
+    )
+    assert requests.status_code == 200, requests.text
+    request_item = requests.json()[0]
+    assert request_item["company_name"] == "Test Corp"
+    assert request_item["status"] == "pending"
+
+    approve = await client.post(
+        f"/api/v1/candidate/access-requests/{request_item['request_id']}/approve",
+        headers=auth_headers(candidate_token),
+    )
+    assert approve.status_code == 200, approve.text
+    assert approve.json()["status"] == "approved"
+
+    share_status_after = await client.get(
+        f"/api/v1/company/share-links/{share_token}",
+        headers=auth_headers(company_token),
+    )
+    assert share_status_after.status_code == 200, share_status_after.text
+    assert share_status_after.json()["request_status"] == "approved"
+    assert share_status_after.json()["can_open_company_workspace"] is True
+
+    detail_after = await client.get(
+        f"/api/v1/company/candidates/{candidate_id}",
+        headers=auth_headers(company_token),
+    )
+    assert detail_after.status_code == 200, detail_after.text
+
+    shortlist = await client.post(
+        "/api/v1/company/shortlists",
+        headers=auth_headers(company_token),
+        json={"name": f"Request Only {uuid.uuid4().hex[:6]}"},
+    )
+    assert shortlist.status_code == 201, shortlist.text
+    shortlist_id = shortlist.json()["shortlist_id"]
+
+    shortlist_add = await client.post(
+        f"/api/v1/company/shortlists/{shortlist_id}/candidates/{candidate_id}",
+        headers=auth_headers(company_token),
+    )
+    assert shortlist_add.status_code == 204, shortlist_add.text
+
+    outcome = await client.post(
+        f"/api/v1/company/candidates/{candidate_id}/outcome",
+        headers=auth_headers(company_token),
+        json={"outcome": "interviewing", "notes": "Approved request flow"},
+    )
+    assert outcome.status_code == 200, outcome.text
+
+    note = await client.post(
+        f"/api/v1/company/candidates/{candidate_id}/notes",
+        headers=auth_headers(company_token),
+        json={"body": "Candidate approved company access"},
+    )
+    assert note.status_code == 201, note.text
+
+    report = await client.get(
+        f"/api/v1/company/reports/{report_id}",
+        headers=auth_headers(company_token),
+    )
+    assert report.status_code == 200, report.text
+
+    replay = await client.get(
+        f"/api/v1/company/interviews/{interview_id}/replay",
+        headers=auth_headers(company_token),
+    )
+    assert replay.status_code == 200, replay.text
+
+
+@pytest.mark.asyncio
 async def test_private_and_request_only_profiles_are_excluded_from_public_benchmark_and_share(
     client: AsyncClient,
     candidate_token: str,
@@ -184,7 +302,7 @@ async def test_private_and_request_only_profiles_are_excluded_from_public_benchm
         json={"visibility": "request_only"},
     )
     assert request_only.status_code == 200, request_only.text
-    assert request_only.json()["share_token"] is None
+    assert request_only.json()["share_token"]
 
     benchmark_after_request_only = await client.get(
         "/api/v1/candidate/salary/benchmark",

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.assessor import AssessmentResult, assessor
 from app.ai.competencies import build_question_plan
 from app.ai.interviewer import MAX_QUESTIONS, InterviewContext, interviewer
-from app.models.candidate import Candidate, PROFILE_VISIBILITY_MARKETPLACE
+from app.models.candidate import Candidate
 from app.models.interview import Interview, InterviewMessage
 from app.models.report import AssessmentReport
 from app.models.resume import Resume
@@ -30,6 +30,7 @@ from app.schemas.interview import (
     SendMessageResponse,
     StartInterviewResponse,
 )
+from app.services.candidate_access_service import has_company_candidate_workspace_access
 
 
 # ---------------------------------------------------------------------------
@@ -584,7 +585,9 @@ async def get_interview_replay(
 
     # Load candidate name
     candidate = await db.scalar(select(Candidate).where(Candidate.id == interview.candidate_id))
-    if interview.company_assessment_id is None and (not candidate or candidate.profile_visibility != PROFILE_VISIBILITY_MARKETPLACE):
+    if interview.company_assessment_id is None and (
+        not candidate or not await has_company_candidate_workspace_access(db, company_id, candidate)
+    ):
         return None
     candidate_name = candidate.full_name if candidate else "Unknown"
 

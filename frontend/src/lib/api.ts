@@ -11,6 +11,7 @@ import type {
   CandidateListItem,
   CandidateNote,
   CandidateRegisterRequest,
+  CandidateAccessRequest,
   CandidatePrivacy,
   CandidateWithUser,
   CompanyShortlist,
@@ -18,6 +19,7 @@ import type {
   CompanyMember,
   CompanyRegisterRequest,
   CompanyRegisterResponse,
+  CompanyShareAccessStatus,
   EmployeeInviteInfo,
   FinishInterviewResponse,
   HireOutcomeResponse,
@@ -249,6 +251,14 @@ export const companyApi = {
         shortlist_id: params.shortlist_id,
       })
     ),
+
+  getShareLinkAccessStatus: (shareToken: string) =>
+    request<CompanyShareAccessStatus>(`/api/v1/company/share-links/${encodeURIComponent(shareToken)}`),
+
+  requestShareLinkAccess: (shareToken: string) =>
+    request<CompanyShareAccessStatus>(`/api/v1/company/share-links/${encodeURIComponent(shareToken)}/request-access`, {
+      method: "POST",
+    }),
 };
 
 // ── Employee Invites ──────────────────────────────────────────────────────────
@@ -301,6 +311,19 @@ export const candidateApi = {
     request<CandidatePrivacy>("/api/v1/candidate/privacy", {
       method: "PATCH",
       body: JSON.stringify({ visibility }),
+    }),
+
+  listAccessRequests: () =>
+    request<CandidateAccessRequest[]>("/api/v1/candidate/access-requests"),
+
+  approveAccessRequest: (requestId: string) =>
+    request<CandidateAccessRequest>(`/api/v1/candidate/access-requests/${requestId}/approve`, {
+      method: "POST",
+    }),
+
+  denyAccessRequest: (requestId: string) =>
+    request<CandidateAccessRequest>(`/api/v1/candidate/access-requests/${requestId}/deny`, {
+      method: "POST",
     }),
 
   salaryBenchmark: (role: string) =>

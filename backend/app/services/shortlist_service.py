@@ -4,11 +4,9 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.candidate import Candidate
-from app.models.interview import Interview
-from app.models.report import AssessmentReport
 from app.models.shortlist import CompanyShortlist, CompanyShortlistCandidate
 from app.schemas.company import ShortlistMembershipResponse, ShortlistSummaryResponse
+from app.services.candidate_access_service import ensure_company_candidate_workspace_access
 from app.services.collaboration_service import log_candidate_activity
 
 
@@ -102,17 +100,7 @@ async def add_candidate_to_shortlist(
     if shortlist.company_id != company_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your shortlist")
 
-    candidate_exists = await db.scalar(
-        select(Candidate.id)
-        .join(AssessmentReport, AssessmentReport.candidate_id == Candidate.id)
-        .join(Interview, AssessmentReport.interview_id == Interview.id)
-        .where(
-            Candidate.id == candidate_id,
-            Interview.company_assessment_id.is_(None),
-        )
-    )
-    if candidate_exists is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate not found")
+    await ensure_company_candidate_workspace_access(db, company_id, candidate_id)
 
     existing = await db.scalar(
         select(CompanyShortlistCandidate).where(
