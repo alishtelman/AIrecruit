@@ -17,14 +17,15 @@ A platform where candidates complete structured AI interviews and receive verifi
 **For Companies**
 1. Register and browse AI-verified candidates
 2. Filter by role, search by name/email, paginate through results
-3. View detailed assessment reports for each candidate
+3. View detailed assessment reports and interview replays for accessible candidates
 4. Create custom interview templates (public or private) with your own question sets
-5. Make data-driven hiring decisions
+5. Run private employee assessments via invite links
+6. Make data-driven hiring decisions
 
 **Roadmap (post-MVP)**
 - Voice and video AI interviews
-- In-company employee assessment
 - Multi-user company accounts
+- HttpOnly session auth and stricter production defaults
 
 ---
 
@@ -125,10 +126,15 @@ created → in_progress → completed → report_generated
 | POST | `/api/v1/interviews/start` | Bearer | Start interview |
 | POST | `/api/v1/interviews/{id}/message` | Bearer | Send answer, get next question |
 | POST | `/api/v1/interviews/{id}/finish` | Bearer | Finish and generate report |
+| POST | `/api/v1/interviews/{id}/recording` | Bearer | Upload interview recording (`video/webm` or `video/mp4`) |
 | GET | `/api/v1/interviews/{id}` | Bearer | Interview details + messages |
-| GET | `/api/v1/reports/{id}` | Bearer | Assessment report |
+| GET | `/api/v1/reports/{id}` | Bearer (candidate) | Candidate-owned assessment report |
+| GET | `/api/v1/employee/invite/{token}` | — | Public employee assessment invite info |
+| POST | `/api/v1/employee/invite/{token}/start` | Bearer (candidate) | Start invited employee assessment |
 | GET | `/api/v1/company/candidates` | Bearer (company) | List verified candidates |
 | GET | `/api/v1/company/candidates/{id}` | Bearer (company) | Candidate profile + all reports |
+| GET | `/api/v1/company/reports/{id}` | Bearer (company) | Company-scoped report access |
+| GET | `/api/v1/company/interviews/{id}/replay` | Bearer (company) | Company-scoped replay access |
 | GET | `/api/v1/candidate/resume` | Bearer | Active resume info |
 | GET | `/api/v1/interviews/templates/public` | — | List public interview templates |
 | GET | `/api/v1/company/templates` | Bearer (company) | List company's own templates |
@@ -136,6 +142,17 @@ created → in_progress → completed → report_generated
 | DELETE | `/api/v1/company/templates/{id}` | Bearer (company) | Delete interview template |
 
 Full interactive docs: **http://localhost:8001/docs**
+
+---
+
+## Security Hardening
+
+- `POST /api/v1/employee/invite/{token}/start` now binds the invite to the authenticated candidate email and returns `403` on email mismatch.
+- `GET /api/v1/company/reports/{report_id}` and `GET /api/v1/company/interviews/{interview_id}/replay` are scoped to the owning company for private employee assessments.
+- Private employee assessments are excluded from the shared company candidate marketplace.
+- Interview recordings accept only `video/webm` and `video/mp4` and are capped by `MAX_RECORDING_SIZE_MB`.
+- Candidate login and registration redirects are sanitized to path-only, same-origin destinations.
+- Backend CORS is configured through `CORS_ORIGINS`; the full audit and remediation status lives in `security_best_practices_report.md`.
 
 ---
 
@@ -160,9 +177,13 @@ cp .env.example .env
 
 Open `.env` and set:
 ```
-GROQ_API_KEY=gsk_...              # required for LLM interviews (free at console.groq.com)
 SECRET_KEY=your-random-secret     # change before any real use
+GROQ_API_KEY=gsk_...              # required for LLM interviews (free at console.groq.com)
 NEXT_PUBLIC_API_URL=http://localhost:8001
+APP_URL=http://localhost:3000
+CORS_ORIGINS=http://localhost:3000
+MAX_RECORDING_SIZE_MB=250
+RESEND_API_KEY=re_...             # optional, enables email notifications
 ```
 
 > **Note on ports:** If you have other services running, the defaults are:
@@ -260,13 +281,23 @@ curl -s -X POST http://localhost:8001/api/v1/interviews/$INTERVIEW_ID/finish \
 ## Useful Commands
 
 ```bash
+# Start / rebuild
+docker compose up -d --build
+
+# Container status
+docker compose ps
+
 # View logs
 docker compose logs backend -f
 docker compose logs frontend -f
 
-# Run a new migration after model changes
+# Run migrations
 docker compose exec backend alembic revision --autogenerate -m "description"
 docker compose exec backend alembic upgrade head
+
+# Frontend checks
+docker compose exec frontend npm run lint
+docker compose exec frontend npm run build
 
 # Connect to DB
 docker compose exec postgres psql -U recruiting -d recruiting
@@ -289,7 +320,14 @@ docker compose down
 | `SECRET_KEY` | — | JWT signing secret (change in production) |
 | `ALGORITHM` | `HS256` | JWT algorithm |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Token TTL |
-| `GROQ_API_KEY` | — | Groq API key — get free at console.groq.com |
+| `GROQ_API_KEY` | — | Groq API key for interviews, assessment, STT, and TTS |
+| `ANTHROPIC_API_KEY` | empty | Reserved, currently unused by the runtime |
+| `RESEND_API_KEY` | empty | Optional email delivery provider key |
+| `APP_URL` | `http://localhost:3000` | Frontend base URL for invite links and emails |
+| `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated backend CORS allowlist |
+| `UPLOAD_DIR` | `/app/uploads` | General upload directory |
 | `RESUME_STORAGE_DIR` | `/app/storage/resumes` | Resume file storage path |
+| `RECORDING_STORAGE_DIR` | `/app/storage/recordings` | Interview recording storage path |
 | `MAX_RESUME_SIZE_MB` | `10` | Max upload size |
+| `MAX_RECORDING_SIZE_MB` | `250` | Max interview recording size |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8001` | Backend URL for frontend |

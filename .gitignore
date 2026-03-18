@@ -36,5 +36,10 @@ frontend/.env.local
 .vscode/
 .idea/
 
+# Local agent tooling
+.agents/
+.codex/
+AGENTS.md
+
 # Docker
 *.log
