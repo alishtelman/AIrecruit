@@ -4,10 +4,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    APP_ENV: str = "development"
     DATABASE_URL: str = "postgresql+asyncpg://recruiting:recruiting@postgres:5432/recruiting"
     SECRET_KEY: str = "change-me-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    SESSION_COOKIE_NAME: str = "airecruit_session"
+    SESSION_COOKIE_SAMESITE: str = "lax"
+    SESSION_COOKIE_SECURE: bool = False
     ANTHROPIC_API_KEY: str = ""
     GROQ_API_KEY: str = ""
     UPLOAD_DIR: str = "/app/uploads"
@@ -24,5 +28,22 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
+    @property
+    def is_local_or_test(self) -> bool:
+        return self.APP_ENV.lower() in {"development", "dev", "local", "test"}
+
+    def validate_security_settings(self) -> None:
+        insecure_defaults = {
+            "change-me-in-production",
+            "change-me-in-production-use-long-random-string",
+        }
+        if not self.is_local_or_test and (
+            self.SECRET_KEY in insecure_defaults or len(self.SECRET_KEY) < 32
+        ):
+            raise ValueError(
+                "SECRET_KEY must be overridden with a long random value outside development/test."
+            )
+
 
 settings = Settings()
+settings.validate_security_settings()

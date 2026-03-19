@@ -55,7 +55,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
+  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers, credentials: "include" });
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: "Request failed" }));
@@ -100,9 +100,20 @@ export const authApi = {
       body: JSON.stringify(data),
     }),
 
+  logout: () =>
+    request<void>("/api/v1/auth/logout", {
+      method: "POST",
+    }),
+
   me: () => request<User>("/api/v1/auth/me"),
 
   meCandidate: () => request<CandidateWithUser>("/api/v1/auth/me/candidate"),
+
+  changePassword: (data: { current_password: string; new_password: string }) =>
+    request<void>("/api/v1/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 };
 
 // ── Company Auth ──────────────────────────────────────────────────────────────
@@ -411,6 +422,7 @@ export const ttsApi = {
     const res = await fetch(`${BASE_URL}/api/v1/tts`, {
       method: "POST",
       headers,
+      credentials: "include",
       body: JSON.stringify({ text }),
     });
     if (!res.ok) {

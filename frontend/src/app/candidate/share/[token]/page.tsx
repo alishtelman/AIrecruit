@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { authApi, candidateApi, companyApi } from "@/lib/api";
-import { getToken } from "@/lib/auth";
 import type { CompanyShareAccessStatus, SharedCandidateProfile, User } from "@/lib/types";
 
 function formatSalary(profile: SharedCandidateProfile): string {
@@ -47,7 +46,7 @@ export default function SharedCandidatePage() {
 
   useEffect(() => {
     const token = Array.isArray(params.token) ? params.token[0] : params.token;
-    if (!token || !profile || profile.visibility !== "request_only" || !getToken()) return;
+    if (!token || !profile || profile.visibility !== "request_only") return;
 
     authApi.me()
       .then((user) => {

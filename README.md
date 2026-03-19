@@ -25,7 +25,7 @@ A platform where candidates complete structured AI interviews and receive verifi
 **Roadmap (post-MVP)**
 - Voice and video AI interviews
 - Multi-user company accounts
-- HttpOnly session auth and stricter production defaults
+- Additional trust and compliance tooling
 
 ---
 
@@ -35,7 +35,7 @@ A platform where candidates complete structured AI interviews and receive verifi
 |---|---|
 | Backend | Python 3.11, FastAPI, SQLAlchemy (async), Alembic |
 | Database | PostgreSQL 16 |
-| Auth | JWT (python-jose), bcrypt (passlib) |
+| Auth | HttpOnly session cookie + JWT (python-jose), bcrypt (passlib) |
 | AI | Groq API — Llama 3.3 70B (interviewer + assessor) |
 | Frontend | Next.js 14, TypeScript, Tailwind CSS |
 | Infrastructure | Docker, Docker Compose |
@@ -117,9 +117,10 @@ created → in_progress → completed → report_generated
 |---|---|---|---|
 | POST | `/api/v1/auth/candidate/register` | — | Register candidate |
 | POST | `/api/v1/auth/company/register` | — | Register company |
-| POST | `/api/v1/auth/login` | — | Login (all roles) |
-| GET | `/api/v1/auth/me` | Bearer | Current user |
-| GET | `/api/v1/auth/me/candidate` | Bearer | Candidate profile |
+| POST | `/api/v1/auth/login` | — | Login (sets HttpOnly session cookie; token response kept for legacy clients) |
+| POST | `/api/v1/auth/logout` | Session | Clear session cookie |
+| GET | `/api/v1/auth/me` | Session / Bearer | Current user |
+| GET | `/api/v1/auth/me/candidate` | Session / Bearer | Candidate profile |
 | GET | `/api/v1/candidate/stats` | Bearer | Resume + interview stats for dashboard |
 | POST | `/api/v1/candidate/resume/upload` | Bearer | Upload PDF/DOCX resume |
 | GET | `/api/v1/interviews/` | Bearer | List all candidate interviews |
@@ -153,6 +154,8 @@ Full interactive docs: **http://localhost:8001/docs**
 - Interview recordings accept only `video/webm` and `video/mp4` and are capped by `MAX_RECORDING_SIZE_MB`.
 - Candidate login and registration redirects are sanitized to path-only, same-origin destinations.
 - Backend CORS is configured through `CORS_ORIGINS`; the full audit and remediation status lives in `security_best_practices_report.md`.
+- Browser auth now uses an `HttpOnly` session cookie by default; frontend localStorage is no longer required for new sessions.
+- `SECRET_KEY` now fails fast outside `development` / `test` if left on the insecure default or set too short.
 
 ---
 
@@ -177,13 +180,24 @@ cp .env.example .env
 
 Open `.env` and set:
 ```
+APP_ENV=development
 SECRET_KEY=your-random-secret     # change before any real use
 GROQ_API_KEY=gsk_...              # required for LLM interviews (free at console.groq.com)
 NEXT_PUBLIC_API_URL=http://localhost:8001
 APP_URL=http://localhost:3000
 CORS_ORIGINS=http://localhost:3000
 MAX_RECORDING_SIZE_MB=250
+SESSION_COOKIE_NAME=airecruit_session
+SESSION_COOKIE_SAMESITE=lax
+SESSION_COOKIE_SECURE=false
 RESEND_API_KEY=re_...             # optional, enables email notifications
+```
+
+For production-like deployments:
+```
+APP_ENV=production
+SESSION_COOKIE_SECURE=true
+SECRET_KEY=<long-random-secret-at-least-32-chars>
 ```
 
 > **Note on ports:** If you have other services running, the defaults are:

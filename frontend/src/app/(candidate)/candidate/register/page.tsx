@@ -4,7 +4,6 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { authApi } from "@/lib/api";
-import { getToken, setToken } from "@/lib/auth";
 import { getSafeRedirect } from "@/lib/safeRedirect";
 
 function RegisterPageInner() {
@@ -14,7 +13,7 @@ function RegisterPageInner() {
   const [form, setForm] = useState({ full_name: "", email: "", password: "" });
 
   useEffect(() => {
-    if (getToken()) router.replace(redirect);
+    authApi.me().then(() => router.replace(redirect)).catch(() => null);
   }, [router, redirect]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -26,11 +25,10 @@ function RegisterPageInner() {
     try {
       await authApi.register(form);
       // Auto-login after register
-      const { access_token } = await authApi.login({
+      await authApi.login({
         email: form.email,
         password: form.password,
       });
-      setToken(access_token);
       router.push(redirect);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Registration failed");

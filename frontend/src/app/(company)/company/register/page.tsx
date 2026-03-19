@@ -4,14 +4,13 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authApi, companyAuthApi } from "@/lib/api";
-import { getToken, setToken } from "@/lib/auth";
 
 export default function CompanyRegisterPage() {
   const router = useRouter();
   const [form, setForm] = useState({ email: "", password: "", company_name: "" });
 
   useEffect(() => {
-    if (getToken()) router.replace("/company/dashboard");
+    authApi.me().then(() => router.replace("/company/dashboard")).catch(() => null);
   }, [router]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -22,8 +21,7 @@ export default function CompanyRegisterPage() {
     setLoading(true);
     try {
       await companyAuthApi.register(form);
-      const { access_token } = await authApi.login({ email: form.email, password: form.password });
-      setToken(access_token);
+      await authApi.login({ email: form.email, password: form.password });
       router.push("/company/dashboard");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Registration failed");

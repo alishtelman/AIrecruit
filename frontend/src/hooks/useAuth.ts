@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getToken, removeToken } from "@/lib/auth";
+import { removeToken } from "@/lib/auth";
 import { authApi } from "@/lib/api";
 import type { User } from "@/lib/types";
 
@@ -12,24 +12,33 @@ export function useAuth(redirectTo = "/candidate/login") {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) {
-      router.replace(redirectTo);
-      return;
-    }
+    let cancelled = false;
     authApi
       .me()
-      .then(setUser)
+      .then((nextUser) => {
+        if (!cancelled) setUser(nextUser);
+      })
       .catch(() => {
         removeToken();
-        router.replace(redirectTo);
+        if (!cancelled) router.replace(redirectTo);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [router, redirectTo]);
 
-  function logout() {
-    removeToken();
-    router.push("/");
+  async function logout() {
+    try {
+      await authApi.logout();
+    } catch {
+      // ignore
+    } finally {
+      removeToken();
+      router.push("/");
+    }
   }
 
   return { user, loading, logout };

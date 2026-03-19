@@ -3,9 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
-import { getToken } from "@/lib/auth";
-
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
+import { authApi } from "@/lib/api";
 
 export default function CompanySettingsPage() {
   const { user, loading: authLoading } = useAuth("/company/login");
@@ -21,15 +19,7 @@ export default function CompanySettingsPage() {
     if (form.new_password.length < 8) { setError("New password must be at least 8 characters"); return; }
     setSaving(true);
     try {
-      const res = await fetch(`${BASE_URL}/api/v1/auth/change-password`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-        body: JSON.stringify({ current_password: form.current_password, new_password: form.new_password }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.detail ?? "Failed to change password");
-      }
+      await authApi.changePassword({ current_password: form.current_password, new_password: form.new_password });
       setSuccess(true);
       setForm({ current_password: "", new_password: "", confirm: "" });
     } catch (e: unknown) {

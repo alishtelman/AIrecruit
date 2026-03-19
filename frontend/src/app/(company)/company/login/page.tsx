@@ -4,14 +4,13 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authApi } from "@/lib/api";
-import { getToken, setToken } from "@/lib/auth";
 
 export default function CompanyLoginPage() {
   const router = useRouter();
   const [form, setForm] = useState({ email: "", password: "" });
 
   useEffect(() => {
-    if (getToken()) router.replace("/company/dashboard");
+    authApi.me().then(() => router.replace("/company/dashboard")).catch(() => null);
   }, [router]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -21,8 +20,7 @@ export default function CompanyLoginPage() {
     setError("");
     setLoading(true);
     try {
-      const { access_token } = await authApi.login(form);
-      setToken(access_token);
+      await authApi.login(form);
       router.push("/company/dashboard");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed");

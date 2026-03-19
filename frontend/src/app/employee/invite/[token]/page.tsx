@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getToken } from "@/lib/auth";
-import { employeeApi } from "@/lib/api";
+import { authApi, employeeApi } from "@/lib/api";
 import type { EmployeeInviteInfo } from "@/lib/types";
 
 function formatDate(value: string | null): string | null {
@@ -19,6 +18,7 @@ export default function EmployeeInvitePage() {
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   const [language, setLanguage] = useState<"ru" | "en">("ru");
+  const [hasSession, setHasSession] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -29,9 +29,12 @@ export default function EmployeeInvitePage() {
       .finally(() => setLoading(false));
   }, [token]);
 
+  useEffect(() => {
+    authApi.me().then(() => setHasSession(true)).catch(() => setHasSession(false));
+  }, []);
+
   async function handleStart() {
-    const authToken = getToken();
-    if (!authToken) {
+    if (!hasSession) {
       sessionStorage.setItem("employee_invite_token", token);
       router.push(`/candidate/login?redirect=/employee/invite/${token}`);
       return;
@@ -70,7 +73,6 @@ export default function EmployeeInvitePage() {
 
   if (!info) return null;
 
-  const hasToken = Boolean(getToken());
   const brandName = info.branding_name || info.company_name;
   const isCandidateCampaign = info.assessment_type === "candidate_external";
   const deadlineLabel = formatDate(info.deadline_at);
@@ -174,10 +176,10 @@ export default function EmployeeInvitePage() {
                 disabled={starting}
                 className="mt-6 w-full rounded-2xl bg-emerald-500 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-emerald-400 disabled:opacity-50"
               >
-                {starting ? "Starting…" : hasToken ? "Start assessment" : "Sign in and start"}
+                {starting ? "Starting…" : hasSession ? "Start assessment" : "Sign in and start"}
               </button>
 
-              {!hasToken && (
+              {!hasSession && (
                 <p className="mt-3 text-center text-xs text-slate-500">
                   You need a candidate account to continue.{" "}
                   <a href={`/candidate/register?redirect=/employee/invite/${token}`} className="text-emerald-300 hover:underline">

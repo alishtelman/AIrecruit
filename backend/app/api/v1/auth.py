@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_candidate, get_current_user
+from app.core.config import settings
 from app.core.database import get_db
 from app.models.company import Company
 from app.models.company_member import CompanyMember
@@ -21,6 +24,28 @@ from app.services.auth_service import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _set_auth_cookie(response: Response, access_token: str) -> None:
+    response.set_cookie(
+        key=settings.SESSION_COOKIE_NAME,
+        value=access_token,
+        httponly=True,
+        secure=settings.SESSION_COOKIE_SECURE,
+        samesite=settings.SESSION_COOKIE_SAMESITE,
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        expires=int(timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES).total_seconds()),
+        path="/",
+    )
+
+
+def _clear_auth_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=settings.SESSION_COOKIE_NAME,
+        path="/",
+        secure=settings.SESSION_COOKIE_SECURE,
+        samesite=settings.SESSION_COOKIE_SAMESITE,
+    )
 
 
 async def _build_user_response(db: AsyncSession, user: User) -> UserResponse:
@@ -99,15 +124,25 @@ async def company_register(
 @router.post("/login", response_model=TokenResponse)
 async def user_login(
     body: LoginRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await login(db, body.email, body.password)
+        token_response = await login(db, body.email, body.password)
+        _set_auth_cookie(response, token_response.access_token)
+        return token_response
     except InvalidCredentialsError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(
+    response: Response,
+):
+    _clear_auth_cookie(response)
 
 
 @router.get("/me", response_model=UserResponse)

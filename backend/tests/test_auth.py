@@ -48,6 +48,46 @@ async def test_login_success(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_login_sets_http_only_cookie_and_me_accepts_cookie_session(client: AsyncClient):
+    email = f"cookie_{uuid.uuid4().hex[:8]}@example.com"
+    await client.post("/api/v1/auth/candidate/register", json={
+        "email": email, "password": "password123", "full_name": "Cookie User",
+    })
+    resp = await client.post("/api/v1/auth/login", json={
+        "email": email, "password": "password123",
+    })
+    assert resp.status_code == 200
+    set_cookie = resp.headers.get("set-cookie", "")
+    assert "airecruit_session=" in set_cookie
+    assert "HttpOnly" in set_cookie
+
+    me = await client.get("/api/v1/auth/me")
+    assert me.status_code == 200
+    assert me.json()["email"] == email
+
+
+@pytest.mark.asyncio
+async def test_logout_clears_cookie_session(client: AsyncClient):
+    email = f"logout_{uuid.uuid4().hex[:8]}@example.com"
+    await client.post("/api/v1/auth/candidate/register", json={
+        "email": email, "password": "password123", "full_name": "Logout User",
+    })
+    login = await client.post("/api/v1/auth/login", json={
+        "email": email, "password": "password123",
+    })
+    assert login.status_code == 200
+
+    me_before = await client.get("/api/v1/auth/me")
+    assert me_before.status_code == 200
+
+    logout = await client.post("/api/v1/auth/logout")
+    assert logout.status_code == 204
+
+    me_after = await client.get("/api/v1/auth/me")
+    assert me_after.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
 async def test_login_wrong_password(client: AsyncClient):
     email = f"wrong_{uuid.uuid4().hex[:8]}@example.com"
     await client.post("/api/v1/auth/candidate/register", json={

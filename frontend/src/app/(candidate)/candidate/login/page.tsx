@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { authApi } from "@/lib/api";
-import { getToken, setToken } from "@/lib/auth";
 import { getSafeRedirect } from "@/lib/safeRedirect";
 
 function LoginPageInner() {
@@ -14,7 +13,7 @@ function LoginPageInner() {
   const [form, setForm] = useState({ email: "", password: "" });
 
   useEffect(() => {
-    if (getToken()) router.replace(redirect);
+    authApi.me().then(() => router.replace(redirect)).catch(() => null);
   }, [router, redirect]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -24,8 +23,7 @@ function LoginPageInner() {
     setError("");
     setLoading(true);
     try {
-      const { access_token } = await authApi.login(form);
-      setToken(access_token);
+      await authApi.login(form);
       router.push(redirect);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Invalid email or password");
