@@ -1,12 +1,15 @@
 "use client";
 
 import { useState, useRef } from "react";
-import Link from "next/link";
+import { useTranslations } from "next-intl";
+import { Link } from "@/i18n/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { resumeApi } from "@/lib/api";
 import type { ResumeUploadResponse } from "@/lib/types";
 
 export default function ResumePage() {
+  const t = useTranslations("candidateResume");
+  const common = useTranslations("common");
   const { loading: authLoading } = useAuth();
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -24,7 +27,7 @@ export default function ResumePage() {
       setFile(null);
       if (inputRef.current) inputRef.current.value = "";
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Upload failed");
+      setError(err instanceof Error ? err.message : t("uploadFailed"));
     } finally {
       setUploading(false);
     }
@@ -33,26 +36,29 @@ export default function ResumePage() {
   if (authLoading) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-slate-400">Loading…</div>
+        <div className="text-slate-400">{common("status.loading")}</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 px-4 py-10">
-      <div className="max-w-lg mx-auto">
+    <div className="ai-shell min-h-screen px-4 py-10">
+      <div className="ai-section max-w-3xl mx-auto">
         <Link href="/candidate/dashboard" className="text-slate-400 hover:text-white text-sm mb-6 inline-block">
-          ← Back to dashboard
+          ← {t("back")}
         </Link>
 
-        <h1 className="text-2xl font-bold text-white mb-2">Upload Resume</h1>
-        <p className="text-slate-400 mb-8">PDF or DOCX, max 10 MB. Your active resume is used for AI interviews.</p>
+        <div className="ai-panel-strong rounded-[2rem] p-7 mb-6">
+          <div className="ai-kicker mb-5">{t("kicker")}</div>
+          <h1 className="text-3xl font-semibold tracking-[-0.03em] text-white mb-2">{t("title")}</h1>
+          <p className="max-w-2xl text-slate-400">{t("subtitle")}</p>
+        </div>
 
         {result && (
-          <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-5 mb-6">
-            <div className="text-green-400 font-semibold mb-1">✓ Resume uploaded successfully</div>
+          <div className="rounded-[1.6rem] border border-green-500/30 bg-green-500/10 p-5 mb-6">
+            <div className="text-green-400 font-semibold mb-1">{t("success")}</div>
             <div className="text-slate-300 text-sm">{result.file_name}</div>
-            <div className="text-slate-400 text-sm">{result.text_length.toLocaleString()} characters extracted</div>
+            <div className="text-slate-400 text-sm">{t("charactersExtracted", {count: result.text_length.toLocaleString()})}</div>
           </div>
         )}
 
@@ -62,19 +68,19 @@ export default function ResumePage() {
           </div>
         )}
 
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 space-y-5">
+        <div className="ai-panel rounded-[1.8rem] p-6 space-y-5">
           <div
             onClick={() => inputRef.current?.click()}
-            className="border-2 border-dashed border-slate-600 hover:border-blue-500 rounded-lg p-10 text-center cursor-pointer transition-colors"
+            className="rounded-[1.6rem] border-2 border-dashed border-slate-600 p-10 text-center cursor-pointer transition-colors hover:border-blue-500"
           >
-            <div className="text-3xl mb-3">📎</div>
+            <div className="mb-3 inline-flex rounded-lg border border-slate-700 bg-slate-900 px-3 py-1 text-xs font-semibold tracking-[0.2em] text-slate-300">{t("fileBadge")}</div>
             <div className="text-white font-medium mb-1">
-              {file ? file.name : "Click to select file"}
+              {file ? file.name : t("pickFile")}
             </div>
             <div className="text-slate-400 text-sm">
               {file
-                ? `${(file.size / 1024).toFixed(0)} KB`
-                : "PDF or DOCX · max 10 MB"}
+                ? `${t("selectedFile")}: ${(file.size / 1024).toFixed(0)} KB`
+                : t("fileHint")}
             </div>
             <input
               ref={inputRef}
@@ -92,19 +98,21 @@ export default function ResumePage() {
           <button
             onClick={handleUpload}
             disabled={!file || uploading}
-            className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-lg transition-colors"
+            className="ai-button-primary w-full rounded-xl py-2.5 text-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {uploading ? "Uploading…" : "Upload Resume"}
+            {uploading ? t("uploading") : t("upload")}
           </button>
         </div>
 
         {result && (
-          <div className="mt-6 text-center">
+          <div className="ai-panel rounded-[1.8rem] mt-6 p-6">
+            <div className="text-white font-semibold mb-1">{t("nextStepTitle")}</div>
+            <div className="text-slate-400 text-sm mb-4">{t("nextStepBody")}</div>
             <Link
               href="/candidate/interview/start"
-              className="inline-block bg-blue-600 hover:bg-blue-500 text-white font-semibold px-6 py-2.5 rounded-lg transition-colors"
+              className="ai-button-primary inline-block rounded-xl px-6 py-2.5 text-white font-semibold"
             >
-              Start Interview →
+              {t("startInterview")}
             </Link>
           </div>
         )}

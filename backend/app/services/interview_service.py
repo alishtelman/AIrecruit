@@ -13,7 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.assessor import AssessmentResult, assessor
 from app.ai.competencies import build_question_plan
-from app.ai.interviewer import MAX_QUESTIONS, InterviewContext, interviewer
+from app.ai.interviewer import (
+    MAX_QUESTIONS,
+    InterviewContext,
+    detect_shallow_answer,
+    extract_mentioned_technologies,
+    interviewer,
+)
 from app.models.candidate import Candidate
 from app.models.interview import Interview, InterviewMessage
 from app.models.report import AssessmentReport
@@ -260,6 +266,8 @@ async def add_candidate_message(
 
     # Generate next question if quota not exhausted
     current_question: str | None = None
+    question_type = "main"
+    will_advance = True
     if interview.question_count < interview.max_questions:
         history = _to_history(messages)
         history.append({"role": "candidate", "content": message})
@@ -288,17 +296,97 @@ async def add_candidate_message(
                     pass
 
         resume = await db.scalar(select(Resume).where(Resume.id == interview.resume_id))
+
+        # ── Load persistent interview state ────────────────────────────────
+        state: dict = interview.interview_state or {}
+        mentioned_technologies: set[str] = set(state.get("mentioned_technologies", []))
+        verified_skills: set[str] = set(state.get("verified_skills", []))
+        contradiction_flags: list[str] = list(state.get("contradiction_flags", []))
+        pending_verification: str | None = state.get("pending_verification")
+        follow_up_depth: int = interview.followup_depth or 0
+
+        # ── Analyse current answer ──────────────────────────────────────────
+        is_shallow, shallow_reason = detect_shallow_answer(message)
+        last_answer_words = len(message.strip().split())
+        new_techs = extract_mentioned_technologies(message)
+        mentioned_technologies.update(new_techs)
+        # Techs mentioned but not yet verified
+        unverified_techs = new_techs - verified_skills
+
+        # ── Contradiction detection ─────────────────────────────────────────
+        # If we asked a verification question and got a shallow answer → flag it
+        if pending_verification and is_shallow:
+            contradiction_flags.append(f"possible exaggeration: {pending_verification}")
+            pending_verification = None
+
+        # ── Question type state machine ─────────────────────────────────────
+        # Priority: contradiction-probe > shallow follow-up > verification > depth > next topic
+        question_type = "main"
+        next_pending_verification: str | None = None
+        will_advance = True  # whether question_count should increment
+
+        can_do_more = follow_up_depth < 2 and interview.question_count < interview.max_questions
+
+        if is_shallow and can_do_more:
+            # Shallow answer → follow-up
+            question_type = "followup"
+            will_advance = False
+
+        elif unverified_techs and can_do_more and not is_shallow:
+            # Non-shallow answer mentioned a new technology → verify it
+            tech_to_verify = sorted(unverified_techs)[0]  # deterministic
+            question_type = "verification"
+            next_pending_verification = tech_to_verify
+            verified_skills.add(tech_to_verify)
+            will_advance = False
+
+        elif follow_up_depth < 1 and not is_shallow and interview.question_count < interview.max_questions:
+            # Strong answer, no tech to verify → depth escalation (once per topic)
+            question_type = "deep_technical"
+            will_advance = False
+
+        else:
+            # Enough follow-up or max depth → next main question
+            question_type = "main"
+            will_advance = True
+
+        # ── Build InterviewContext ──────────────────────────────────────────
+        q_number = interview.question_count if not will_advance else interview.question_count + 1
+
         ctx = InterviewContext(
             target_role=interview.target_role,
-            question_number=interview.question_count + 1,
+            question_number=q_number,
             max_questions=interview.max_questions,
             message_history=history,
             resume_text=resume.raw_text if resume else None,
             template_questions=template_questions,
             competency_targets=competency_targets,
             language=interview.language,
+            follow_up_count=follow_up_depth,
+            last_answer_words=last_answer_words,
+            shallow_reason=shallow_reason,
+            question_type=question_type,
+            mentioned_technologies=sorted(mentioned_technologies),
+            verified_skills=sorted(verified_skills),
+            contradiction_flags=contradiction_flags,
+            pending_verification=next_pending_verification,
         )
         next_q = await interviewer.get_next_question(ctx)
+
+        # ── Update DB state ─────────────────────────────────────────────────
+        if will_advance:
+            interview.question_count += 1
+            interview.followup_depth = 0
+        else:
+            interview.followup_depth = follow_up_depth + 1
+
+        interview.interview_state = {
+            "mentioned_technologies": sorted(mentioned_technologies),
+            "verified_skills": sorted(verified_skills),
+            "contradiction_flags": contradiction_flags,
+            "pending_verification": next_pending_verification,
+            "last_question_type": question_type,
+        }
 
         db.add(InterviewMessage(
             id=uuid.uuid4(),
@@ -306,8 +394,6 @@ async def add_candidate_message(
             role="assistant",
             content=next_q,
         ))
-        # Explicitly increment question_count in DB
-        interview.question_count += 1
         current_question = next_q
 
     await db.commit()
@@ -319,6 +405,8 @@ async def add_candidate_message(
         question_count=interview.question_count,
         max_questions=interview.max_questions,
         current_question=current_question,
+        is_followup=not will_advance,
+        question_type=question_type,
     )
 
 
@@ -352,6 +440,7 @@ async def finish_interview(
             message_history=_to_history(messages),
             message_timestamps=_to_timestamps(messages),
             behavioral_signals=interview.behavioral_signals,
+            language=interview.language,
         )
 
         report = AssessmentReport(

@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useTranslations } from "next-intl";
+import { Link } from "@/i18n/navigation";
+import { LocaleSwitcher } from "@/components/locale-switcher";
 import { companyApi } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import type {
@@ -16,37 +18,32 @@ import type {
   HiringRecommendation,
 } from "@/lib/types";
 
-const OUTCOME_LABELS: Record<string, { label: string; cls: string }> = {
-  hired: { label: "Hired", cls: "bg-green-500/20 text-green-400" },
-  rejected: { label: "Rejected", cls: "bg-red-500/20 text-red-400" },
-  interviewing: { label: "Interviewing", cls: "bg-blue-500/20 text-blue-400" },
-  no_show: { label: "No Show", cls: "bg-slate-500/20 text-slate-400" },
+const OUTCOME_LABELS: Record<string, { cls: string }> = {
+  hired: { cls: "bg-green-500/20 text-green-400" },
+  rejected: { cls: "bg-red-500/20 text-red-400" },
+  interviewing: { cls: "bg-blue-500/20 text-blue-400" },
+  no_show: { cls: "bg-slate-500/20 text-slate-400" },
 };
 
-const ROLE_LABELS: Record<string, string> = {
-  backend_engineer: "Backend Engineer",
-  frontend_engineer: "Frontend Engineer",
-  qa_engineer: "QA Engineer",
-  devops_engineer: "DevOps Engineer",
-  data_scientist: "Data Scientist",
-  product_manager: "Product Manager",
-  mobile_engineer: "Mobile Engineer",
-  designer: "UX/UI Designer",
+const REC_STYLES: Record<HiringRecommendation, { className: string }> = {
+  strong_yes: { className: "bg-green-500/15 text-green-400 border-green-500/30" },
+  yes: { className: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
+  maybe: { className: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" },
+  no: { className: "bg-red-500/15 text-red-400 border-red-500/30" },
 };
 
-const REC_STYLES: Record<HiringRecommendation, { label: string; className: string }> = {
-  strong_yes: { label: "Strong Yes", className: "bg-green-500/15 text-green-400 border-green-500/30" },
-  yes: { label: "Yes", className: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
-  maybe: { label: "Maybe", className: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" },
-  no: { label: "No", className: "bg-red-500/15 text-red-400 border-red-500/30" },
-};
+const ROLE_VALUES = [
+  "backend_engineer",
+  "frontend_engineer",
+  "qa_engineer",
+  "devops_engineer",
+  "data_scientist",
+  "product_manager",
+  "mobile_engineer",
+  "designer",
+] as const;
 
-const PAGE_TITLE = {
-  candidates: "Candidates",
-  analytics: "Analytics",
-} as const;
-
-type DashboardTab = keyof typeof PAGE_TITLE;
+type DashboardTab = "candidates" | "analytics";
 
 type FilterDraft = {
   q: string;
@@ -94,11 +91,11 @@ function parseFilters(draft: FilterDraft): CompanyCandidateSearchParams {
 
 function formatSalary(candidate: CandidateListItem) {
   if (candidate.salary_min == null && candidate.salary_max == null) {
-    return "Not provided";
+    return null;
   }
   const low = candidate.salary_min ?? candidate.salary_max;
   const high = candidate.salary_max ?? candidate.salary_min;
-  if (low == null || high == null) return "Not provided";
+  if (low == null || high == null) return null;
   return low === high
     ? `${low.toLocaleString()} ${candidate.salary_currency}`
     : `${low.toLocaleString()}–${high.toLocaleString()} ${candidate.salary_currency}`;
@@ -115,7 +112,7 @@ function formatSalaryBand(
   currency: string,
 ) {
   if (!band || band.candidate_count === 0 || band.range_min == null || band.range_max == null) {
-    return "No data";
+    return null;
   }
   return `${Math.round(band.range_min).toLocaleString()}–${Math.round(band.range_max).toLocaleString()} ${currency}`;
 }
@@ -136,8 +133,9 @@ function MetricCard({ label, value, tone = "default" }: { label: string; value: 
 }
 
 function BreakdownList({ items }: { items: AnalyticsBreakdownItem[] }) {
+  const t = useTranslations("companyDashboard");
   if (items.length === 0) {
-    return <p className="text-slate-500 text-sm">No data yet.</p>;
+    return <p className="text-slate-500 text-sm">{t("analytics.noData")}</p>;
   }
 
   const max = Math.max(...items.map((item) => item.count), 1);
@@ -162,14 +160,16 @@ function BreakdownList({ items }: { items: AnalyticsBreakdownItem[] }) {
 }
 
 function ComparePanel({ candidates, onRemove }: { candidates: CandidateListItem[]; onRemove: (candidateId: string) => void }) {
+  const t = useTranslations("companyDashboard");
+  const startT = useTranslations("interviewStart");
   if (candidates.length < 2) return null;
 
   return (
     <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 mb-6">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-white font-semibold">Compare Candidates</h2>
-          <p className="text-slate-400 text-sm">Side-by-side view of your selected shortlist picks.</p>
+          <h2 className="text-white font-semibold">{t("compare.title")}</h2>
+          <p className="text-slate-400 text-sm">{t("compare.subtitle")}</p>
         </div>
       </div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -180,30 +180,30 @@ function ComparePanel({ candidates, onRemove }: { candidates: CandidateListItem[
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h3 className="text-white font-semibold">{candidate.full_name}</h3>
-                  <p className="text-slate-400 text-sm">{ROLE_LABELS[candidate.target_role] ?? candidate.target_role}</p>
+                  <p className="text-slate-400 text-sm">{startT(`roles.${candidate.target_role}`)}</p>
                 </div>
                 <button
                   onClick={() => onRemove(candidate.candidate_id)}
                   className="text-slate-500 hover:text-white text-xs transition-colors"
                 >
-                  Remove
+                  {t("compare.remove")}
                 </button>
               </div>
               <div className="flex items-center gap-3">
-                <span className={`text-xs px-2 py-0.5 rounded-full border ${rec.className}`}>{rec.label}</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full border ${rec.className}`}>{t(`recommendations.${candidate.hiring_recommendation}`)}</span>
                 <span className="text-white font-semibold">
-                  {candidate.overall_score != null ? `${candidate.overall_score.toFixed(1)} / 10` : "No score"}
+                  {candidate.overall_score != null ? `${candidate.overall_score.toFixed(1)} / 10` : t("compare.noScore")}
                 </span>
               </div>
               <div className="text-sm text-slate-300">
                 <div className="mb-1">
-                  <span className="text-slate-500">Salary:</span> {formatSalary(candidate)}
+                  <span className="text-slate-500">{t("compare.salary")}:</span> {formatSalary(candidate) ?? t("analytics.noData")}
                 </div>
                 <div className="mb-1">
-                  <span className="text-slate-500">Decision:</span> {candidate.hire_outcome ? OUTCOME_LABELS[candidate.hire_outcome]?.label ?? candidate.hire_outcome : "Unreviewed"}
+                  <span className="text-slate-500">{t("compare.decision")}:</span> {candidate.hire_outcome ? t(`outcomes.${candidate.hire_outcome}`) : t("compare.unreviewed")}
                 </div>
                 <div>
-                  <span className="text-slate-500">Flags:</span> {candidate.red_flag_count}
+                  <span className="text-slate-500">{t("compare.flags")}:</span> {candidate.red_flag_count}
                 </div>
               </div>
               {candidate.skill_tags && candidate.skill_tags.length > 0 && (
@@ -227,6 +227,9 @@ function ComparePanel({ candidates, onRemove }: { candidates: CandidateListItem[
 }
 
 export default function CompanyDashboardPage() {
+  const t = useTranslations("companyDashboard");
+  const startT = useTranslations("interviewStart");
+  const common = useTranslations("common");
   const { user, loading: authLoading, logout } = useAuth("/company/login");
   const [tab, setTab] = useState<DashboardTab>("candidates");
   const [draftFilters, setDraftFilters] = useState<FilterDraft>(DEFAULT_FILTERS);
@@ -247,6 +250,11 @@ export default function CompanyDashboardPage() {
   const [analyticsError, setAnalyticsError] = useState("");
   const companyRole = user?.company_member_role ?? (user?.role === "company_admin" ? "admin" : null);
   const canManagePipeline = companyRole === "admin" || companyRole === "recruiter";
+  const pageTitle = {
+    candidates: t("tabs.candidates"),
+    analytics: t("tabs.analytics"),
+  } as const;
+  const roleLabel = (value: string) => startT(`roles.${value}`);
 
   useEffect(() => {
     if (authLoading) return;
@@ -255,9 +263,9 @@ export default function CompanyDashboardPage() {
     companyApi
       .listShortlists()
       .then(setShortlists)
-      .catch((err) => setShortlistsError(err.message ?? "Failed to load shortlists"))
+      .catch((err) => setShortlistsError(err.message ?? t("errors.loadShortlists")))
       .finally(() => setShortlistsLoading(false));
-  }, [authLoading]);
+  }, [authLoading, t]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -269,7 +277,7 @@ export default function CompanyDashboardPage() {
         setCandidates(items);
         setSelectedCandidateIds((current) => current.filter((id) => items.some((item) => item.candidate_id === id)));
       })
-      .catch((err) => setCandidatesError(err.message ?? "Failed to load candidates"))
+      .catch((err) => setCandidatesError(err.message ?? t("errors.loadCandidates")))
       .finally(() => setLoadingCandidates(false));
   }, [authLoading, filters]);
 
@@ -290,7 +298,7 @@ export default function CompanyDashboardPage() {
         setAnalyticsFunnel(funnel);
         setAnalyticsSalary(salary);
       })
-      .catch((err) => setAnalyticsError(err.message ?? "Failed to load analytics"))
+      .catch((err) => setAnalyticsError(err.message ?? t("errors.loadAnalytics")))
       .finally(() => setAnalyticsLoading(false));
   }, [authLoading, tab, filters.role, filters.shortlist_id]);
 
@@ -320,7 +328,7 @@ export default function CompanyDashboardPage() {
     e.preventDefault();
     if (!newShortlistName.trim()) return;
     if (!canManagePipeline) {
-      setShortlistsError("Viewer access is read-only");
+      setShortlistsError(t("errors.viewerReadonly"));
       return;
     }
     setCreatingShortlist(true);
@@ -330,7 +338,7 @@ export default function CompanyDashboardPage() {
       setShortlists((current) => [created, ...current]);
       setNewShortlistName("");
     } catch (err: unknown) {
-      setShortlistsError(err instanceof Error ? err.message : "Failed to create shortlist");
+      setShortlistsError(err instanceof Error ? err.message : t("errors.createShortlist"));
     } finally {
       setCreatingShortlist(false);
     }
@@ -338,7 +346,7 @@ export default function CompanyDashboardPage() {
 
   async function handleDeleteShortlist(shortlistId: string) {
     if (!canManagePipeline) {
-      setShortlistsError("Viewer access is read-only");
+      setShortlistsError(t("errors.viewerReadonly"));
       return;
     }
     try {
@@ -352,13 +360,13 @@ export default function CompanyDashboardPage() {
       }
       setShortlists((current) => current.filter((shortlist) => shortlist.shortlist_id !== shortlistId));
     } catch (err: unknown) {
-      setShortlistsError(err instanceof Error ? err.message : "Failed to delete shortlist");
+      setShortlistsError(err instanceof Error ? err.message : t("errors.deleteShortlist"));
     }
   }
 
   async function toggleShortlistMembership(candidateId: string, shortlistId: string, isMember: boolean) {
     if (!canManagePipeline) {
-      setCandidatesError("Viewer access is read-only");
+      setCandidatesError(t("errors.viewerReadonly"));
       return;
     }
     try {
@@ -369,7 +377,7 @@ export default function CompanyDashboardPage() {
       }
       await refreshCandidateWorkspace();
     } catch (err: unknown) {
-      setCandidatesError(err instanceof Error ? err.message : "Failed to update shortlist");
+      setCandidatesError(err instanceof Error ? err.message : t("errors.updateShortlist"));
     }
   }
 
@@ -388,7 +396,7 @@ export default function CompanyDashboardPage() {
   if (authLoading) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-slate-400">Loading company workspace…</div>
+        <div className="text-slate-400">{t("loading")}</div>
       </div>
     );
   }
@@ -398,18 +406,19 @@ export default function CompanyDashboardPage() {
       <div className="max-w-7xl mx-auto">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between mb-8">
           <div>
-            <h1 className="text-2xl font-bold text-white">Company Hiring OS</h1>
-            <p className="text-slate-400 text-sm mt-1">Search, shortlist, compare, and analyze verified AI interview results.</p>
+            <h1 className="text-2xl font-bold text-white">{t("title")}</h1>
+            <p className="text-slate-400 text-sm mt-1">{t("subtitle")}</p>
             {companyRole === "viewer" && (
-              <p className="text-amber-300 text-sm mt-2">Viewer mode: reports, replay, and analytics are available read-only.</p>
+              <p className="text-amber-300 text-sm mt-2">{t("viewerMode")}</p>
             )}
           </div>
           <div className="flex items-center gap-3 flex-wrap">
-            <Link href="/company/templates" className="text-slate-400 hover:text-white text-sm transition-colors">Templates</Link>
-            <Link href="/company/employees" className="text-slate-400 hover:text-white text-sm transition-colors">Employees</Link>
-            <Link href="/company/team" className="text-slate-400 hover:text-white text-sm transition-colors">Team</Link>
-            <Link href="/company/settings" className="text-slate-400 hover:text-white text-sm transition-colors">Settings</Link>
-            <button onClick={logout} className="text-slate-400 hover:text-white text-sm transition-colors">Sign out</button>
+            <LocaleSwitcher />
+            <Link href="/company/templates" className="text-slate-400 hover:text-white text-sm transition-colors">{t("nav.templates")}</Link>
+            <Link href="/company/employees" className="text-slate-400 hover:text-white text-sm transition-colors">{t("nav.employees")}</Link>
+            <Link href="/company/team" className="text-slate-400 hover:text-white text-sm transition-colors">{t("nav.team")}</Link>
+            <Link href="/company/settings" className="text-slate-400 hover:text-white text-sm transition-colors">{t("nav.settings")}</Link>
+            <button onClick={logout} className="text-slate-400 hover:text-white text-sm transition-colors">{common("actions.signOut")}</button>
           </div>
         </div>
 
@@ -424,7 +433,7 @@ export default function CompanyDashboardPage() {
                   : "bg-slate-800 text-slate-400 hover:text-white"
               }`}
             >
-              {PAGE_TITLE[value]}
+              {pageTitle[value]}
             </button>
           ))}
         </div>
@@ -434,15 +443,15 @@ export default function CompanyDashboardPage() {
             <div className="grid gap-6 xl:grid-cols-[1.7fr,1fr] mb-6">
               <form onSubmit={applyFilters} className="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-white font-semibold">Server-side Candidate Search</h2>
+                  <h2 className="text-white font-semibold">{t("search.title")}</h2>
                   <button type="button" onClick={resetFilters} className="text-slate-400 hover:text-white text-sm transition-colors">
-                    Reset
+                    {t("search.reset")}
                   </button>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   <input
                     type="text"
-                    placeholder="Name or email"
+                    placeholder={t("search.nameOrEmail")}
                     value={draftFilters.q}
                     onChange={(e) => setDraftFilters({ ...draftFilters, q: e.target.value })}
                     className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -452,14 +461,14 @@ export default function CompanyDashboardPage() {
                     onChange={(e) => setDraftFilters({ ...draftFilters, role: e.target.value })}
                     className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="">All roles</option>
-                    {Object.entries(ROLE_LABELS).map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
+                    <option value="">{t("search.allRoles")}</option>
+                    {ROLE_VALUES.map((value) => (
+                      <option key={value} value={value}>{roleLabel(value)}</option>
                     ))}
                   </select>
                   <input
                     type="text"
-                    placeholder="Skills, comma separated"
+                    placeholder={t("search.skills")}
                     value={draftFilters.skills}
                     onChange={(e) => setDraftFilters({ ...draftFilters, skills: e.target.value })}
                     className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -469,7 +478,7 @@ export default function CompanyDashboardPage() {
                     min="0"
                     max="10"
                     step="0.1"
-                    placeholder="Min score"
+                    placeholder={t("search.minScore")}
                     value={draftFilters.minScore}
                     onChange={(e) => setDraftFilters({ ...draftFilters, minScore: e.target.value })}
                     className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -479,27 +488,27 @@ export default function CompanyDashboardPage() {
                     onChange={(e) => setDraftFilters({ ...draftFilters, recommendation: e.target.value })}
                     className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="">All recommendations</option>
-                    <option value="strong_yes">Strong Yes</option>
-                    <option value="yes">Yes</option>
-                    <option value="maybe">Maybe</option>
-                    <option value="no">No</option>
+                    <option value="">{t("search.allRecommendations")}</option>
+                    <option value="strong_yes">{t("recommendations.strong_yes")}</option>
+                    <option value="yes">{t("recommendations.yes")}</option>
+                    <option value="maybe">{t("recommendations.maybe")}</option>
+                    <option value="no">{t("recommendations.no")}</option>
                   </select>
                   <select
                     value={draftFilters.hireOutcome}
                     onChange={(e) => setDraftFilters({ ...draftFilters, hireOutcome: e.target.value })}
                     className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="">All decisions</option>
-                    <option value="hired">Hired</option>
-                    <option value="interviewing">Interviewing</option>
-                    <option value="rejected">Rejected</option>
-                    <option value="no_show">No Show</option>
+                    <option value="">{t("search.allDecisions")}</option>
+                    <option value="hired">{t("outcomes.hired")}</option>
+                    <option value="interviewing">{t("outcomes.interviewing")}</option>
+                    <option value="rejected">{t("outcomes.rejected")}</option>
+                    <option value="no_show">{t("outcomes.no_show")}</option>
                   </select>
                   <input
                     type="number"
                     min="0"
-                    placeholder="Salary min"
+                    placeholder={t("search.salaryMin")}
                     value={draftFilters.salaryMin}
                     onChange={(e) => setDraftFilters({ ...draftFilters, salaryMin: e.target.value })}
                     className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -507,7 +516,7 @@ export default function CompanyDashboardPage() {
                   <input
                     type="number"
                     min="0"
-                    placeholder="Salary max"
+                    placeholder={t("search.salaryMax")}
                     value={draftFilters.salaryMax}
                     onChange={(e) => setDraftFilters({ ...draftFilters, salaryMax: e.target.value })}
                     className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -517,7 +526,7 @@ export default function CompanyDashboardPage() {
                     onChange={(e) => setDraftFilters({ ...draftFilters, shortlistId: e.target.value })}
                     className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="">All shortlists</option>
+                    <option value="">{t("search.allShortlists")}</option>
                     {shortlists.map((shortlist) => (
                       <option key={shortlist.shortlist_id} value={shortlist.shortlist_id}>
                         {shortlist.name}
@@ -529,22 +538,22 @@ export default function CompanyDashboardPage() {
                     onChange={(e) => setDraftFilters({ ...draftFilters, sort: e.target.value as FilterDraft["sort"] })}
                     className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="score_desc">Sort: Score desc</option>
-                    <option value="score_asc">Sort: Score asc</option>
-                    <option value="latest">Sort: Latest</option>
-                    <option value="salary_asc">Sort: Salary asc</option>
-                    <option value="salary_desc">Sort: Salary desc</option>
+                    <option value="score_desc">{t("search.sortScoreDesc")}</option>
+                    <option value="score_asc">{t("search.sortScoreAsc")}</option>
+                    <option value="latest">{t("search.sortLatest")}</option>
+                    <option value="salary_asc">{t("search.sortSalaryAsc")}</option>
+                    <option value="salary_desc">{t("search.sortSalaryDesc")}</option>
                   </select>
                 </div>
                 <div className="flex items-center justify-between">
                   <p className="text-slate-500 text-sm">
-                    {loadingCandidates ? "Refreshing server-side results…" : `${candidates.length} candidates in result set`}
+                    {loadingCandidates ? t("search.refreshing") : t("search.resultCount", {count: candidates.length})}
                   </p>
                   <button
                     type="submit"
                     className="bg-blue-600 hover:bg-blue-500 text-white font-medium text-sm px-4 py-2 rounded-lg transition-colors"
                   >
-                    Apply Filters
+                    {t("search.apply")}
                   </button>
                 </div>
               </form>
@@ -552,8 +561,8 @@ export default function CompanyDashboardPage() {
               <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="text-white font-semibold">Shortlists</h2>
-                    <p className="text-slate-400 text-sm">Create named buckets and reuse them across filters and compare flows.</p>
+                    <h2 className="text-white font-semibold">{t("shortlists.title")}</h2>
+                    <p className="text-slate-400 text-sm">{t("shortlists.subtitle")}</p>
                   </div>
                 </div>
                 <form onSubmit={handleCreateShortlist} className="flex gap-2">
@@ -561,7 +570,7 @@ export default function CompanyDashboardPage() {
                     type="text"
                     value={newShortlistName}
                     onChange={(e) => setNewShortlistName(e.target.value)}
-                    placeholder="e.g. Backend Finalists"
+                    placeholder={t("shortlists.placeholder")}
                     disabled={!canManagePipeline}
                     className="flex-1 bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -570,28 +579,28 @@ export default function CompanyDashboardPage() {
                     disabled={creatingShortlist || !canManagePipeline}
                     className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
                   >
-                    {creatingShortlist ? "Creating…" : "Create"}
+                    {creatingShortlist ? t("shortlists.creating") : t("shortlists.create")}
                   </button>
                 </form>
                 {shortlistsError && <p className="text-red-400 text-sm">{shortlistsError}</p>}
                 {shortlistsLoading ? (
-                  <p className="text-slate-500 text-sm">Loading shortlists…</p>
+                  <p className="text-slate-500 text-sm">{t("shortlists.loading")}</p>
                 ) : shortlists.length === 0 ? (
-                  <p className="text-slate-500 text-sm">No shortlists yet.</p>
+                  <p className="text-slate-500 text-sm">{t("shortlists.empty")}</p>
                 ) : (
                   <div className="space-y-2">
                     {shortlists.map((shortlist) => (
                       <div key={shortlist.shortlist_id} className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-900 px-3 py-2">
                         <div>
                           <p className="text-white text-sm font-medium">{shortlist.name}</p>
-                          <p className="text-slate-500 text-xs">{shortlist.candidate_count} candidate{shortlist.candidate_count !== 1 ? "s" : ""}</p>
+                          <p className="text-slate-500 text-xs">{t("shortlists.candidateCount", { count: shortlist.candidate_count })}</p>
                         </div>
                         <button
                           onClick={() => handleDeleteShortlist(shortlist.shortlist_id)}
                           disabled={!canManagePipeline}
                           className="text-slate-500 hover:text-red-400 text-xs transition-colors"
                         >
-                          Delete
+                          {t("shortlists.delete")}
                         </button>
                       </div>
                     ))}
@@ -612,12 +621,12 @@ export default function CompanyDashboardPage() {
             )}
 
             {loadingCandidates ? (
-              <div className="text-center py-16 text-slate-400">Loading candidates…</div>
+              <div className="text-center py-16 text-slate-400">{t("candidates.loading")}</div>
             ) : candidates.length === 0 ? (
               <div className="bg-slate-800 border border-slate-700 rounded-xl p-12 text-center">
-                <h2 className="text-white font-semibold text-lg mb-2">No candidates found</h2>
+                <h2 className="text-white font-semibold text-lg mb-2">{t("candidates.emptyTitle")}</h2>
                 <p className="text-slate-400 text-sm max-w-lg mx-auto">
-                  Adjust the server-side filters or wait for more candidates to complete AI interviews.
+                  {t("candidates.emptyDescription")}
                 </p>
               </div>
             ) : (
@@ -631,21 +640,21 @@ export default function CompanyDashboardPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-3 flex-wrap mb-2">
                             <h3 className="text-white font-semibold">{candidate.full_name}</h3>
-                            <span className={`text-xs px-2 py-0.5 rounded-full border ${rec.className}`}>{rec.label}</span>
+                            <span className={`text-xs px-2 py-0.5 rounded-full border ${rec.className}`}>{t(`recommendations.${candidate.hiring_recommendation}`)}</span>
                             {candidate.hire_outcome && OUTCOME_LABELS[candidate.hire_outcome] && (
                               <span className={`text-xs px-2 py-0.5 rounded-full ${OUTCOME_LABELS[candidate.hire_outcome].cls}`}>
-                                {OUTCOME_LABELS[candidate.hire_outcome].label}
+                                {t(`outcomes.${candidate.hire_outcome}`)}
                               </span>
                             )}
                             {candidate.cheat_risk_score != null && candidate.cheat_risk_score >= 0.7 && (
                               <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/15 text-red-300 border border-red-500/20">
-                                High cheat risk
+                                {t("candidates.highCheatRisk")}
                               </span>
                             )}
                           </div>
                           <p className="text-slate-400 text-sm">{candidate.email}</p>
                           <p className="text-slate-500 text-sm mt-1">
-                            {ROLE_LABELS[candidate.target_role] ?? candidate.target_role} · Score {candidate.overall_score != null ? candidate.overall_score.toFixed(1) : "—"} · Salary {formatSalary(candidate)}
+                            {roleLabel(candidate.target_role)} · {t("candidates.scoreLabel")} {candidate.overall_score != null ? candidate.overall_score.toFixed(1) : "—"} · {t("candidates.salaryLabel")} {formatSalary(candidate) ?? t("analytics.noData")}
                           </p>
                           {candidate.interview_summary && (
                             <p className="text-slate-300 text-sm mt-3 line-clamp-2">{candidate.interview_summary}</p>
@@ -676,7 +685,7 @@ export default function CompanyDashboardPage() {
                               href={`/company/candidates/${candidate.candidate_id}`}
                               className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
                             >
-                              Open profile →
+                              {t("candidates.openProfile")} →
                             </Link>
                             <button
                               onClick={() => toggleCandidate(candidate.candidate_id)}
@@ -686,13 +695,13 @@ export default function CompanyDashboardPage() {
                                   : "border-slate-600 text-slate-400 hover:text-white"
                               }`}
                             >
-                              {selected ? "Selected for compare" : "Select to compare"}
+                              {selected ? t("candidates.selectedForCompare") : t("candidates.selectToCompare")}
                             </button>
                           </div>
                           <div className="rounded-lg border border-slate-700 bg-slate-900 p-3">
-                            <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">Shortlist Actions</p>
+                            <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">{t("candidates.shortlistActions")}</p>
                             {shortlists.length === 0 ? (
-                              <p className="text-slate-500 text-sm">Create a shortlist to start organizing candidates.</p>
+                              <p className="text-slate-500 text-sm">{t("candidates.createShortlistPrompt")}</p>
                             ) : (
                               <div className="flex flex-wrap gap-2">
                                 {shortlists.map((shortlist) => {
@@ -708,7 +717,7 @@ export default function CompanyDashboardPage() {
                                           : "border-slate-600 text-slate-400 hover:text-white"
                                       }`}
                                     >
-                                      {isMember ? `Remove ${shortlist.name}` : `Add ${shortlist.name}`}
+                                      {isMember ? t("candidates.removeFromShortlist", { name: shortlist.name }) : t("candidates.addToShortlist", { name: shortlist.name })}
                                     </button>
                                   );
                                 })}
@@ -734,60 +743,60 @@ export default function CompanyDashboardPage() {
             )}
 
             {analyticsLoading || !analyticsOverview || !analyticsFunnel || !analyticsSalary ? (
-              <div className="text-center py-16 text-slate-400">Loading analytics…</div>
+              <div className="text-center py-16 text-slate-400">{t("analytics.loading")}</div>
             ) : (
               <div className="space-y-6">
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  <MetricCard label="Marketplace Candidates" value={analyticsOverview.total_candidates.toString()} />
-                  <MetricCard label="Tracked Reports" value={analyticsOverview.total_reports.toString()} />
-                  <MetricCard label="Shortlisted" value={analyticsOverview.shortlisted_candidates.toString()} tone="good" />
-                  <MetricCard label="Flagged Candidates" value={analyticsOverview.red_flag_summary.candidates_with_flags.toString()} tone="warn" />
+                  <MetricCard label={t("analytics.metrics.marketplaceCandidates")} value={analyticsOverview.total_candidates.toString()} />
+                  <MetricCard label={t("analytics.metrics.trackedReports")} value={analyticsOverview.total_reports.toString()} />
+                  <MetricCard label={t("analytics.metrics.shortlisted")} value={analyticsOverview.shortlisted_candidates.toString()} tone="good" />
+                  <MetricCard label={t("analytics.metrics.flaggedCandidates")} value={analyticsOverview.red_flag_summary.candidates_with_flags.toString()} tone="warn" />
                 </div>
 
                 <div className="grid gap-6 xl:grid-cols-2">
                   <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-                    <h2 className="text-white font-semibold mb-4">Role Breakdown</h2>
+                    <h2 className="text-white font-semibold mb-4">{t("analytics.roleBreakdown")}</h2>
                     <BreakdownList items={analyticsOverview.role_breakdown} />
                   </div>
                   <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-                    <h2 className="text-white font-semibold mb-4">Recommendation Breakdown</h2>
+                    <h2 className="text-white font-semibold mb-4">{t("analytics.recommendationBreakdown")}</h2>
                     <BreakdownList items={analyticsOverview.recommendation_breakdown} />
                   </div>
                 </div>
 
                 <div className="grid gap-6 xl:grid-cols-2">
                   <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-                    <h2 className="text-white font-semibold mb-4">Cheat Risk Distribution</h2>
+                    <h2 className="text-white font-semibold mb-4">{t("analytics.cheatRiskDistribution")}</h2>
                     <BreakdownList items={analyticsOverview.cheat_risk_breakdown} />
                   </div>
                   <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-                    <h2 className="text-white font-semibold mb-4">Red Flag Summary</h2>
+                    <h2 className="text-white font-semibold mb-4">{t("analytics.redFlagSummary")}</h2>
                     <div className="grid grid-cols-2 gap-3">
-                      <MetricCard label="Candidates with Flags" value={analyticsOverview.red_flag_summary.candidates_with_flags.toString()} tone="warn" />
-                      <MetricCard label="Total Flags" value={analyticsOverview.red_flag_summary.total_flags.toString()} tone="warn" />
+                      <MetricCard label={t("analytics.metrics.candidatesWithFlags")} value={analyticsOverview.red_flag_summary.candidates_with_flags.toString()} tone="warn" />
+                      <MetricCard label={t("analytics.metrics.totalFlags")} value={analyticsOverview.red_flag_summary.total_flags.toString()} tone="warn" />
                     </div>
                   </div>
                 </div>
 
                 <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-                  <h2 className="text-white font-semibold mb-4">Recommendation to Outcome Funnel</h2>
+                  <h2 className="text-white font-semibold mb-4">{t("analytics.funnelTitle")}</h2>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="text-slate-500 border-b border-slate-700">
-                          <th className="text-left py-2 pr-4">Recommendation</th>
-                          <th className="text-left py-2 pr-4">Total</th>
-                          <th className="text-left py-2 pr-4">Unreviewed</th>
-                          <th className="text-left py-2 pr-4">Interviewing</th>
-                          <th className="text-left py-2 pr-4">Hired</th>
-                          <th className="text-left py-2 pr-4">Rejected</th>
-                          <th className="text-left py-2">No Show</th>
+                          <th className="text-left py-2 pr-4">{t("analytics.table.recommendation")}</th>
+                          <th className="text-left py-2 pr-4">{t("analytics.table.total")}</th>
+                          <th className="text-left py-2 pr-4">{t("analytics.table.unreviewed")}</th>
+                          <th className="text-left py-2 pr-4">{t("analytics.table.interviewing")}</th>
+                          <th className="text-left py-2 pr-4">{t("analytics.table.hired")}</th>
+                          <th className="text-left py-2 pr-4">{t("analytics.table.rejected")}</th>
+                          <th className="text-left py-2">{t("analytics.table.noShow")}</th>
                         </tr>
                       </thead>
                       <tbody>
                         {analyticsFunnel.rows.map((row) => (
                           <tr key={row.recommendation} className="border-b border-slate-800 last:border-b-0">
-                            <td className="py-3 pr-4 text-white">{REC_STYLES[row.recommendation]?.label ?? row.recommendation}</td>
+                            <td className="py-3 pr-4 text-white">{t(`recommendations.${row.recommendation}`)}</td>
                             <td className="py-3 pr-4 text-slate-300">{row.total}</td>
                             <td className="py-3 pr-4 text-slate-300">{row.unreviewed}</td>
                             <td className="py-3 pr-4 text-slate-300">{row.interviewing}</td>
@@ -804,14 +813,15 @@ export default function CompanyDashboardPage() {
                 <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
                   <div className="flex items-center justify-between mb-4">
                     <div>
-                      <h2 className="text-white font-semibold">Salary Insights</h2>
+                      <h2 className="text-white font-semibold">{t("analytics.salaryInsights")}</h2>
                       <p className="text-slate-400 text-sm">
-                        {filters.role ? `Filtered to ${ROLE_LABELS[filters.role] ?? filters.role}` : "All roles"}{filters.shortlist_id ? " and active shortlist filter" : ""}.
+                        {filters.role ? t("analytics.filteredRole", { role: roleLabel(filters.role) }) : t("analytics.allRoles")}
+                        {filters.shortlist_id ? t("analytics.activeShortlist") : ""}.
                       </p>
                     </div>
                   </div>
                   {analyticsSalary.roles.length === 0 ? (
-                    <p className="text-slate-500 text-sm">No salary data yet for the current analytics filter.</p>
+                    <p className="text-slate-500 text-sm">{t("analytics.noSalaryData")}</p>
                   ) : (
                     <div className="space-y-5">
                       {analyticsSalary.roles.map((roleBlock) => (
@@ -819,32 +829,32 @@ export default function CompanyDashboardPage() {
                           <div className="flex items-center justify-between mb-4">
                             <div>
                               <h3 className="text-white font-semibold">
-                                {ROLE_LABELS[roleBlock.role] ?? roleBlock.role} <span className="text-slate-500">· {roleBlock.currency}</span>
+                                {roleLabel(roleBlock.role)} <span className="text-slate-500">· {roleBlock.currency}</span>
                               </h3>
-                              <p className="text-slate-500 text-sm">{roleBlock.candidate_count} candidates with salary data</p>
+                              <p className="text-slate-500 text-sm">{t("analytics.candidatesWithSalary", { count: roleBlock.candidate_count })}</p>
                             </div>
                           </div>
                           <div className="grid gap-3 md:grid-cols-2 mb-4">
                             <MetricCard
-                              label="Market Band"
-                              value={formatSalaryBand(roleBlock.market_band, roleBlock.currency)}
+                              label={t("analytics.marketBand")}
+                              value={formatSalaryBand(roleBlock.market_band, roleBlock.currency) ?? t("analytics.noData")}
                             />
                             <MetricCard
-                              label="Shortlist Spread"
-                              value={formatSalaryBand(roleBlock.shortlisted_band, roleBlock.currency)}
+                              label={t("analytics.shortlistSpread")}
+                              value={formatSalaryBand(roleBlock.shortlisted_band, roleBlock.currency) ?? t("analytics.noData")}
                               tone="good"
                             />
                           </div>
                           <div className="grid gap-4 xl:grid-cols-2">
                             <div>
-                              <p className="text-slate-500 text-xs uppercase tracking-wide mb-3">Score Buckets</p>
+                              <p className="text-slate-500 text-xs uppercase tracking-wide mb-3">{t("analytics.scoreBuckets")}</p>
                               <div className="space-y-2">
                                 {roleBlock.buckets.map((bucket) => (
                                   <div key={`${roleBlock.role}-${bucket.score_range}`} className="flex items-center justify-between rounded-lg border border-slate-700 px-3 py-2">
                                     <span className="text-slate-300 text-sm">{bucket.score_range}</span>
                                     <span className="text-slate-400 text-sm">
                                       {bucket.count === 0 || bucket.median_min == null || bucket.median_max == null
-                                        ? "No data"
+                                        ? t("analytics.noData")
                                         : `${Math.round(bucket.median_min).toLocaleString()}–${Math.round(bucket.median_max).toLocaleString()} ${roleBlock.currency}`}
                                     </span>
                                   </div>
@@ -852,14 +862,14 @@ export default function CompanyDashboardPage() {
                               </div>
                             </div>
                             <div>
-                              <p className="text-slate-500 text-xs uppercase tracking-wide mb-3">Outcome Trends</p>
+                              <p className="text-slate-500 text-xs uppercase tracking-wide mb-3">{t("analytics.outcomeTrends")}</p>
                               <div className="space-y-2">
                                 {roleBlock.outcome_trends.map((trend) => (
                                   <div key={`${roleBlock.role}-${trend.outcome}`} className="flex items-center justify-between rounded-lg border border-slate-700 px-3 py-2">
-                                    <span className="text-slate-300 text-sm">{OUTCOME_LABELS[trend.outcome as HireOutcome]?.label ?? trend.outcome}</span>
+                                    <span className="text-slate-300 text-sm">{t(`outcomes.${trend.outcome as HireOutcome}`)}</span>
                                     <span className="text-slate-400 text-sm">
                                       {trend.count === 0 || trend.median_min == null || trend.median_max == null
-                                        ? "No data"
+                                        ? t("analytics.noData")
                                         : `${Math.round(trend.median_min).toLocaleString()}–${Math.round(trend.median_max).toLocaleString()} ${roleBlock.currency}`}
                                     </span>
                                   </div>
@@ -874,21 +884,21 @@ export default function CompanyDashboardPage() {
                 </div>
 
                 <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
-                  <h2 className="text-white font-semibold mb-4">Template Performance</h2>
+                  <h2 className="text-white font-semibold mb-4">{t("analytics.templatePerformance")}</h2>
                   {analyticsOverview.template_performance.length === 0 ? (
-                    <p className="text-slate-500 text-sm">No template-linked public interview data yet.</p>
+                    <p className="text-slate-500 text-sm">{t("analytics.noTemplateData")}</p>
                   ) : (
                     <div className="space-y-3">
                       {analyticsOverview.template_performance.map((template) => (
                         <div key={template.template_id} className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-900 px-4 py-3">
                           <div>
                             <p className="text-white font-medium">{template.template_name}</p>
-                            <p className="text-slate-500 text-sm">{ROLE_LABELS[template.target_role] ?? template.target_role}</p>
+                            <p className="text-slate-500 text-sm">{roleLabel(template.target_role)}</p>
                           </div>
                           <div className="text-right">
-                            <p className="text-white font-semibold">{template.completed_count} runs</p>
+                            <p className="text-white font-semibold">{t("analytics.runs", { count: template.completed_count })}</p>
                             <p className="text-slate-500 text-sm">
-                              Avg score {template.average_score != null ? template.average_score.toFixed(2) : "—"}
+                              {t("analytics.avgScore")} {template.average_score != null ? template.average_score.toFixed(2) : "—"}
                             </p>
                           </div>
                         </div>

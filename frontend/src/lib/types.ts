@@ -236,6 +236,8 @@ export interface SendMessageResponse {
   question_count: number;
   max_questions: number;
   current_question: string | null;
+  is_followup: boolean;
+  question_type: string;
 }
 
 export interface InterviewMessage {
@@ -481,6 +483,13 @@ export interface AnalyticsSalary {
 
 export type HiringRecommendation = "strong_yes" | "yes" | "maybe" | "no";
 
+export interface ReportSummaryBlock {
+  score: number | null;
+  hiring_recommendation: HiringRecommendation;
+  top_strengths: string[];
+  top_weaknesses: string[];
+}
+
 export interface CompetencyScore {
   competency: string;
   category: string;
@@ -542,4 +551,5 @@ export interface AssessmentReport {
   decision_policy_version: string | null;
   cheat_risk_score: number | null;
   cheat_flags: string[] | null;
+  summary: ReportSummaryBlock | null;
 }

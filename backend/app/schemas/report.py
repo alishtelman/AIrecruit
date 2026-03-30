@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class CompetencyScore(BaseModel):
@@ -37,6 +37,13 @@ class RedFlag(BaseModel):
     severity: str = "low"
 
 
+class ReportSummaryBlock(BaseModel):
+    score: float | None
+    hiring_recommendation: str
+    top_strengths: list[str]
+    top_weaknesses: list[str]
+
+
 class AssessmentReportResponse(BaseModel):
     id: uuid.UUID
     interview_id: uuid.UUID
@@ -67,5 +74,16 @@ class AssessmentReportResponse(BaseModel):
     decision_policy_version: str | None = None
     cheat_risk_score: float | None = None
     cheat_flags: list[str] | None = None
+    summary: ReportSummaryBlock | None = None
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="after")
+    def _build_summary(self) -> "AssessmentReportResponse":
+        self.summary = ReportSummaryBlock(
+            score=self.overall_score,
+            hiring_recommendation=self.hiring_recommendation,
+            top_strengths=self.strengths[:2],
+            top_weaknesses=self.weaknesses[:2],
+        )
+        return self

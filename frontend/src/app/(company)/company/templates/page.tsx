@@ -1,25 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useTranslations } from "next-intl";
+import { Link } from "@/i18n/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { companyApi } from "@/lib/api";
 import type { InterviewTemplate, TargetRole } from "@/lib/types";
 
-const ROLES: { value: TargetRole; label: string }[] = [
-  { value: "backend_engineer", label: "Backend Engineer" },
-  { value: "frontend_engineer", label: "Frontend Engineer" },
-  { value: "qa_engineer", label: "QA Engineer" },
-  { value: "devops_engineer", label: "DevOps Engineer" },
-  { value: "data_scientist", label: "Data Scientist" },
-  { value: "product_manager", label: "Product Manager" },
-  { value: "mobile_engineer", label: "Mobile Engineer" },
-  { value: "designer", label: "UX/UI Designer" },
+const ROLES: TargetRole[] = [
+  "backend_engineer",
+  "frontend_engineer",
+  "qa_engineer",
+  "devops_engineer",
+  "data_scientist",
+  "product_manager",
+  "mobile_engineer",
+  "designer",
 ];
-
-const ROLE_LABELS: Record<string, string> = Object.fromEntries(
-  ROLES.map((r) => [r.value, r.label])
-);
 
 const BLANK_FORM = {
   name: "",
@@ -30,6 +27,8 @@ const BLANK_FORM = {
 };
 
 export default function TemplatesPage() {
+  const t = useTranslations("companyTemplates");
+  const startT = useTranslations("interviewStart");
   const { user, loading: authLoading } = useAuth("/company/login");
   const [templates, setTemplates] = useState<InterviewTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,7 +44,7 @@ export default function TemplatesPage() {
     companyApi
       .listTemplates()
       .then(setTemplates)
-      .catch((err) => setError(err.message ?? "Failed to load templates"))
+      .catch((err) => setError(err.message ?? t("errors.load")))
       .finally(() => setLoading(false));
   }, [authLoading]);
 
@@ -67,13 +66,13 @@ export default function TemplatesPage() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!canManageTemplates) {
-      setFormError("Only admins can manage templates");
+      setFormError(t("errors.adminOnly"));
       return;
     }
     setFormError("");
     const validQuestions = form.questions.map((q) => q.trim()).filter(Boolean);
     if (validQuestions.length === 0) {
-      setFormError("Add at least one question.");
+      setFormError(t("errors.noQuestions"));
       return;
     }
     setSaving(true);
@@ -89,7 +88,7 @@ export default function TemplatesPage() {
       setShowForm(false);
       setForm(BLANK_FORM);
     } catch (err: unknown) {
-      setFormError(err instanceof Error ? err.message : "Failed to create template");
+      setFormError(err instanceof Error ? err.message : t("errors.create"));
     } finally {
       setSaving(false);
     }
@@ -97,21 +96,21 @@ export default function TemplatesPage() {
 
   async function handleDelete(templateId: string) {
     if (!canManageTemplates) {
-      setError("Only admins can manage templates");
+      setError(t("errors.adminOnly"));
       return;
     }
     try {
       await companyApi.deleteTemplate(templateId);
       setTemplates(templates.filter((t) => t.template_id !== templateId));
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to delete template");
+      setError(err instanceof Error ? err.message : t("errors.delete"));
     }
   }
 
   if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-slate-400">Loading…</div>
+        <div className="text-slate-400">{t("loading")}</div>
       </div>
     );
   }
@@ -121,19 +120,19 @@ export default function TemplatesPage() {
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <Link href="/company/dashboard" className="text-slate-400 hover:text-white text-sm transition-colors">
-              ← Back to dashboard
+              <Link href="/company/dashboard" className="text-slate-400 hover:text-white text-sm transition-colors">
+              ← {t("back")}
             </Link>
-            <h1 className="text-2xl font-bold text-white mt-3">Interview Templates</h1>
-            <p className="text-slate-400 text-sm mt-1">Create custom question sets for candidates</p>
-            {!canManageTemplates && <p className="text-amber-300 text-sm mt-2">Read-only mode: only admins can create or delete templates.</p>}
+            <h1 className="text-2xl font-bold text-white mt-3">{t("title")}</h1>
+            <p className="text-slate-400 text-sm mt-1">{t("subtitle")}</p>
+            {!canManageTemplates && <p className="text-amber-300 text-sm mt-2">{t("readonly")}</p>}
           </div>
           <button
             onClick={() => setShowForm(!showForm)}
             disabled={!canManageTemplates}
             className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg transition-colors text-sm"
           >
-            {showForm ? "Cancel" : "+ New Template"}
+            {showForm ? t("cancel") : t("new")}
           </button>
         </div>
 
@@ -149,52 +148,52 @@ export default function TemplatesPage() {
             onSubmit={handleCreate}
             className="bg-slate-800 border border-slate-700 rounded-xl p-6 mb-6 space-y-4"
           >
-            <h2 className="text-white font-semibold">New Template</h2>
+            <h2 className="text-white font-semibold">{t("form.title")}</h2>
             {formError && (
               <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-4 py-3">
                 {formError}
               </div>
             )}
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Name</label>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">{t("form.name")}</label>
               <input
                 required
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="e.g. Senior Backend Engineer Screen"
+                placeholder={t("form.namePlaceholder")}
                 className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Target Role</label>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">{t("form.targetRole")}</label>
               <select
                 value={form.target_role}
                 onChange={(e) => setForm({ ...form, target_role: e.target.value as TargetRole })}
                 className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 {ROLES.map((r) => (
-                  <option key={r.value} value={r.value}>{r.label}</option>
+                  <option key={r.value} value={r.value}>{startT(`roles.${r.value}.label`)}</option>
                 ))}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">Description (optional)</label>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">{t("form.description")}</label>
               <input
                 value={form.description}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
-                placeholder="Brief description for candidates"
+                placeholder={t("form.descriptionPlaceholder")}
                 className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Questions</label>
+              <label className="block text-sm font-medium text-slate-300 mb-2">{t("form.questions")}</label>
               <div className="space-y-2">
                 {form.questions.map((q, idx) => (
                   <div key={idx} className="flex gap-2">
                     <input
                       value={q}
                       onChange={(e) => setQuestion(idx, e.target.value)}
-                      placeholder={`Question ${idx + 1}`}
+                      placeholder={t("form.questionPlaceholder", {number: idx + 1})}
                       className="flex-1 bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"
                     />
                     <button
@@ -213,7 +212,7 @@ export default function TemplatesPage() {
                 onClick={addQuestion}
                 className="mt-2 text-blue-400 hover:text-blue-300 text-sm transition-colors"
               >
-                + Add question
+                {t("form.addQuestion")}
               </button>
             </div>
             <label className="flex items-center gap-3 cursor-pointer">
@@ -224,7 +223,7 @@ export default function TemplatesPage() {
                 className="rounded"
               />
               <span className="text-sm text-slate-300">
-                Make public (visible to all candidates on the interview start page)
+                {t("form.makePublic")}
               </span>
             </label>
             <button
@@ -232,7 +231,7 @@ export default function TemplatesPage() {
               disabled={saving}
               className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-semibold py-2.5 rounded-lg transition-colors"
             >
-              {saving ? "Creating…" : "Create Template"}
+              {saving ? t("form.creating") : t("form.submit")}
             </button>
           </form>
         )}
@@ -240,10 +239,10 @@ export default function TemplatesPage() {
         {/* Template list */}
         {templates.length === 0 && !showForm ? (
           <div className="bg-slate-800 border border-slate-700 rounded-xl p-12 text-center">
-            <div className="text-4xl mb-4">📋</div>
-            <h2 className="text-white font-semibold text-lg mb-2">No templates yet</h2>
+            <div className="text-4xl mb-4">TPL</div>
+            <h2 className="text-white font-semibold text-lg mb-2">{t("empty.title")}</h2>
             <p className="text-slate-400 text-sm max-w-sm mx-auto">
-              Create a template to define a custom set of interview questions for candidates.
+              {t("empty.description")}
             </p>
           </div>
         ) : (
@@ -259,12 +258,12 @@ export default function TemplatesPage() {
                       <span className="text-white font-semibold">{tmpl.name}</span>
                       {tmpl.is_public && (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-400">
-                          Public
+                          {t("public")}
                         </span>
                       )}
                     </div>
                     <p className="text-slate-400 text-sm mt-0.5">
-                      {ROLE_LABELS[tmpl.target_role] ?? tmpl.target_role} · {tmpl.questions.length} questions
+                      {startT(`roles.${tmpl.target_role}.label`)} · {t("questionCount", {count: tmpl.questions.length})}
                     </p>
                     {tmpl.description && (
                       <p className="text-slate-500 text-xs mt-1">{tmpl.description}</p>
@@ -275,7 +274,7 @@ export default function TemplatesPage() {
                     disabled={!canManageTemplates}
                     className="text-slate-500 hover:text-red-400 text-sm transition-colors shrink-0"
                   >
-                    Delete
+                    {t("delete")}
                   </button>
                 </div>
               </div>

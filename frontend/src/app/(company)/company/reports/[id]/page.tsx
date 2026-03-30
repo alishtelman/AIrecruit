@@ -1,22 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
+import { useTranslations } from "next-intl";
+import { useParams } from "next/navigation";
+import { useRouter } from "@/i18n/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { companyApi } from "@/lib/api";
 import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis } from "@/lib/types";
 
-const RECOMMENDATION_CONFIG: Record<HiringRecommendation, { label: string; color: string; bg: string }> = {
-  strong_yes: { label: "Strong Yes", color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
-  yes:        { label: "Yes",        color: "text-blue-400",  bg: "bg-blue-500/10 border-blue-500/30" },
-  maybe:      { label: "Maybe",      color: "text-yellow-400",bg: "bg-yellow-500/10 border-yellow-500/30" },
-  no:         { label: "No",         color: "text-red-400",   bg: "bg-red-500/10 border-red-500/30" },
-};
-
-const CATEGORY_LABELS: Record<string, string> = {
-  technical_core: "Technical Core", technical_breadth: "Technical Breadth",
-  problem_solving: "Problem Solving", communication: "Communication", behavioral: "Behavioral",
+const RECOMMENDATION_CONFIG: Record<HiringRecommendation, { color: string; bg: string }> = {
+  strong_yes: { color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
+  yes:        { color: "text-blue-400",  bg: "bg-blue-500/10 border-blue-500/30" },
+  maybe:      { color: "text-yellow-400",bg: "bg-yellow-500/10 border-yellow-500/30" },
+  no:         { color: "text-red-400",   bg: "bg-red-500/10 border-red-500/30" },
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -39,6 +35,8 @@ const SEVERITY_COLORS: Record<string, string> = {
 };
 
 export default function CompanyReportPage() {
+  const t = useTranslations("report");
+  const dashboardT = useTranslations("companyDashboard");
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { loading: authLoading } = useAuth("/company/login");
@@ -48,11 +46,11 @@ export default function CompanyReportPage() {
 
   useEffect(() => {
     if (!id || authLoading) return;
-    companyApi.getReport(id).then(setReport).catch(() => setError("Could not load report"));
+    companyApi.getReport(id).then(setReport).catch(() => setError(t("loadFailed")));
   }, [id, authLoading]);
 
   if (authLoading || (!report && !error)) {
-    return <div className="min-h-screen bg-slate-900 flex items-center justify-center"><div className="text-slate-400">Loading report…</div></div>;
+    return <div className="min-h-screen bg-slate-900 flex items-center justify-center"><div className="text-slate-400">{t("loadFailed")}</div></div>;
   }
 
   if (error || !report) {
@@ -60,7 +58,7 @@ export default function CompanyReportPage() {
       <div className="min-h-screen bg-slate-900 flex items-center justify-center px-4">
         <div className="text-center">
           <div className="text-red-400 mb-4">{error}</div>
-          <button onClick={() => router.back()} className="text-blue-400 hover:underline text-sm">← Go back</button>
+          <button onClick={() => router.back()} className="text-blue-400 hover:underline text-sm">← {t("backToDashboard")}</button>
         </div>
       </div>
     );
@@ -72,38 +70,38 @@ export default function CompanyReportPage() {
     <div className="min-h-screen bg-slate-900 px-4 py-10">
       <div className="max-w-3xl mx-auto">
         <button onClick={() => router.back()} className="text-slate-400 hover:text-white text-sm mb-6 inline-block transition-colors">
-          ← Back
+          ← {t("backToDashboard")}
         </button>
 
-        <h1 className="text-2xl font-bold text-white mb-2">Assessment Report</h1>
+        <h1 className="text-2xl font-bold text-white mb-2">{t("title")}</h1>
 
         {report.interview_summary && <p className="text-slate-400 mb-6">{report.interview_summary}</p>}
 
         <div className={`inline-flex items-center gap-2 border rounded-full px-4 py-1.5 text-sm font-semibold mb-6 ${rec.bg} ${rec.color}`}>
-          Hiring Recommendation: {rec.label}
+          {t("recommendation")}: {dashboardT(`recommendations.${report.hiring_recommendation}`)}
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
-          <ScoreCard label="Overall Score" score={report.overall_score} highlight />
-          <ScoreCard label="Hard Skills" score={report.hard_skills_score} />
-          <ScoreCard label="Soft Skills" score={report.soft_skills_score} />
-          <ScoreCard label="Communication" score={report.communication_score} />
-          <ScoreCard label="Problem Solving" score={report.problem_solving_score} />
-          {report.response_consistency != null && <ScoreCard label="Consistency" score={report.response_consistency} />}
+          <ScoreCard label={t("overallScore")} score={report.overall_score} highlight />
+          <ScoreCard label={t("hardSkills")} score={report.hard_skills_score} />
+          <ScoreCard label={t("softSkills")} score={report.soft_skills_score} />
+          <ScoreCard label={t("communication")} score={report.communication_score} />
+          <ScoreCard label={t("problemSolving")} score={report.problem_solving_score} />
+          {report.response_consistency != null && <ScoreCard label={t("consistency")} score={report.response_consistency} />}
         </div>
 
         {report.competency_scores && report.competency_scores.length > 0 && (
-          <Section title="Competency Heatmap" color="blue">
+          <Section title={t("competencyHeatmap")} color="blue">
             <CompetencyHeatmap scores={report.competency_scores} />
           </Section>
         )}
 
         {report.skill_tags && report.skill_tags.length > 0 && (
-          <Section title="Skills Identified" color="cyan"><SkillMatrix tags={report.skill_tags} /></Section>
+          <Section title={t("skillsIdentified")} color="cyan"><SkillMatrix tags={report.skill_tags} /></Section>
         )}
 
         {report.red_flags && report.red_flags.length > 0 && (
-          <Section title="Red Flags" color="red">
+          <Section title={t("redFlags")} color="red">
             <div className="space-y-3">
               {report.red_flags.map((rf, i) => <RedFlagRow key={i} flag={rf} />)}
             </div>
@@ -111,26 +109,26 @@ export default function CompanyReportPage() {
         )}
 
         {report.strengths.length > 0 && (
-          <Section title="Strengths" color="green">
+          <Section title={t("strengths")} color="green">
             {report.strengths.map((s, i) => <ListItem key={i} text={s} bullet="✓" color="text-green-400" />)}
           </Section>
         )}
 
         {report.weaknesses.length > 0 && (
-          <Section title="Areas to Improve" color="yellow">
+          <Section title={t("areasToImprove")} color="yellow">
             {report.weaknesses.map((w, i) => <ListItem key={i} text={w} bullet="△" color="text-yellow-400" />)}
           </Section>
         )}
 
         {report.recommendations.length > 0 && (
-          <Section title="Recommendations" color="purple">
+          <Section title={t("recommendations")} color="purple">
             {report.recommendations.map((r, i) => <ListItem key={i} text={r} bullet="→" color="text-purple-400" />)}
           </Section>
         )}
 
         {report.per_question_analysis && report.per_question_analysis.length > 0 && (
           <div className="mt-6">
-            <h2 className="text-white font-semibold mb-3">Per-Question Analysis</h2>
+            <h2 className="text-white font-semibold mb-3">{t("perQuestionAnalysis")}</h2>
             <div className="space-y-2">
               {report.per_question_analysis.map((qa, i) => (
                 <QuestionAccordion key={i} qa={qa} expanded={expandedQ === i} onToggle={() => setExpandedQ(expandedQ === i ? null : i)} />
@@ -143,13 +141,13 @@ export default function CompanyReportPage() {
         {report.cheat_risk_score != null && report.cheat_risk_score > 0 && (
           <div className="bg-slate-800 border border-orange-500/40 rounded-xl p-5 mb-4 mt-4">
             <div className="flex items-center gap-3 mb-2">
-              <span className="text-orange-400 font-semibold text-sm">⚠ Behavioral Risk Signals</span>
+              <span className="text-orange-400 font-semibold text-sm">{t("behavioralRisk")}</span>
               <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${
                 report.cheat_risk_score >= 0.7 ? "bg-red-500/20 text-red-400" :
                 report.cheat_risk_score >= 0.4 ? "bg-orange-500/20 text-orange-400" :
                 "bg-yellow-500/20 text-yellow-400"
               }`}>
-                Risk: {Math.round(report.cheat_risk_score * 100)}%
+                {t("risk")}: {Math.round(report.cheat_risk_score * 100)}%
               </span>
             </div>
             {report.cheat_flags && report.cheat_flags.length > 0 && (
@@ -165,7 +163,7 @@ export default function CompanyReportPage() {
         )}
 
         <div className="text-slate-600 text-xs mt-8">
-          Generated by model {report.model_version} · {new Date(report.created_at).toLocaleDateString()}
+          {t("generatedBy", {model: report.model_version, date: new Date(report.created_at).toLocaleDateString()})}
         </div>
       </div>
     </div>
@@ -188,13 +186,14 @@ function ScoreCard({ label, score, highlight = false }: { label: string; score: 
 }
 
 function CompetencyHeatmap({ scores }: { scores: CompetencyScore[] }) {
+  const t = useTranslations("report");
   const groups: Record<string, CompetencyScore[]> = {};
   for (const cs of scores) { if (!groups[cs.category]) groups[cs.category] = []; groups[cs.category].push(cs); }
   return (
     <div className="space-y-4">
       {Object.entries(groups).map(([category, items]) => (
         <div key={category}>
-          <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">{CATEGORY_LABELS[category] ?? category}</div>
+          <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">{CATEGORY_LABELS[category] ? t(`labels.${category}`) : category}</div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {items.map((cs, i) => {
               const cellClass = cs.score >= 7 ? "bg-green-500/30 border-green-500/50 text-green-300" : cs.score >= 5 ? "bg-yellow-500/30 border-yellow-500/50 text-yellow-300" : "bg-red-500/30 border-red-500/50 text-red-300";
@@ -214,12 +213,13 @@ function CompetencyHeatmap({ scores }: { scores: CompetencyScore[] }) {
 }
 
 function SkillMatrix({ tags }: { tags: SkillTag[] }) {
+  const t = useTranslations("report");
   const strong = tags.filter((t) => t.proficiency === "expert" || t.proficiency === "advanced");
   const develop = tags.filter((t) => t.proficiency === "beginner" || t.proficiency === "intermediate");
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <div>
-        <div className="text-xs text-green-400 uppercase tracking-wide font-semibold mb-2">Strong (expert / advanced)</div>
+        <div className="text-xs text-green-400 uppercase tracking-wide font-semibold mb-2">{t("strongSkills")} ({t("strengthBand")})</div>
         <div className="flex flex-wrap gap-1.5">
           {strong.length === 0 ? <span className="text-slate-500 text-xs">—</span> : strong.map((tag, i) => (
             <span key={i} className="px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-400">{tag.skill}{tag.mentions_count > 1 && <span className="ml-1 opacity-60">×{tag.mentions_count}</span>}</span>
@@ -227,7 +227,7 @@ function SkillMatrix({ tags }: { tags: SkillTag[] }) {
         </div>
       </div>
       <div>
-        <div className="text-xs text-yellow-400 uppercase tracking-wide font-semibold mb-2">To Develop (beginner / intermediate)</div>
+        <div className="text-xs text-yellow-400 uppercase tracking-wide font-semibold mb-2">{t("developSkills")} ({t("developBand")})</div>
         <div className="flex flex-wrap gap-1.5">
           {develop.length === 0 ? <span className="text-slate-500 text-xs">—</span> : develop.map((tag, i) => (
             <span key={i} className="px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-500/20 text-yellow-400">{tag.skill}{tag.mentions_count > 1 && <span className="ml-1 opacity-60">×{tag.mentions_count}</span>}</span>
@@ -239,44 +239,46 @@ function SkillMatrix({ tags }: { tags: SkillTag[] }) {
 }
 
 function RedFlagRow({ flag }: { flag: RedFlag }) {
+  const t = useTranslations("report");
   const style = SEVERITY_COLORS[flag.severity] ?? SEVERITY_COLORS.low;
   return (
     <div className={`border rounded-lg px-4 py-3 ${style}`}>
-      <div className="flex items-center gap-2 mb-1"><span className="text-sm font-medium">⚠ {flag.flag}</span><span className="text-xs opacity-70 capitalize">{flag.severity}</span></div>
+      <div className="flex items-center gap-2 mb-1"><span className="text-sm font-medium">{t("alert")} {flag.flag}</span><span className="text-xs opacity-70 capitalize">{t(`severity.${flag.severity}`)}</span></div>
       {flag.evidence && <p className="text-xs opacity-80">{flag.evidence}</p>}
     </div>
   );
 }
 
 function QuestionAccordion({ qa, expanded, onToggle }: { qa: QuestionAnalysis; expanded: boolean; onToggle: () => void }) {
+  const t = useTranslations("report");
   const depthColor: Record<string, string> = { expert: "text-green-400", strong: "text-blue-400", adequate: "text-yellow-400", surface: "text-orange-400", none: "text-red-400" };
   return (
     <div className="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
       <button onClick={onToggle} className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-750 transition-colors">
         <div className="flex items-center gap-3">
-          <span className="text-slate-500 text-xs">Q{qa.question_number}</span>
-          <span className="text-slate-300 text-sm font-medium">{qa.targeted_competencies.join(", ") || "General"}</span>
+          <span className="text-slate-500 text-xs">{t("questionShort", { number: qa.question_number })}</span>
+          <span className="text-slate-300 text-sm font-medium">{qa.targeted_competencies.join(", ") || t("general")}</span>
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          <span className={`text-xs font-medium ${depthColor[qa.depth] ?? "text-slate-400"} capitalize`}>{qa.depth}</span>
+          <span className={`text-xs font-medium ${depthColor[qa.depth] ?? "text-slate-400"} capitalize`}>{t(`depth.${qa.depth}`)}</span>
           <span className="text-white text-sm font-bold">{qa.answer_quality.toFixed(1)}</span>
           <span className="text-slate-500 text-xs">{expanded ? "▲" : "▼"}</span>
         </div>
       </button>
       {expanded && (
         <div className="px-4 pb-4 space-y-3 border-t border-slate-700">
-          {qa.evidence && <div><p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Evidence</p><p className="text-slate-300 text-sm">{qa.evidence}</p></div>}
+          {qa.evidence && <div><p className="text-slate-500 text-xs uppercase tracking-wide mb-1">{t("evidence")}</p><p className="text-slate-300 text-sm">{qa.evidence}</p></div>}
           {qa.skills_mentioned.length > 0 && (
-            <div><p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Skills Mentioned</p>
+            <div><p className="text-slate-500 text-xs uppercase tracking-wide mb-1">{t("skillsMentioned")}</p>
               <div className="flex flex-wrap gap-1.5">{qa.skills_mentioned.map((s, i) => <span key={i} className={`px-2 py-0.5 rounded text-xs ${PROFICIENCY_COLORS[s.proficiency] ?? PROFICIENCY_COLORS.intermediate}`}>{s.skill}</span>)}</div>
             </div>
           )}
-          {qa.red_flags.length > 0 && <div><p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Flags</p><ul className="space-y-1">{qa.red_flags.map((rf, i) => <li key={i} className="text-red-400 text-xs">⚠ {rf}</li>)}</ul></div>}
+          {qa.red_flags.length > 0 && <div><p className="text-slate-500 text-xs uppercase tracking-wide mb-1">{t("flags")}</p><ul className="space-y-1">{qa.red_flags.map((rf, i) => <li key={i} className="text-red-400 text-xs">{t("alert")} {rf}</li>)}</ul></div>}
           <div className="flex flex-wrap gap-4 text-xs">
-            <span className="text-slate-500">Specificity: <span className="text-slate-300 capitalize">{qa.specificity}</span></span>
+            <span className="text-slate-500">{t("specificity")}: <span className="text-slate-300 capitalize">{t(`specificityValue.${qa.specificity}`)}</span></span>
             {qa.ai_likelihood != null && qa.ai_likelihood > 0.1 && (
               <span className={`font-medium ${qa.ai_likelihood >= 0.7 ? "text-red-400" : qa.ai_likelihood >= 0.4 ? "text-orange-400" : "text-yellow-400"}`}>
-                AI likelihood: {Math.round(qa.ai_likelihood * 100)}%
+                {t("aiLikelihood")}: {Math.round(qa.ai_likelihood * 100)}%
               </span>
             )}
           </div>

@@ -20,7 +20,7 @@ from app.ai.competencies import get_competencies, get_category_weights
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
-_DECISION_POLICY_VERSION = "v1-baseline"
+_DECISION_POLICY_VERSION = "v2-strict"
 
 _ROLE_LABELS: dict[str, str] = {
     "backend_engineer": "Backend-разработчик",
@@ -32,6 +32,28 @@ _ROLE_LABELS: dict[str, str] = {
     "mobile_engineer": "Mobile-разработчик",
     "designer": "UX/UI Дизайнер",
 }
+
+_ROLE_LABELS_EN: dict[str, str] = {
+    "backend_engineer": "Backend Engineer",
+    "frontend_engineer": "Frontend Engineer",
+    "qa_engineer": "QA Engineer",
+    "devops_engineer": "DevOps Engineer",
+    "data_scientist": "Data Scientist",
+    "product_manager": "Product Manager",
+    "mobile_engineer": "Mobile Engineer",
+    "designer": "UX/UI Designer",
+}
+
+
+def _normalized_report_language(language: str | None) -> str:
+    return "en" if (language or "").lower().startswith("en") else "ru"
+
+
+def _role_label(target_role: str, language: str | None) -> str:
+    normalized = _normalized_report_language(language)
+    if normalized == "en":
+        return _ROLE_LABELS_EN.get(target_role, target_role.replace("_", " ").title())
+    return _ROLE_LABELS.get(target_role, target_role.replace("_", " "))
 
 # ---------------------------------------------------------------------------
 # Tool schemas for structured LLM output
@@ -252,6 +274,11 @@ class AssessmentResult:
     confidence_reasons: list[str] = field(default_factory=list)
     evidence_coverage: dict | None = None
     decision_policy_version: str | None = None
+    # Strict scoring fields (v2)
+    answer_quality_score: float | None = None
+    depth_score: float | None = None
+    consistency_score: float | None = None
+    score_penalties: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +333,126 @@ def _to_float(value: object, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _compute_answer_metrics(
+    per_question_analysis: list[dict],
+    message_history: list[dict],
+) -> dict:
+    """Compute answer quality metrics used for penalization logic.
+
+    Returns answer_quality_score, depth_score, and generated red flags
+    derived from per-question Pass 1 data and raw word counts.
+    """
+    word_counts = [
+        len(str(msg.get("content", "")).split())
+        for msg in message_history
+        if msg["role"] == "candidate"
+    ]
+    short_count = sum(1 for w in word_counts if w < 10)
+    short_ratio = round(short_count / len(word_counts), 2) if word_counts else 0.0
+    avg_words = round(sum(word_counts) / len(word_counts), 1) if word_counts else 0.0
+
+    quality_scores = [
+        _to_float(q.get("answer_quality"), 5.0) for q in per_question_analysis
+    ]
+    avg_quality = round(sum(quality_scores) / len(quality_scores), 2) if quality_scores else 5.0
+
+    specificity_vals = [str(q.get("specificity", "low")) for q in per_question_analysis]
+    low_spec_ratio = round(
+        specificity_vals.count("low") / len(specificity_vals), 2
+    ) if specificity_vals else 0.0
+
+    depth_order = {"none": 0, "surface": 1, "adequate": 2, "strong": 3, "expert": 4}
+    depth_vals = [str(q.get("depth", "surface")) for q in per_question_analysis]
+    depth_nums = [depth_order.get(d, 1) for d in depth_vals]
+    avg_depth_num = sum(depth_nums) / len(depth_nums) if depth_nums else 1.0
+    depth_score_10 = round((avg_depth_num / 4.0) * 10, 1)
+
+    red_flags: list[str] = []
+    if short_ratio > 0.3:
+        red_flags.append("answers too short")
+    if low_spec_ratio > 0.5:
+        red_flags.append("answers too generic")
+    if avg_quality < 4.5:
+        red_flags.append("lack of technical depth")
+    surface_none = depth_vals.count("surface") + depth_vals.count("none")
+    if depth_vals and surface_none / len(depth_vals) > 0.5:
+        if "answers too generic" not in red_flags:
+            red_flags.append("no real-world examples")
+
+    # Check for evasion / repetition patterns in LLM-generated red flags
+    llm_flags_text = " ".join(
+        str(f) for q in per_question_analysis for f in q.get("red_flags", [])
+    ).lower()
+    if "evad" in llm_flags_text or "avoid" in llm_flags_text:
+        red_flags.append("unclear understanding")
+    if "repeat" in llm_flags_text or "same" in llm_flags_text:
+        red_flags.append("answers seem repeated")
+
+    return {
+        "answer_quality_score": round(avg_quality, 1),
+        "depth_score": depth_score_10,
+        "short_answer_ratio": short_ratio,
+        "low_specificity_ratio": low_spec_ratio,
+        "avg_word_count": avg_words,
+        "avg_answer_quality": avg_quality,
+        "generated_red_flags": red_flags,
+    }
+
+
+def _apply_score_penalties(
+    aggregates: dict[str, float],
+    answer_metrics: dict,
+    competency_scores: list[dict],
+) -> tuple[dict[str, float], list[str]]:
+    """Apply deterministic hard caps on scores to prevent inflation.
+
+    Rules (applied after LLM scoring):
+    - Short answers (>30% < 10 words)   → cap all scores at 6
+    - Generic answers (>50% low specificity) → cap at 6
+    - Weak answers (avg quality < 4.5)  → cap at 5
+    - ≥1 competency scored ≤ 4          → cap overall at 6
+    - ≥2 competencies scored ≤ 3        → cap overall at 5
+    """
+    penalties: list[str] = []
+    cap = 10.0
+
+    if answer_metrics["short_answer_ratio"] > 0.3:
+        cap = min(cap, 6.0)
+        penalties.append(
+            f"short_answers ({answer_metrics['short_answer_ratio']:.0%} under 10 words): capped_at_6"
+        )
+
+    if answer_metrics["low_specificity_ratio"] > 0.5:
+        cap = min(cap, 6.0)
+        penalties.append(
+            f"low_specificity ({answer_metrics['low_specificity_ratio']:.0%} generic): capped_at_6"
+        )
+
+    if answer_metrics["avg_answer_quality"] < 4.5:
+        cap = min(cap, 5.0)
+        penalties.append(
+            f"weak_answers (avg quality {answer_metrics['avg_answer_quality']:.1f}/10): capped_at_5"
+        )
+
+    critical = [cs for cs in competency_scores if _to_float(cs.get("score"), 5.0) <= 4.0]
+    very_critical = [cs for cs in competency_scores if _to_float(cs.get("score"), 5.0) <= 3.0]
+
+    if len(very_critical) >= 2:
+        cap = min(cap, 5.0)
+        penalties.append(
+            f"multiple_critical_weaknesses ({len(very_critical)} competencies ≤3): capped_at_5"
+        )
+    elif len(critical) >= 1:
+        cap = min(cap, 6.0)
+        penalties.append(
+            f"critical_weakness ({len(critical)} competencies ≤4): overall_capped_at_6"
+        )
+
+    if cap < 10.0:
+        return {k: round(min(v, cap), 1) for k, v in aggregates.items()}, penalties
+    return aggregates, penalties
 
 
 def _question_evidence_confidence(q: dict) -> float:
@@ -618,8 +765,10 @@ class LLMAssessor:
         message_history: list[dict],
         message_timestamps: list[dict] | None = None,
         behavioral_signals: dict | None = None,
+        language: str = "ru",
     ) -> AssessmentResult:
-        role_label = _ROLE_LABELS.get(target_role, target_role.replace("_", " "))
+        report_language = _normalized_report_language(language)
+        role_label = _role_label(target_role, report_language)
         competencies = get_competencies(target_role)
 
         # Build transcript
@@ -641,12 +790,12 @@ class LLMAssessor:
 
         # Pass 1: Per-question evidence extraction
         pass1_data = await self._pass1_question_analysis(
-            role_label, transcript, comp_ref
+            role_label, transcript, comp_ref, report_language
         )
 
-        # Pass 2: Competency scoring
+        # Pass 2: Competency scoring (message_history needed for word-count penalization)
         result = await self._pass2_competency_scoring(
-            role_label, transcript, comp_ref, pass1_data, target_role
+            role_label, transcript, comp_ref, pass1_data, target_role, message_history, report_language
         )
 
         # Response time analytics
@@ -668,33 +817,58 @@ class LLMAssessor:
         role_label: str,
         transcript: str,
         comp_ref: str,
+        report_language: str,
     ) -> list[dict]:
         """Pass 1: Extract per-question evidence, skills, red flags."""
+        output_language = "русском" if report_language == "ru" else "English"
         system = (
-            f"Ты — эксперт по оценке кандидатов на позицию «{role_label}».\n"
-            "Ты получаешь транскрипт структурированного собеседования.\n\n"
+            f"Ты — строгий старший интервьюер, оценивающий кандидата на позицию «{role_label}».\n"
+            "Твоя задача — объективно зафиксировать ФАКТЫ из ответов, не давать кандидату преимущество сомнения.\n\n"
             "## Матрица компетенций\n"
             f"{comp_ref}\n\n"
             "## Задача\n"
             "Для КАЖДОЙ пары вопрос-ответ определи:\n"
             "1. Какие компетенции из матрицы этот вопрос оценивает\n"
-            "2. Качество ответа (1-10) с учётом глубины и конкретности\n"
-            "3. Конкретные доказательства из ответа (цитаты, примеры)\n"
-            "4. Упомянутые технологии/навыки с уровнем владения\n"
-            "5. Красные флаги (противоречия, фабрикации, уход от вопроса)\n"
+            "2. Качество ответа (1-10) — ТОЛЬКО по фактическому содержанию\n"
+            "3. Конкретные доказательства из ответа (прямые цитаты или специфические факты)\n"
+            "4. Технологии/навыки с ЛИЧНЫМ опытом использования\n"
+            "5. Красные флаги (противоречия, уход от вопроса, повторения, фабрикации)\n"
             "6. Конкретность (high/medium/low) и глубина (expert/strong/adequate/surface/none)\n"
-            "7. Вероятность AI-генерации (ai_likelihood 0.0-1.0):\n"
-            "   Признаки AI: буллет-пойнты без просьбы, фразы 'Certainly/Great question/In conclusion',\n"
-            "   идеальное покрытие всех аспектов без личных примеров, академический тон в диалоге,\n"
-            "   ответ на незаданные вопросы, слишком правильная структура intro→body→conclusion.\n"
-            "   Признаки живого человека: личные примеры ('я делал X'), неполные мысли, паузы,\n"
-            "   специфические детали, неформальный язык.\n\n"
-            "Будь объективным. Оценивай только по фактическому содержанию ответов.\n"
-            "Если ответ общий/слабый, оставляй skills_mentioned пустым списком.\n"
-            "НЕ записывай в skills_mentioned общие направления/протоколы без личного опыта.\n"
-            "Шкала answer_quality (1-10): 1-4 = нет/поверхностный ответ, 5-6 = рабочие знания без глубины, "
-            "7-8 = конкретные примеры + trade-offs, 9-10 = экспертное мышление. "
-            "Большинство ответов попадают в диапазон 4-7. Не завышай оценки без цитат."
+            "7. Вероятность AI-генерации (ai_likelihood 0.0-1.0)\n\n"
+            "## ЖЁСТКИЕ ПРАВИЛА ОЦЕНКИ ANSWER_QUALITY — ОБЯЗАТЕЛЬНЫ\n\n"
+            "КОРОТКИЙ ОТВЕТ (<10 слов):\n"
+            "- answer_quality ОБЯЗАН быть ≤ 3\n"
+            "- depth = 'surface' или 'none'\n"
+            "- specificity = 'low'\n"
+            "- добавь в red_flags: 'answer too short'\n\n"
+            "ОБЩИЙ ОТВЕТ (нет конкретного примера, нет реального проекта):\n"
+            "- answer_quality ОБЯЗАН быть ≤ 5\n"
+            "- specificity = 'low'\n"
+            "- добавь в red_flags: 'answer generic — no real-world example'\n\n"
+            "НЕТ ОБЪЯСНЕНИЯ 'КАК' И 'ПОЧЕМУ':\n"
+            "- depth = 'surface' (максимум 'adequate' если есть хоть что-то)\n"
+            "- answer_quality снижается на 1-2 пункта\n\n"
+            "УКЛОНЧИВЫЙ ОТВЕТ (не отвечает на вопрос):\n"
+            "- answer_quality ОБЯЗАН быть ≤ 3\n"
+            "- добавь в red_flags: 'evasive — question avoided'\n\n"
+            "ПОВТОРЯЮЩИЙСЯ ОТВЕТ (то же самое что в предыдущих вопросах):\n"
+            "- добавь в red_flags: 'answer repeated'\n"
+            "- answer_quality снижается на 1-2 пункта\n\n"
+            "АБСОЛЮТНЫЕ ЗАПРЕТЫ:\n"
+            "- НЕ давай answer_quality > 3 для ответов короче 10 слов\n"
+            "- НЕ давай answer_quality > 5 для ответов без единого конкретного примера\n"
+            "- НЕ давай answer_quality > 7 без прямой цитаты с trade-off рассуждением\n"
+            "- НЕ записывай в skills_mentioned широкие термины (api, backend, database) без личного опыта\n\n"
+            "Шкала answer_quality: 1-3 = нет ответа/слишком коротко/уклонение, "
+            "4-5 = поверхностно/без примеров, 5-6 = рабочие знания с примерами, "
+            "7-8 = конкретика + trade-offs + результаты, 9-10 = экспертное мышление.\n"
+            "Большинство ответов реальных кандидатов: 4-6. Не завышай.\n\n"
+            "AI-генерация признаки: буллет-пойнты без просьбы, фразы 'Certainly/Great question/In conclusion', "
+            "идеальное покрытие всех аспектов без личных примеров, академический тон, "
+            "ответ на незаданные вопросы. Живой человек: личные примеры, неполные мысли, "
+            "специфические детали, неформальный язык.\n\n"
+            f"ВАЖНО: все свободные текстовые поля ответа (`evidence`, `red_flags`) верни на {output_language}. "
+            "Enum-значения (`specificity`, `depth`, `proficiency`) оставь в допустимом формате schema."
         )
 
         try:
@@ -722,6 +896,8 @@ class LLMAssessor:
         comp_ref: str,
         pass1_data: list[dict],
         target_role: str,
+        message_history: list[dict] | None = None,
+        report_language: str = "ru",
     ) -> AssessmentResult:
         """Pass 2: Score each competency using Pass 1 evidence + BARS calibration."""
         pass1_summary = json.dumps(pass1_data, ensure_ascii=False, indent=2) if pass1_data else "Анализ вопросов недоступен."
@@ -730,24 +906,44 @@ class LLMAssessor:
         from app.ai.competencies import get_competencies as _get_comps
         categories_present = list({c.category for c in _get_comps(target_role)})
         calibration_block = build_calibration_prompt(categories_present)
+        output_language = "русском" if report_language == "ru" else "English"
 
         system = (
-            f"Ты — эксперт по оценке кандидатов на позицию «{role_label}».\n\n"
+            f"Ты — строгий старший интервьюер, оценивающий кандидата на позицию «{role_label}».\n"
+            "Ты оцениваешь как скептик: любое утверждение без доказательства не засчитывается.\n\n"
             "## Матрица компетенций\n"
             f"{comp_ref}\n\n"
             f"{calibration_block}\n\n"
             "## Задача\n"
             "На основе транскрипта и анализа вопросов (Pass 1):\n"
-            "1. Выставь балл (1-10) для КАЖДОЙ компетенции из матрицы, строго следуя BARS выше\n"
-            "2. Для каждой оценки: укажи конкретные цитаты из транскрипта как evidence\n"
-            "3. reasoning должен объяснять ПОЧЕМУ это именно такой балл по шкале BARS\n"
-            "4. Определи 3-5 strengths и 2-4 weaknesses с конкретными примерами из ответов\n"
-            "5. Оцени response_consistency (0-10): противоречат ли ответы друг другу\n"
-            "6. Выпиши red_flags с severity если есть\n"
+            "1. Выставь балл (1-10) для КАЖДОЙ компетенции, строго следуя BARS выше\n"
+            "2. evidence: ОБЯЗАТЕЛЬНО содержит прямую цитату или конкретный факт из транскрипта\n"
+            "3. reasoning: объясняет ПОЧЕМУ именно этот балл (не просто пересказ ответа)\n"
+            "4. 3-5 strengths и 2-4 weaknesses с конкретными примерами из ответов\n"
+            "5. response_consistency (0-10): насколько ответы не противоречат друг другу\n"
+            "6. red_flags с severity для каждого выявленного сигнала\n"
             "7. hiring_recommendation: strong_yes (≥8.5), yes (7.0–8.4), maybe (5.5–6.9), no (<5.5)\n\n"
-            "ВАЖНО: hiring_recommendation должна соответствовать взвешенному среднему по компетенциям.\n"
-            "ВАЖНО: Не давай оценку выше 7 без конкретных цитат с trade-off рассуждением.\n"
-            "ВАЖНО: Не давай оценку ниже 5 без конкретного примера неправильного понимания."
+            "## ЖЁСТКИЕ ПРАВИЛА SCORING — НЕЛЬЗЯ НАРУШАТЬ\n\n"
+            "НЕТ ДОКАЗАТЕЛЬСТВ = НИЗКИЙ БАЛЛ:\n"
+            "- Если не можешь процитировать конкретный пример из транскрипта → score ≤ 4\n"
+            "- evidence = пересказ/общие слова → score ≤ 5\n"
+            "- Каждый score выше 5 ТРЕБУЕТ реальной цитаты с конкретикой\n\n"
+            "ЖЁСТКИЕ ПОТОЛКИ:\n"
+            "- Score > 7: требует метрик, trade-offs И прямых цитат\n"
+            "- Score > 6: требует хотя бы одного реального примера с объяснением КАК/ПОЧЕМУ\n"
+            "- Score > 5: требует упоминания конкретной технологии с личным опытом\n"
+            "- Score > 4: требует хотя бы базового понимания своими словами\n\n"
+            "ПРАВИЛО КРИТИЧЕСКОЙ СЛАБОСТИ:\n"
+            "- Если ≥1 компетенция scored ≤ 4 → overall взвешенное среднее ДОЛЖНО быть ≤ 6\n"
+            "- Если ≥2 компетенции scored ≤ 3 → overall ДОЛЖНО быть ≤ 5\n"
+            "- hiring_recommendation 'yes' или 'strong_yes' ЗАПРЕЩЕНО если любая ключевая компетенция ≤ 4\n\n"
+            "PHILOSOPHY:\n"
+            "- Слабые кандидаты: 3-5. Средние: 5-6. Хорошие: 7-8. Исключительные: 9-10.\n"
+            "- При сомнении — снижай. Цена false-positive выше чем false-negative.\n"
+            "- Не давай credit за намерения — только за доказанные знания и опыт.\n\n"
+            f"ВАЖНО: все свободные текстовые поля (`evidence`, `reasoning`, `strengths`, `weaknesses`, "
+            f"`recommendations`, `interview_summary`, `red_flags.flag`, `red_flags.evidence`) верни на {output_language}. "
+            "Enum-значения и числовые поля не переводить."
         )
 
         user_content = (
@@ -770,25 +966,59 @@ class LLMAssessor:
             data: dict = json.loads(tool_call.function.arguments)
         except Exception:
             logger.exception("Pass 2 (competency scoring) failed, falling back to legacy assessment")
-            return await self._legacy_assess(target_role, transcript)
+            return await self._legacy_assess(target_role, transcript, report_language)
 
         comp_scores = data.get("competency_scores", [])
         aggregates = _compute_aggregates(comp_scores, target_role)
+
+        # v2-strict: compute answer quality metrics and apply hard score penalties
+        answer_metrics = _compute_answer_metrics(pass1_data, message_history or [])
+        aggregates, penalties = _apply_score_penalties(aggregates, answer_metrics, comp_scores)
+
+        # Merge LLM red flags with Python-generated red flags
+        llm_red_flags = data.get("red_flags", [])
+        generated_flags = [
+            {"flag": f, "evidence": "auto-detected by scoring engine", "severity": "medium"}
+            for f in answer_metrics["generated_red_flags"]
+        ]
+        all_red_flags = llm_red_flags + generated_flags
+
+        # Clamp hiring_recommendation to match penalized overall score
+        overall = aggregates["overall_score"]
+        llm_rec = data.get("hiring_recommendation", "maybe")
+        if overall <= 5.0 and llm_rec in ("yes", "strong_yes"):
+            hiring_rec = "no"
+        elif overall <= 6.9 and llm_rec == "strong_yes":
+            hiring_rec = "maybe"
+        else:
+            hiring_rec = llm_rec
+
         skill_tags = _aggregate_skills(pass1_data)
         confidence_metrics = _compute_confidence_metrics(comp_scores, pass1_data)
+        response_consistency = data.get("response_consistency")
 
         full_json = {
             "competency_scores": comp_scores,
             "per_question_analysis": pass1_data,
             "skill_tags": skill_tags,
-            "red_flags": data.get("red_flags", []),
-            "response_consistency": data.get("response_consistency"),
+            "red_flags": all_red_flags,
+            "response_consistency": response_consistency,
             "aggregates": aggregates,
             "overall_confidence": confidence_metrics["overall_confidence"],
             "competency_confidence": confidence_metrics["competency_confidence"],
             "confidence_reasons": confidence_metrics["confidence_reasons"],
             "evidence_coverage": confidence_metrics["evidence_coverage"],
             "decision_policy_version": _DECISION_POLICY_VERSION,
+            # v2-strict fields
+            "answer_quality_score": answer_metrics["answer_quality_score"],
+            "depth_score": answer_metrics["depth_score"],
+            "consistency_score": response_consistency,
+            "score_penalties": penalties,
+            "answer_metrics": {
+                "avg_word_count": answer_metrics["avg_word_count"],
+                "short_answer_ratio": answer_metrics["short_answer_ratio"],
+                "low_specificity_ratio": answer_metrics["low_specificity_ratio"],
+            },
         }
 
         return AssessmentResult(
@@ -800,28 +1030,33 @@ class LLMAssessor:
             strengths=data.get("strengths", []),
             weaknesses=data.get("weaknesses", []),
             recommendations=data.get("recommendations", []),
-            hiring_recommendation=data.get("hiring_recommendation", "maybe"),
+            hiring_recommendation=hiring_rec,
             interview_summary=data.get("interview_summary"),
             model_version="llama-3.3-70b-versatile",
             full_report_json=full_json,
             competency_scores=comp_scores,
             per_question_analysis=pass1_data,
             skill_tags=skill_tags,
-            red_flags=data.get("red_flags", []),
-            response_consistency=data.get("response_consistency"),
+            red_flags=all_red_flags,
+            response_consistency=response_consistency,
             overall_confidence=confidence_metrics["overall_confidence"],
             competency_confidence=confidence_metrics["competency_confidence"],
             confidence_reasons=confidence_metrics["confidence_reasons"],
             evidence_coverage=confidence_metrics["evidence_coverage"],
             decision_policy_version=_DECISION_POLICY_VERSION,
+            answer_quality_score=answer_metrics["answer_quality_score"],
+            depth_score=answer_metrics["depth_score"],
+            consistency_score=_to_float(response_consistency),
+            score_penalties=penalties,
         )
 
-    async def _legacy_assess(self, target_role: str, transcript: str) -> AssessmentResult:
+    async def _legacy_assess(self, target_role: str, transcript: str, report_language: str = "ru") -> AssessmentResult:
         """Fallback single-pass assessment (backward compat)."""
-        role_label = _ROLE_LABELS.get(target_role, target_role.replace("_", " "))
+        role_label = _role_label(target_role, report_language)
         system = (
             f"Ты — эксперт по оценке кандидатов на позицию «{role_label}».\n"
-            "Объективно оцени кандидата. Будь конкретным."
+            f"Объективно оцени кандидата. Будь конкретным. Все текстовые поля верни на "
+            f"{'русском' if report_language == 'ru' else 'English'}."
         )
 
         response = await self._client.chat.completions.create(
@@ -875,7 +1110,9 @@ class MockAssessor:
         message_history: list[dict],
         message_timestamps: list[dict] | None = None,
         behavioral_signals: dict | None = None,
+        language: str = "ru",
     ) -> AssessmentResult:
+        report_language = _normalized_report_language(language)
         candidate_msgs = [m for m in message_history if m["role"] == "candidate"]
         response_count = len(candidate_msgs)
         base = min(4.5 + response_count * 0.45, 8.5)
@@ -891,8 +1128,16 @@ class MockAssessor:
                 "category": comp.category,
                 "score": score,
                 "weight": comp.weight,
-                "evidence": f"Mock evidence for {comp.name}",
-                "reasoning": f"Score {score}: based on {response_count} responses",
+                "evidence": (
+                    f"Тестовое подтверждение по компетенции «{comp.name}»"
+                    if report_language == "ru"
+                    else f"Mock evidence for {comp.name}"
+                ),
+                "reasoning": (
+                    f"Балл {score}: основано на {response_count} ответах"
+                    if report_language == "ru"
+                    else f"Score {score}: based on {response_count} responses"
+                ),
             })
 
         aggregates = _compute_aggregates(comp_scores, target_role)
@@ -917,7 +1162,7 @@ class MockAssessor:
                     "question_number": q_num,
                     "targeted_competencies": [competencies[min(q_num - 1, len(competencies) - 1)].name],
                     "answer_quality": round(base, 1),
-                    "evidence": "Mock evidence from response",
+                    "evidence": "Тестовое подтверждение из ответа" if report_language == "ru" else "Mock evidence from response",
                     "skills_mentioned": [],
                     "red_flags": [],
                     "specificity": "medium",
@@ -925,7 +1170,7 @@ class MockAssessor:
                     "ai_likelihood": 0.0,
                 })
 
-        role_label = target_role.replace("_", " ")
+        role_label = _role_label(target_role, report_language)
         confidence_metrics = _compute_confidence_metrics(comp_scores, per_q)
         full_json = {
             "competency_scores": comp_scores,
@@ -957,6 +1202,9 @@ class MockAssessor:
             interview_summary=(
                 f"Кандидат прошёл собеседование из {response_count} вопросов на позицию {role_label}. "
                 f"Общий балл: {overall}/10."
+                if report_language == "ru"
+                else f"The candidate completed an interview with {response_count} questions for the {role_label} role. "
+                     f"Overall score: {overall}/10."
             ),
             model_version="mock-v1",
             full_report_json=full_json,

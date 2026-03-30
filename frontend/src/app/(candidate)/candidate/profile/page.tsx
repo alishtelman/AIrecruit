@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import { useTranslations } from "next-intl";
+import { Link } from "@/i18n/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { candidateApi, resumeApi } from "@/lib/api";
 import type { ActiveResume } from "@/lib/types";
@@ -13,6 +14,8 @@ function formatBytes(bytes: number) {
 }
 
 export default function ProfilePage() {
+  const t = useTranslations("candidateProfile");
+  const common = useTranslations("common");
   const { user, loading: authLoading } = useAuth();
   const [resume, setResume] = useState<ActiveResume | null>(null);
   const [loading, setLoading] = useState(true);
@@ -40,9 +43,9 @@ export default function ProfilePage() {
       await resumeApi.upload(file);
       const updated = await candidateApi.getResume();
       setResume(updated);
-      setSuccess("Resume updated successfully.");
+      setSuccess(t("updated"));
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Upload failed");
+      setError(err instanceof Error ? err.message : t("uploadFailed"));
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -52,42 +55,44 @@ export default function ProfilePage() {
   if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-slate-400">Loading…</div>
+        <div className="text-slate-400">{common("status.loading")}</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 px-4 py-10">
-      <div className="max-w-xl mx-auto">
+    <div className="ai-shell min-h-screen px-4 py-10">
+      <div className="ai-section max-w-3xl mx-auto">
         <Link
           href="/candidate/dashboard"
           className="text-slate-400 hover:text-white text-sm mb-6 inline-block transition-colors"
         >
-          ← Back to dashboard
+          ← {t("back")}
         </Link>
 
-        <h1 className="text-2xl font-bold text-white mb-1">My Profile</h1>
-        <p className="text-slate-400 mb-8">Manage your account and resume.</p>
+        <div className="ai-panel-strong rounded-[2rem] p-7 mb-6">
+          <div className="ai-kicker mb-5">{t("kicker")}</div>
+          <h1 className="text-3xl font-semibold tracking-[-0.03em] text-white mb-2">{t("title")}</h1>
+          <p className="max-w-2xl text-slate-400">{t("subtitle")}</p>
+        </div>
 
-        {/* Account info */}
-        <section className="bg-slate-800 border border-slate-700 rounded-xl p-6 mb-4">
-          <h2 className="text-white font-semibold mb-4">Account</h2>
+        <section className="ai-panel rounded-[1.8rem] p-6 mb-4">
+          <h2 className="text-white font-semibold mb-4">{t("account")}</h2>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-slate-400">Email</span>
+              <span className="text-slate-400">{t("email")}</span>
               <span className="text-white">{user?.email}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">Role</span>
-              <span className="text-white capitalize">Candidate</span>
+              <span className="text-slate-400">{t("role")}</span>
+              <span className="text-white capitalize">{t("candidate")}</span>
             </div>
           </div>
         </section>
 
-        {/* Resume */}
-        <section className="bg-slate-800 border border-slate-700 rounded-xl p-6">
-          <h2 className="text-white font-semibold mb-4">Active Resume</h2>
+        <section className="ai-panel rounded-[1.8rem] p-6">
+          <h2 className="text-white font-semibold mb-4">{t("activeResume")}</h2>
+          <p className="text-slate-400 text-sm mb-4">{t("resumeCardHint")}</p>
 
           {error && (
             <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-4 py-3 mb-4">
@@ -105,16 +110,16 @@ export default function ProfilePage() {
               <div>
                 <div className="text-white font-medium">{resume.file_name}</div>
                 <div className="text-slate-400 text-sm mt-0.5">
-                  {formatBytes(resume.file_size)} · Uploaded{" "}
+                  {formatBytes(resume.file_size)} · {t("uploaded")}{" "}
                   {new Date(resume.uploaded_at).toLocaleDateString()}
                 </div>
               </div>
               <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-400">
-                Active
+                {t("active")}
               </span>
             </div>
           ) : (
-            <p className="text-slate-400 text-sm mb-5">No resume uploaded yet.</p>
+            <p className="text-slate-400 text-sm mb-5">{t("noResume")}</p>
           )}
 
           <input
@@ -127,11 +132,16 @@ export default function ProfilePage() {
           <button
             onClick={() => fileRef.current?.click()}
             disabled={uploading}
-            className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-lg transition-colors"
+            className="ai-button-primary w-full rounded-xl py-2.5 text-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {uploading ? "Uploading…" : resume ? "Replace Resume" : "Upload Resume"}
+            {uploading ? t("uploading") : resume ? t("replaceResume") : t("uploadResume")}
           </button>
-          <p className="text-slate-500 text-xs text-center mt-2">PDF or DOCX, max 10 MB</p>
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <p className="text-slate-500 text-xs">{t("fileHint")}</p>
+            <Link href="/candidate/resume" className="text-sm text-blue-300 transition-colors hover:text-blue-200">
+              {t("manageResume")}
+            </Link>
+          </div>
         </section>
       </div>
     </div>

@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useTranslations } from "next-intl";
+import { Link } from "@/i18n/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { companyApi } from "@/lib/api";
 import type { CompanyMember } from "@/lib/types";
 
 export default function TeamPage() {
+  const t = useTranslations("companyTeam");
   const { user, loading: authLoading } = useAuth("/company/login");
   const [members, setMembers] = useState<CompanyMember[]>([]);
   const [loading, setLoading] = useState(true);
@@ -25,7 +27,7 @@ export default function TeamPage() {
     companyApi
       .listMembers()
       .then(setMembers)
-      .catch((e) => setError(e.message ?? "Failed to load team"))
+      .catch((e) => setError(e.message ?? t("errors.load")))
       .finally(() => setLoading(false));
   }, [authLoading]);
 
@@ -41,7 +43,7 @@ export default function TeamPage() {
       setEmail("");
       setRole("recruiter");
     } catch (err: unknown) {
-      setFormError(err instanceof Error ? err.message : "Failed to invite");
+      setFormError(err instanceof Error ? err.message : t("errors.invite"));
     } finally {
       setInviting(false);
     }
@@ -52,14 +54,14 @@ export default function TeamPage() {
       await companyApi.removeMember(userId);
       setMembers((prev) => prev.filter((m) => m.user_id !== userId));
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to remove member");
+      setError(err instanceof Error ? err.message : t("errors.remove"));
     }
   }
 
   if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-slate-400">Loading…</div>
+        <div className="text-slate-400">{t("loading")}</div>
       </div>
     );
   }
@@ -68,12 +70,12 @@ export default function TeamPage() {
     <div className="min-h-screen bg-slate-900 px-4 py-8">
       <div className="max-w-2xl mx-auto">
         <div className="mb-8">
-          <Link href="/company/dashboard" className="text-slate-400 hover:text-white text-sm transition-colors">
-            ← Back to dashboard
+            <Link href="/company/dashboard" className="text-slate-400 hover:text-white text-sm transition-colors">
+            ← {t("back")}
           </Link>
-          <h1 className="text-2xl font-bold text-white mt-3">Team</h1>
+          <h1 className="text-2xl font-bold text-white mt-3">{t("title")}</h1>
           <p className="text-slate-400 text-sm mt-1">
-            {isAdmin ? "Manage who has access to your company account." : "Members of your company account."}
+            {isAdmin ? t("subtitleAdmin") : t("subtitleViewer")}
           </p>
         </div>
 
@@ -86,7 +88,7 @@ export default function TeamPage() {
         {/* Invite form — admin only */}
         {isAdmin && (
           <form onSubmit={handleInvite} className="bg-slate-800 border border-slate-700 rounded-xl p-5 mb-6">
-            <h2 className="text-white font-semibold mb-3">Invite Member</h2>
+            <h2 className="text-white font-semibold mb-3">{t("invite.title")}</h2>
             {formError && (
               <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-4 py-3 mb-3">
                 {formError}
@@ -94,17 +96,17 @@ export default function TeamPage() {
             )}
             {inviteResult && (
               <div className="bg-green-500/10 border border-green-500/30 text-green-400 text-sm rounded-lg px-4 py-3 mb-3">
-                <div className="font-medium mb-1">✓ Invited {inviteResult.email}</div>
+                <div className="font-medium mb-1">{t("invite.invited", {email: inviteResult.email})}</div>
                 {inviteResult.temp_password ? (
                   <div>
-                    Temporary password:{" "}
+                    {t("invite.tempPassword")}{" "}
                     <code className="bg-green-500/20 px-2 py-0.5 rounded font-mono">
                       {inviteResult.temp_password}
                     </code>
-                    <span className="text-green-500/70 ml-2 text-xs">Share this once — it won&apos;t be shown again.</span>
+                    <span className="text-green-500/70 ml-2 text-xs">{t("invite.shareOnce")}</span>
                   </div>
                 ) : (
-                  <div>User already existed and has been added to your team.</div>
+                  <div>{t("invite.existingUser")}</div>
                 )}
               </div>
             )}
@@ -114,7 +116,7 @@ export default function TeamPage() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="colleague@company.com"
+                placeholder={t("invite.emailPlaceholder")}
                 className="flex-1 bg-slate-700 border border-slate-600 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"
               />
               <select
@@ -122,15 +124,15 @@ export default function TeamPage() {
                 onChange={(e) => setRole(e.target.value as "recruiter" | "viewer")}
                 className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="recruiter">Recruiter</option>
-                <option value="viewer">Viewer</option>
+                <option value="recruiter">{t("roles.recruiter")}</option>
+                <option value="viewer">{t("roles.viewer")}</option>
               </select>
               <button
                 type="submit"
                 disabled={inviting || !email.trim()}
                 className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-semibold px-5 py-2.5 rounded-lg transition-colors text-sm"
               >
-                {inviting ? "Inviting…" : "Invite"}
+                {inviting ? t("invite.submitting") : t("invite.submit")}
               </button>
             </div>
           </form>
@@ -153,10 +155,10 @@ export default function TeamPage() {
                       ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300"
                       : "bg-slate-600/30 border-slate-600/50 text-slate-300"
                   }`}>
-                    {m.role === "admin" ? "Admin" : m.role === "recruiter" ? "Recruiter" : "Viewer"}
+                    {m.role === "admin" ? t("roles.admin") : m.role === "recruiter" ? t("roles.recruiter") : t("roles.viewer")}
                   </span>
                   <span className="text-slate-500 text-xs">
-                    Joined {new Date(m.created_at).toLocaleDateString()}
+                    {t("joined", {date: new Date(m.created_at).toLocaleDateString()})}
                   </span>
                 </div>
               </div>
@@ -165,13 +167,13 @@ export default function TeamPage() {
                   onClick={() => handleRemove(m.user_id)}
                   className="text-slate-500 hover:text-red-400 text-sm transition-colors shrink-0"
                 >
-                  Remove
+                  {t("remove")}
                 </button>
               )}
             </div>
           ))}
           {members.length === 0 && (
-            <div className="text-slate-500 text-sm text-center py-8">No team members yet.</div>
+            <div className="text-slate-500 text-sm text-center py-8">{t("empty")}</div>
           )}
         </div>
       </div>

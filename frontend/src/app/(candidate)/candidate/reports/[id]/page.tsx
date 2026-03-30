@@ -2,28 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import Link from "next/link";
+import { useLocale, useTranslations } from "next-intl";
+import { Link } from "@/i18n/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { reportApi } from "@/lib/api";
-import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis } from "@/lib/types";
-
-const RECOMMENDATION_CONFIG: Record<
-  HiringRecommendation,
-  { label: string; color: string; bg: string }
-> = {
-  strong_yes: { label: "Strong Yes", color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
-  yes: { label: "Yes", color: "text-blue-400", bg: "bg-blue-500/10 border-blue-500/30" },
-  maybe: { label: "Maybe", color: "text-yellow-400", bg: "bg-yellow-500/10 border-yellow-500/30" },
-  no: { label: "No", color: "text-red-400", bg: "bg-red-500/10 border-red-500/30" },
-};
-
-const CATEGORY_LABELS: Record<string, string> = {
-  technical_core: "Technical Core",
-  technical_breadth: "Technical Breadth",
-  problem_solving: "Problem Solving",
-  communication: "Communication",
-  behavioral: "Behavioral",
-};
+import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ReportSummaryBlock } from "@/lib/types";
 
 const CATEGORY_COLORS: Record<string, string> = {
   technical_core: "bg-blue-500/15 text-blue-400 border-blue-500/30",
@@ -46,7 +29,123 @@ const SEVERITY_COLORS: Record<string, string> = {
   low: "border-slate-600 bg-slate-800 text-slate-400",
 };
 
+const RU_COMPETENCY_LABELS: Record<string, string> = {
+  "System Design & Architecture": "Системный дизайн и архитектура",
+  "Database Design & Optimization": "Проектирование и оптимизация БД",
+  "API Design & Protocols": "Проектирование API и протоколы",
+  "Programming Fundamentals": "Базовые знания программирования",
+  "DevOps & Infrastructure": "DevOps и инфраструктура",
+  "Security & Error Handling": "Безопасность и обработка ошибок",
+  "Debugging & Problem Decomposition": "Отладка и декомпозиция задач",
+  "Technical Communication": "Техническая коммуникация",
+  "Collaboration & Code Review": "Командная работа и код-ревью",
+  "Ownership & Growth Mindset": "Ответственность и установка на рост",
+  "UI Framework Mastery": "Владение UI-фреймворками",
+  "Web Performance Optimization": "Оптимизация производительности веба",
+  "CSS & Responsive Design": "CSS и адаптивный дизайн",
+  "JavaScript/TypeScript Fundamentals": "Основы JavaScript/TypeScript",
+  "Accessibility & Standards": "Доступность и стандарты",
+  "Testing & Quality": "Тестирование и качество",
+  "Collaboration & Design Partnership": "Сотрудничество с дизайном",
+  "Test Strategy & Planning": "Тестовая стратегия и планирование",
+  "Test Automation": "Тестовая автоматизация",
+  "Manual & Exploratory Testing": "Ручное и исследовательское тестирование",
+  "API & Performance Testing": "API- и нагрузочное тестирование",
+  "DevOps & CI/CD Integration": "DevOps и интеграция CI/CD",
+  "Domain & Product Understanding": "Понимание домена и продукта",
+  "Root Cause Analysis": "Анализ первопричин",
+  "Collaboration & Advocacy": "Сотрудничество и quality advocacy",
+  "CI/CD Pipeline Design": "Проектирование CI/CD-пайплайнов",
+  "Container Orchestration": "Оркестрация контейнеров",
+  "Cloud Infrastructure": "Облачная инфраструктура",
+  "Monitoring & Observability": "Мониторинг и observability",
+  "Security & Compliance": "Безопасность и соответствие требованиям",
+  "Scripting & Automation": "Скрипты и автоматизация",
+  "Incident Response & Troubleshooting": "Реакция на инциденты и troubleshooting",
+  "Collaboration & On-Call Culture": "Сотрудничество и on-call культура",
+  "ML Modeling & Algorithms": "ML-модели и алгоритмы",
+  "Data Processing & Feature Engineering": "Обработка данных и feature engineering",
+  "Statistics & Experimentation": "Статистика и эксперименты",
+  "MLOps & Production ML": "MLOps и production ML",
+  "Data Infrastructure & Tools": "Инфраструктура данных и инструменты",
+  "Domain Knowledge Application": "Применение доменной экспертизы",
+  "Analytical Problem Solving": "Аналитическое решение задач",
+  "Collaboration & Cross-functional Work": "Кросс-функциональное сотрудничество",
+  "Product Strategy & Vision": "Продуктовая стратегия и видение",
+  "Requirements & User Research": "Требования и исследование пользователей",
+  "Prioritization & Decision Making": "Приоритизация и принятие решений",
+  "Metrics & Data-Driven Decisions": "Метрики и решения на основе данных",
+  "Technical Understanding": "Техническое понимание",
+  "Market & Business Acumen": "Понимание рынка и бизнеса",
+  "Problem Structuring": "Структурирование проблем",
+  "Stakeholder Communication": "Коммуникация со стейкхолдерами",
+  "Leadership & Influence": "Лидерство и влияние",
+  "Platform-Specific Development": "Разработка под конкретные платформы",
+  "Cross-Platform Frameworks": "Кроссплатформенные фреймворки",
+  "Mobile UI & UX Implementation": "Реализация мобильного UI/UX",
+  "Performance & Memory Optimization": "Оптимизация производительности и памяти",
+  "Networking & Data Persistence": "Сетевое взаимодействие и хранение данных",
+  "Testing & CI/CD for Mobile": "Тестирование и CI/CD для mobile",
+  "Collaboration & Cross-Platform Alignment": "Кроссплатформенное взаимодействие",
+  "UX Research & User Understanding": "UX-исследования и понимание пользователей",
+  "UI Design & Visual Systems": "UI-дизайн и визуальные системы",
+  "Interaction Design": "Проектирование взаимодействия",
+  "Information Architecture": "Информационная архитектура",
+  "Accessibility Design": "Дизайн доступности",
+  "Design-to-Development Handoff": "Передача дизайна в разработку",
+  "Design Problem Solving": "Решение дизайн-задач",
+};
+
+function localizeCompetencyLabel(label: string, locale: string) {
+  if (locale === "ru") {
+    return RU_COMPETENCY_LABELS[label] ?? label;
+  }
+  return label;
+}
+
+function localizeEvidenceText(text: string, locale: string) {
+  if (locale === "ru" && text === "Mock evidence from response") return "Тестовое подтверждение из ответа";
+  if (locale === "ru" && text.startsWith("Mock evidence for ")) {
+    const competency = text.slice("Mock evidence for ".length);
+    return `Тестовое подтверждение по компетенции «${localizeCompetencyLabel(competency, locale)}»`;
+  }
+  return text;
+}
+
+function localizeFreeformText(text: string, locale: string) {
+  if (locale !== "ru") return text;
+
+  let result = localizeEvidenceText(text, locale);
+  const replacements: Array<[string, string]> = [
+    ["backend engineer", "бэкенд-разработчик"],
+    ["frontend engineer", "фронтенд-разработчик"],
+    ["qa engineer", "QA-инженер"],
+    ["devops engineer", "DevOps-инженер"],
+    ["data scientist", "дата-сайентист"],
+    ["product manager", "продакт-менеджер"],
+    ["mobile engineer", "мобильный разработчик"],
+    ["ux/ui designer", "UX/UI-дизайнер"],
+  ];
+
+  for (const [from, to] of replacements) {
+    result = result.replace(new RegExp(from, "gi"), to);
+  }
+
+  return result;
+}
+
+function getCategoryLabel(t: ReturnType<typeof useTranslations>, category: string) {
+  if (category === "technical_core") return t("labels.technicalCore");
+  if (category === "technical_breadth") return t("labels.technicalBreadth");
+  if (category === "problem_solving") return t("labels.problemSolving");
+  if (category === "communication") return t("labels.communication");
+  if (category === "behavioral") return t("labels.behavioral");
+  return category;
+}
+
 export default function ReportPage() {
+  const t = useTranslations("report");
+  const locale = useLocale();
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const { loading: authLoading } = useAuth();
@@ -59,13 +158,22 @@ export default function ReportPage() {
     reportApi
       .getById(id)
       .then(setReport)
-      .catch(() => setError("Could not load report"));
+      .catch(() => setError(t("loadFailed")));
   }, [id, authLoading]);
 
   if (authLoading || (!report && !error)) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-slate-400">{error || "Loading report…"}</div>
+      <div className="min-h-screen bg-slate-900 px-4 py-10">
+        <div className="max-w-3xl mx-auto space-y-4">
+          <div className="h-4 w-32 bg-slate-800 rounded animate-pulse" />
+          <div className="h-8 w-56 bg-slate-800 rounded animate-pulse" />
+          <div className="h-28 bg-slate-800 rounded-2xl animate-pulse" />
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="h-24 bg-slate-800 rounded-xl animate-pulse" />
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
@@ -76,75 +184,89 @@ export default function ReportPage() {
         <div className="text-center">
           <div className="text-red-400 mb-4">{error}</div>
           <Link href="/candidate/dashboard" className="text-blue-400 hover:underline text-sm">
-            ← Back to dashboard
+            ← {t("backToDashboard")}
           </Link>
         </div>
       </div>
     );
   }
 
-  const rec = RECOMMENDATION_CONFIG[report.hiring_recommendation];
+  const recommendationConfig: Record<
+    HiringRecommendation,
+    { label: string; color: string; bg: string }
+  > = {
+    strong_yes: { label: t("labels.strongYes"), color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
+    yes: { label: t("labels.yes"), color: "text-blue-400", bg: "bg-blue-500/10 border-blue-500/30" },
+    maybe: { label: t("labels.maybe"), color: "text-yellow-400", bg: "bg-yellow-500/10 border-yellow-500/30" },
+    no: { label: t("labels.no"), color: "text-red-400", bg: "bg-red-500/10 border-red-500/30" },
+  };
+  const rec = recommendationConfig[report.hiring_recommendation];
   const notice = searchParams.get("notice");
 
   return (
     <div className="min-h-screen bg-slate-900 px-4 py-10">
       <div className="max-w-3xl mx-auto">
         <Link href="/candidate/reports" className="text-slate-400 hover:text-white text-sm mb-6 inline-block transition-colors">
-          ← Back to my interviews
+          ← {t("backToInterviews")}
         </Link>
 
-        <h1 className="text-2xl font-bold text-white mb-2">Assessment Report</h1>
+        <h1 className="text-2xl font-bold text-white mb-2">{t("title")}</h1>
 
         {notice === "recording_failed" && (
           <div className="mb-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
-            Report generated successfully, but interview recording upload failed.
+            {t("recordingFailed")}
           </div>
         )}
 
         {notice === "recording_skipped" && (
           <div className="mb-4 rounded-lg border border-slate-700 bg-slate-800 px-4 py-3 text-sm text-slate-300">
-            Report generated without a recording upload.
+            {t("recordingSkipped")}
           </div>
         )}
 
+        {/* Summary card */}
+        {report.summary && (
+          <SummaryCard summary={report.summary} recommendationConfig={recommendationConfig} />
+        )}
+
         {report.interview_summary && (
-          <p className="text-slate-400 mb-6">{report.interview_summary}</p>
+          <p className="text-slate-400 mb-6">{localizeFreeformText(report.interview_summary, locale)}</p>
         )}
 
         {/* Recommendation badge */}
         <div className={`inline-flex items-center gap-2 border rounded-full px-4 py-1.5 text-sm font-semibold mb-6 ${rec.bg} ${rec.color}`}>
-          Hiring Recommendation: {rec.label}
+          {t("recommendation")}: {rec.label}
         </div>
 
         {/* Score cards — 5 dimensions */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
-          <ScoreCard label="Overall Score" score={report.overall_score} highlight />
-          <ScoreCard label="Hard Skills" score={report.hard_skills_score} />
-          <ScoreCard label="Soft Skills" score={report.soft_skills_score} />
-          <ScoreCard label="Communication" score={report.communication_score} />
-          <ScoreCard label="Problem Solving" score={report.problem_solving_score} />
+          <ScoreCard label={t("overallScore")} score={report.overall_score} highlight />
+          <ScoreCard label={t("hardSkills")} score={report.hard_skills_score} />
+          <ScoreCard label={t("softSkills")} score={report.soft_skills_score} />
+          <ScoreCard label={t("communication")} score={report.communication_score} />
+          <ScoreCard label={t("problemSolving")} score={report.problem_solving_score} />
           {report.response_consistency != null && (
-            <ScoreCard label="Consistency" score={report.response_consistency} />
+            <ScoreCard label={t("consistency")} score={report.response_consistency} />
           )}
         </div>
 
         {/* Competency heatmap */}
         {report.competency_scores && report.competency_scores.length > 0 && (
-          <Section title="Competency Heatmap" color="blue">
+          <Section title={t("competencyHeatmap")} color="blue">
             <CompetencyHeatmap scores={report.competency_scores} />
           </Section>
         )}
 
         {/* Skill matrix */}
         {report.skill_tags && report.skill_tags.length > 0 && (
-          <Section title="Skills Identified" color="cyan">
+          <Section title={t("skillsIdentified")} color="cyan">
             <SkillMatrix tags={report.skill_tags} />
           </Section>
         )}
 
         {/* Red flags */}
         {report.red_flags && report.red_flags.length > 0 && (
-          <Section title="Red Flags" color="red">
+          <Section title={t("redFlags")} color="red">
             <div className="space-y-3">
               {report.red_flags.map((rf, i) => (
                 <RedFlagRow key={i} flag={rf} />
@@ -155,27 +277,27 @@ export default function ReportPage() {
 
         {/* Strengths */}
         {report.strengths.length > 0 && (
-          <Section title="Strengths" color="green">
+          <Section title={t("strengths")} color="green">
             {report.strengths.map((s, i) => (
-              <ListItem key={i} text={s} bullet="✓" color="text-green-400" />
+              <ListItem key={i} text={s} bullet="+" color="text-green-400" />
             ))}
           </Section>
         )}
 
         {/* Weaknesses */}
         {report.weaknesses.length > 0 && (
-          <Section title="Areas to Improve" color="yellow">
+          <Section title={t("areasToImprove")} color="yellow">
             {report.weaknesses.map((w, i) => (
-              <ListItem key={i} text={w} bullet="△" color="text-yellow-400" />
+              <ListItem key={i} text={w} bullet="-" color="text-yellow-400" />
             ))}
           </Section>
         )}
 
         {/* Recommendations */}
         {report.recommendations.length > 0 && (
-          <Section title="Recommendations" color="purple">
+          <Section title={t("recommendations")} color="purple">
             {report.recommendations.map((r, i) => (
-              <ListItem key={i} text={r} bullet="→" color="text-purple-400" />
+              <ListItem key={i} text={r} bullet=">" color="text-purple-400" />
             ))}
           </Section>
         )}
@@ -183,7 +305,7 @@ export default function ReportPage() {
         {/* Per-question analysis */}
         {report.per_question_analysis && report.per_question_analysis.length > 0 && (
           <div className="mt-6">
-            <h2 className="text-white font-semibold mb-3">Per-Question Analysis</h2>
+            <h2 className="text-white font-semibold mb-3">{t("perQuestionAnalysis")}</h2>
             <div className="space-y-2">
               {report.per_question_analysis.map((qa, i) => (
                 <QuestionAccordion
@@ -198,7 +320,69 @@ export default function ReportPage() {
         )}
 
         <div className="text-slate-600 text-xs mt-8">
-          Generated by model {report.model_version} · {new Date(report.created_at).toLocaleDateString()}
+          {t("generatedBy", {model: report.model_version, date: new Date(report.created_at).toLocaleDateString()})}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryCard({
+  summary,
+  recommendationConfig,
+}: {
+  summary: ReportSummaryBlock;
+  recommendationConfig: Record<HiringRecommendation, { label: string; color: string; bg: string }>;
+}) {
+  const t = useTranslations("report");
+  const locale = useLocale();
+  const rec = recommendationConfig[summary.hiring_recommendation] ?? recommendationConfig.maybe;
+  const score = summary.score ?? 0;
+  const scoreColor =
+    score >= 7 ? "text-green-400" : score >= 5 ? "text-yellow-400" : "text-red-400";
+  const ringColor =
+    score >= 7 ? "border-green-500/50" : score >= 5 ? "border-yellow-500/50" : "border-red-500/50";
+
+  return (
+    <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 mb-6 flex flex-col sm:flex-row gap-6 items-start sm:items-center">
+      {/* Score circle */}
+      <div className={`w-20 h-20 rounded-full border-4 ${ringColor} flex flex-col items-center justify-center shrink-0`}>
+        <span className={`text-2xl font-bold ${scoreColor}`}>{score.toFixed(1)}</span>
+        <span className="text-slate-500 text-xs">{t("scoreOutOfTen")}</span>
+      </div>
+
+      {/* Right side */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-3">
+          <span className={`inline-flex items-center gap-1.5 border rounded-full px-3 py-1 text-xs font-semibold ${rec.bg} ${rec.color}`}>
+            {rec.label}
+          </span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {summary.top_strengths.length > 0 && (
+            <div>
+              <p className="text-green-400 text-xs font-semibold uppercase tracking-wide mb-1">{t("strengths")}</p>
+              <ul className="space-y-1">
+                {summary.top_strengths.map((s, i) => (
+                  <li key={i} className="text-slate-300 text-sm flex gap-2">
+                    <span className="text-green-400 shrink-0">+</span>{localizeFreeformText(s, locale)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {summary.top_weaknesses.length > 0 && (
+            <div>
+              <p className="text-yellow-400 text-xs font-semibold uppercase tracking-wide mb-1">{t("toImprove")}</p>
+              <ul className="space-y-1">
+                {summary.top_weaknesses.map((w, i) => (
+                  <li key={i} className="text-slate-300 text-sm flex gap-2">
+                    <span className="text-yellow-400 shrink-0">-</span>{localizeFreeformText(w, locale)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -206,6 +390,7 @@ export default function ReportPage() {
 }
 
 function ScoreCard({ label, score, highlight = false }: { label: string; score: number | null; highlight?: boolean }) {
+  const t = useTranslations("report");
   const value = score ?? 0;
   const pct = (value / 10) * 100;
   return (
@@ -213,7 +398,7 @@ function ScoreCard({ label, score, highlight = false }: { label: string; score: 
       <div className="text-slate-400 text-xs mb-2">{label}</div>
       <div className={`text-2xl font-bold mb-2 ${highlight ? "text-blue-400" : "text-white"}`}>
         {value.toFixed(1)}
-        <span className="text-slate-500 text-sm font-normal">/10</span>
+        <span className="text-slate-500 text-sm font-normal">{t("scoreOutOfTen")}</span>
       </div>
       <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
         <div
@@ -226,6 +411,8 @@ function ScoreCard({ label, score, highlight = false }: { label: string; score: 
 }
 
 function CompetencyHeatmap({ scores }: { scores: CompetencyScore[] }) {
+  const t = useTranslations("report");
+  const locale = useLocale();
   // Group by category
   const groups: Record<string, CompetencyScore[]> = {};
   for (const cs of scores) {
@@ -238,7 +425,7 @@ function CompetencyHeatmap({ scores }: { scores: CompetencyScore[] }) {
       {Object.entries(groups).map(([category, items]) => (
         <div key={category}>
           <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">
-            {CATEGORY_LABELS[category] ?? category}
+            {getCategoryLabel(t, category)}
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {items.map((cs, i) => {
@@ -250,10 +437,10 @@ function CompetencyHeatmap({ scores }: { scores: CompetencyScore[] }) {
                   : "bg-red-500/30 border-red-500/50 text-red-300";
               return (
                 <div key={i} className={`border rounded-lg px-3 py-2 ${cellClass}`}>
-                  <div className="text-xs font-medium truncate">{cs.competency}</div>
+                  <div className="text-xs font-medium truncate">{localizeCompetencyLabel(cs.competency, locale)}</div>
                   <div className="text-lg font-bold mt-0.5">{cs.score.toFixed(1)}</div>
                   {cs.evidence && (
-                    <div className="text-xs opacity-70 mt-1 line-clamp-2">{cs.evidence}</div>
+                    <div className="text-xs opacity-70 mt-1 line-clamp-2">{localizeEvidenceText(cs.evidence, locale)}</div>
                   )}
                 </div>
               );
@@ -266,6 +453,7 @@ function CompetencyHeatmap({ scores }: { scores: CompetencyScore[] }) {
 }
 
 function SkillMatrix({ tags }: { tags: SkillTag[] }) {
+  const t = useTranslations("report");
   const strong = tags.filter((t) => t.proficiency === "expert" || t.proficiency === "advanced");
   const develop = tags.filter((t) => t.proficiency === "beginner" || t.proficiency === "intermediate");
 
@@ -273,16 +461,16 @@ function SkillMatrix({ tags }: { tags: SkillTag[] }) {
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <div>
         <div className="text-xs text-green-400 uppercase tracking-wide font-semibold mb-2">
-          Сильные (expert / advanced)
+          {t("strongSkills")} ({t("strengthBand")})
         </div>
         <div className="flex flex-wrap gap-1.5">
           {strong.length === 0 ? (
-            <span className="text-slate-500 text-xs">—</span>
+            <span className="text-slate-500 text-xs">{t("empty")}</span>
           ) : (
             strong.map((tag, i) => (
               <span key={i} className="px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-400">
                 {tag.skill}
-                {tag.mentions_count > 1 && <span className="ml-1 opacity-60">×{tag.mentions_count}</span>}
+                {tag.mentions_count > 1 && <span className="ml-1 opacity-60">x{tag.mentions_count}</span>}
               </span>
             ))
           )}
@@ -290,16 +478,16 @@ function SkillMatrix({ tags }: { tags: SkillTag[] }) {
       </div>
       <div>
         <div className="text-xs text-yellow-400 uppercase tracking-wide font-semibold mb-2">
-          Развивать (beginner / intermediate)
+          {t("developSkills")} ({t("developBand")})
         </div>
         <div className="flex flex-wrap gap-1.5">
           {develop.length === 0 ? (
-            <span className="text-slate-500 text-xs">—</span>
+            <span className="text-slate-500 text-xs">{t("empty")}</span>
           ) : (
             develop.map((tag, i) => (
               <span key={i} className="px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-500/20 text-yellow-400">
                 {tag.skill}
-                {tag.mentions_count > 1 && <span className="ml-1 opacity-60">×{tag.mentions_count}</span>}
+                {tag.mentions_count > 1 && <span className="ml-1 opacity-60">x{tag.mentions_count}</span>}
               </span>
             ))
           )}
@@ -310,6 +498,8 @@ function SkillMatrix({ tags }: { tags: SkillTag[] }) {
 }
 
 function CompetencyRow({ cs }: { cs: CompetencyScore }) {
+  const t = useTranslations("report");
+  const locale = useLocale();
   const pct = (cs.score / 10) * 100;
   const categoryColor = CATEGORY_COLORS[cs.category] ?? "bg-slate-700 text-slate-400 border-slate-600";
   const scoreColor = cs.score >= 7 ? "text-green-400" : cs.score >= 5 ? "text-yellow-400" : "text-red-400";
@@ -319,9 +509,9 @@ function CompetencyRow({ cs }: { cs: CompetencyScore }) {
     <div className="space-y-1">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-slate-200 text-sm truncate">{cs.competency}</span>
+          <span className="text-slate-200 text-sm truncate">{localizeCompetencyLabel(cs.competency, locale)}</span>
           <span className={`text-xs px-1.5 py-0.5 rounded border shrink-0 ${categoryColor}`}>
-            {CATEGORY_LABELS[cs.category] ?? cs.category}
+            {getCategoryLabel(t, cs.category)}
           </span>
         </div>
         <span className={`text-sm font-bold shrink-0 ${scoreColor}`}>{cs.score.toFixed(1)}</span>
@@ -330,7 +520,7 @@ function CompetencyRow({ cs }: { cs: CompetencyScore }) {
         <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
       </div>
       {cs.evidence && (
-        <p className="text-slate-500 text-xs">{cs.evidence}</p>
+        <p className="text-slate-500 text-xs">{localizeEvidenceText(cs.evidence, locale)}</p>
       )}
     </div>
   );
@@ -341,25 +531,29 @@ function SkillBadge({ tag }: { tag: SkillTag }) {
   return (
     <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${color}`}>
       {tag.skill}
-      {tag.mentions_count > 1 && <span className="ml-1 opacity-60">×{tag.mentions_count}</span>}
+      {tag.mentions_count > 1 && <span className="ml-1 opacity-60">x{tag.mentions_count}</span>}
     </span>
   );
 }
 
 function RedFlagRow({ flag }: { flag: RedFlag }) {
+  const t = useTranslations("report");
+  const locale = useLocale();
   const style = SEVERITY_COLORS[flag.severity] ?? SEVERITY_COLORS.low;
   return (
     <div className={`border rounded-lg px-4 py-3 ${style}`}>
       <div className="flex items-center gap-2 mb-1">
-        <span className="text-sm font-medium">⚠ {flag.flag}</span>
-        <span className="text-xs opacity-70 capitalize">{flag.severity}</span>
+        <span className="text-sm font-medium">{t("alert")}: {localizeFreeformText(flag.flag, locale)}</span>
+        <span className="text-xs opacity-70 capitalize">{t(`severity.${flag.severity}`)}</span>
       </div>
-      {flag.evidence && <p className="text-xs opacity-80">{flag.evidence}</p>}
+      {flag.evidence && <p className="text-xs opacity-80">{localizeFreeformText(flag.evidence, locale)}</p>}
     </div>
   );
 }
 
 function QuestionAccordion({ qa, expanded, onToggle }: { qa: QuestionAnalysis; expanded: boolean; onToggle: () => void }) {
+  const t = useTranslations("report");
+  const locale = useLocale();
   const depthColor: Record<string, string> = {
     expert: "text-green-400",
     strong: "text-blue-400",
@@ -371,31 +565,31 @@ function QuestionAccordion({ qa, expanded, onToggle }: { qa: QuestionAnalysis; e
     <div className="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-750 transition-colors"
+        className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-slate-750 md:gap-6 md:px-6"
       >
-        <div className="flex items-center gap-3">
-          <span className="text-slate-500 text-xs">Q{qa.question_number}</span>
-          <span className="text-slate-300 text-sm font-medium">
-            {qa.targeted_competencies.join(", ") || "General"}
+        <div className="flex min-w-0 items-center gap-3 pr-2 md:gap-4">
+          <span className="text-slate-500 text-xs shrink-0">{t("questionShort", {number: qa.question_number})}</span>
+          <span className="min-w-0 text-slate-300 text-sm font-medium leading-6 md:text-[1.02rem]">
+            {(qa.targeted_competencies.map((item) => localizeCompetencyLabel(item, locale)).join(", ")) || t("general")}
           </span>
         </div>
-        <div className="flex items-center gap-3 shrink-0">
-          <span className={`text-xs font-medium ${depthColor[qa.depth] ?? "text-slate-400"} capitalize`}>{qa.depth}</span>
-          <span className="text-white text-sm font-bold">{qa.answer_quality.toFixed(1)}</span>
-          <span className="text-slate-500 text-xs">{expanded ? "▲" : "▼"}</span>
+        <div className="flex min-w-[132px] items-center justify-end gap-4 pl-2 md:min-w-[156px] md:gap-5">
+          <span className={`text-right text-xs font-medium ${depthColor[qa.depth] ?? "text-slate-400"} capitalize md:text-sm`}>{t(`depth.${qa.depth}`)}</span>
+          <span className="w-10 text-right text-sm font-bold text-white md:text-base">{qa.answer_quality.toFixed(1)}</span>
+          <span className="w-5 text-center text-sm text-slate-500">{expanded ? "▲" : "▼"}</span>
         </div>
       </button>
       {expanded && (
-        <div className="px-4 pb-4 space-y-3 border-t border-slate-700">
+        <div className="space-y-3 border-t border-slate-700 px-5 pb-4 pt-4 md:px-6">
           {qa.evidence && (
             <div>
-              <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Evidence</p>
-              <p className="text-slate-300 text-sm">{qa.evidence}</p>
+              <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">{t("evidence")}</p>
+              <p className="text-slate-300 text-sm">{localizeEvidenceText(qa.evidence, locale)}</p>
             </div>
           )}
           {qa.skills_mentioned.length > 0 && (
             <div>
-              <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Skills Mentioned</p>
+              <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">{t("skillsMentioned")}</p>
               <div className="flex flex-wrap gap-1.5">
                 {qa.skills_mentioned.map((s, i) => (
                   <span key={i} className={`px-2 py-0.5 rounded text-xs ${PROFICIENCY_COLORS[s.proficiency] ?? PROFICIENCY_COLORS.intermediate}`}>
@@ -407,16 +601,16 @@ function QuestionAccordion({ qa, expanded, onToggle }: { qa: QuestionAnalysis; e
           )}
           {qa.red_flags.length > 0 && (
             <div>
-              <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Flags</p>
+              <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">{t("flags")}</p>
               <ul className="space-y-1">
                 {qa.red_flags.map((rf, i) => (
-                  <li key={i} className="text-red-400 text-xs">⚠ {rf}</li>
+                  <li key={i} className="text-red-400 text-xs">{t("alert")}: {localizeFreeformText(rf, locale)}</li>
                 ))}
               </ul>
             </div>
           )}
           <div className="flex gap-4 text-xs">
-            <span className="text-slate-500">Specificity: <span className="text-slate-300 capitalize">{qa.specificity}</span></span>
+            <span className="text-slate-500">{t("specificity")}: <span className="text-slate-300 capitalize">{t(`specificityValue.${qa.specificity}`)}</span></span>
           </div>
         </div>
       )}
@@ -442,10 +636,11 @@ function Section({ title, children, color }: { title: string; children: React.Re
 }
 
 function ListItem({ text, bullet, color }: { text: string; bullet: string; color: string }) {
+  const locale = useLocale();
   return (
     <li className="flex gap-3 text-sm text-slate-300">
       <span className={`${color} shrink-0 mt-0.5`}>{bullet}</span>
-      {text}
+      {localizeFreeformText(text, locale)}
     </li>
   );
 }

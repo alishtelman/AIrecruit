@@ -1,27 +1,22 @@
 "use client";
 
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { useAuth } from "@/hooks/useAuth";
 import { companyApi } from "@/lib/api";
 import type { AssessmentType, CompanyAssessment, InterviewTemplate, TargetRole } from "@/lib/types";
 
-const ROLES: { value: TargetRole; label: string }[] = [
-  { value: "backend_engineer", label: "Backend Engineer" },
-  { value: "frontend_engineer", label: "Frontend Engineer" },
-  { value: "qa_engineer", label: "QA Engineer" },
-  { value: "devops_engineer", label: "DevOps Engineer" },
-  { value: "data_scientist", label: "Data Scientist" },
-  { value: "product_manager", label: "Product Manager" },
-  { value: "mobile_engineer", label: "Mobile Engineer" },
-  { value: "designer", label: "UX/UI Designer" },
+const ROLES: TargetRole[] = [
+  "backend_engineer",
+  "frontend_engineer",
+  "qa_engineer",
+  "devops_engineer",
+  "data_scientist",
+  "product_manager",
+  "mobile_engineer",
+  "designer",
 ];
-
-const ROLE_LABELS: Record<string, string> = Object.fromEntries(ROLES.map((role) => [role.value, role.label]));
-const ASSESSMENT_TYPE_LABELS: Record<AssessmentType, string> = {
-  employee_internal: "Internal employee",
-  candidate_external: "External candidate",
-};
 const STATUS_STYLES: Record<CompanyAssessment["status"], string> = {
   pending: "bg-amber-500/10 border-amber-500/30 text-amber-300",
   opened: "bg-cyan-500/10 border-cyan-500/30 text-cyan-300",
@@ -54,16 +49,9 @@ const BLANK_FORM: AssessmentFormState = {
   branding_logo_url: "",
 };
 
-function formatDate(value: string | null): string {
-  if (!value) return "Not set";
-  return new Date(value).toLocaleString();
-}
-
-function statusLabel(status: CompanyAssessment["status"]): string {
-  return status.replace("_", " ");
-}
-
 export default function EmployeesPage() {
+  const t = useTranslations("companyEmployees");
+  const roleT = useTranslations("interviewStart.roles");
   const { user, loading: authLoading } = useAuth("/company/login");
   const [assessments, setAssessments] = useState<CompanyAssessment[]>([]);
   const [templates, setTemplates] = useState<InterviewTemplate[]>([]);
@@ -84,14 +72,14 @@ export default function EmployeesPage() {
         setAssessments(assessmentRows);
         setTemplates(templateRows);
       })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to load campaigns"))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : t("errors.load")))
       .finally(() => setLoading(false));
-  }, [authLoading]);
+  }, [authLoading, t]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!canManageCampaigns) {
-      setFormError("Only admins can create campaigns");
+      setFormError(t("errors.adminOnlyCreate"));
       return;
     }
     setFormError("");
@@ -117,7 +105,7 @@ export default function EmployeesPage() {
       setShowForm(false);
       setForm(BLANK_FORM);
     } catch (err: unknown) {
-      setFormError(err instanceof Error ? err.message : "Failed to create campaign");
+      setFormError(err instanceof Error ? err.message : t("errors.create"));
     } finally {
       setSaving(false);
     }
@@ -125,14 +113,14 @@ export default function EmployeesPage() {
 
   async function handleDelete(id: string) {
     if (!canManageCampaigns) {
-      setError("Only admins can delete campaigns");
+      setError(t("errors.adminOnlyDelete"));
       return;
     }
     try {
       await companyApi.deleteAssessment(id);
       setAssessments(assessments.filter((assessment) => assessment.id !== id));
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to delete campaign");
+      setError(err instanceof Error ? err.message : t("errors.delete"));
     }
   }
 
@@ -142,11 +130,16 @@ export default function EmployeesPage() {
   const completedCount = assessments.filter((assessment) => assessment.status === "completed").length;
   const completionRate = assessments.length === 0 ? 0 : Math.round((completedCount / assessments.length) * 100);
   const selectedTemplate = templates.find((template) => template.template_id === form.template_id);
+  const formatDate = (value: string | null): string => {
+    if (!value) return t("meta.notSet");
+    return new Date(value).toLocaleString();
+  };
+  const statusLabel = (status: CompanyAssessment["status"]): string => t(`status.${status}`);
 
   if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="text-slate-400">Loading campaigns…</div>
+        <div className="text-slate-400">{t("loading")}</div>
       </div>
     );
   }
@@ -157,15 +150,14 @@ export default function EmployeesPage() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <Link href="/company/dashboard" className="text-sm text-slate-400 transition-colors hover:text-white">
-              ← Back to dashboard
+              ← {t("back")}
             </Link>
-            <h1 className="mt-3 text-3xl font-semibold text-white">Assessment Campaigns</h1>
+            <h1 className="mt-3 text-3xl font-semibold text-white">{t("title")}</h1>
             <p className="mt-2 max-w-2xl text-sm text-slate-400">
-              Run private AI assessment campaigns for employees or external candidates, attach a template, set a
-              deadline, and track invite lifecycle through completion.
+              {t("subtitle")}
             </p>
             {!canManageCampaigns && (
-              <p className="mt-2 text-sm text-amber-300">Read-only mode: only admins can create or delete campaigns.</p>
+              <p className="mt-2 text-sm text-amber-300">{t("readonly")}</p>
             )}
           </div>
           <button
@@ -177,15 +169,15 @@ export default function EmployeesPage() {
             disabled={!canManageCampaigns}
             className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
           >
-            {showForm ? "Close form" : "New campaign"}
+            {showForm ? t("closeForm") : t("new")}
           </button>
         </div>
 
         <div className="grid gap-4 md:grid-cols-4">
-          <SummaryCard label="Total campaigns" value={String(assessments.length)} accent="slate" />
-          <SummaryCard label="Completed" value={String(completedCount)} accent="green" />
-          <SummaryCard label="Opened / In progress" value={`${openedCount + inProgressCount}`} accent="blue" />
-          <SummaryCard label="Completion rate" value={`${completionRate}%`} accent="amber" />
+          <SummaryCard label={t("summary.total")} value={String(assessments.length)} accent="slate" />
+          <SummaryCard label={t("summary.completed")} value={String(completedCount)} accent="green" />
+          <SummaryCard label={t("summary.openedInProgress")} value={`${openedCount + inProgressCount}`} accent="blue" />
+          <SummaryCard label={t("summary.completionRate")} value={`${completionRate}%`} accent="amber" />
         </div>
 
         {error && (
@@ -197,7 +189,7 @@ export default function EmployeesPage() {
         {createdInvite && (
           <div className="rounded-3xl border border-emerald-500/30 bg-emerald-500/10 p-5">
             <div className="mb-2 text-sm font-semibold text-emerald-300">
-              Campaign created for {createdInvite.label}
+              {t("invite.createdFor", { label: createdInvite.label })}
             </div>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
               <code className="flex-1 overflow-hidden rounded-2xl bg-slate-900 px-3 py-2 text-xs text-slate-200">
@@ -208,7 +200,7 @@ export default function EmployeesPage() {
                   onClick={() => navigator.clipboard.writeText(createdInvite.link)}
                   className="rounded-xl bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700"
                 >
-                  Copy link
+                  {t("invite.copy")}
                 </button>
                 <a
                   href={createdInvite.link}
@@ -216,7 +208,7 @@ export default function EmployeesPage() {
                   rel="noreferrer"
                   className="rounded-xl bg-emerald-500/20 px-3 py-2 text-xs font-medium text-emerald-200 transition-colors hover:bg-emerald-500/30"
                 >
-                  Open invite
+                  {t("invite.open")}
                 </a>
               </div>
             </div>
@@ -228,18 +220,18 @@ export default function EmployeesPage() {
             <div className="space-y-5">
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
-                  <label className="mb-1.5 block text-sm text-slate-300">Invite type</label>
+                  <label className="mb-1.5 block text-sm text-slate-300">{t("form.inviteType")}</label>
                   <select
                     value={form.assessment_type}
                     onChange={(e) => setForm({ ...form, assessment_type: e.target.value as AssessmentType })}
                     className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="employee_internal">Internal employee</option>
-                    <option value="candidate_external">External candidate</option>
+                    <option value="employee_internal">{t("labels.employeeInternal")}</option>
+                    <option value="candidate_external">{t("labels.candidateExternal")}</option>
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-sm text-slate-300">Target role</label>
+                  <label className="mb-1.5 block text-sm text-slate-300">{t("form.targetRole")}</label>
                   <select
                     value={form.target_role}
                     onChange={(e) => {
@@ -251,8 +243,8 @@ export default function EmployeesPage() {
                     className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     {ROLES.map((role) => (
-                      <option key={role.value} value={role.value}>
-                        {role.label}
+                      <option key={role} value={role}>
+                        {roleT(role)}
                       </option>
                     ))}
                   </select>
@@ -261,14 +253,14 @@ export default function EmployeesPage() {
 
               <div className="grid gap-4 md:grid-cols-2">
                 <Field
-                  label={form.assessment_type === "employee_internal" ? "Employee name" : "Candidate name"}
+                  label={form.assessment_type === "employee_internal" ? t("form.employeeName") : t("form.candidateName")}
                   value={form.employee_name}
                   onChange={(value) => setForm({ ...form, employee_name: value })}
                   placeholder={form.assessment_type === "employee_internal" ? "Aruzhan Sadykova" : "Maksim Petrov"}
                   required
                 />
                 <Field
-                  label={form.assessment_type === "employee_internal" ? "Employee email" : "Candidate email"}
+                  label={form.assessment_type === "employee_internal" ? t("form.employeeEmail") : t("form.candidateEmail")}
                   type="email"
                   value={form.employee_email}
                   onChange={(value) => setForm({ ...form, employee_email: value })}
@@ -278,7 +270,7 @@ export default function EmployeesPage() {
               </div>
 
               <div>
-                <label className="mb-1.5 block text-sm text-slate-300">Optional template</label>
+                <label className="mb-1.5 block text-sm text-slate-300">{t("form.optionalTemplate")}</label>
                 <select
                   value={form.template_id}
                   onChange={(e) => {
@@ -292,32 +284,34 @@ export default function EmployeesPage() {
                   }}
                   className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="">Default adaptive interview</option>
+                  <option value="">{t("form.defaultAdaptive")}</option>
                   {templates
                     .filter((template) => template.target_role === form.target_role || template.template_id === form.template_id)
                     .map((template) => (
                       <option key={template.template_id} value={template.template_id}>
-                        {template.name} · {ROLE_LABELS[template.target_role] ?? template.target_role}
+                        {template.name} · {roleT(template.target_role)}
                       </option>
                     ))}
                 </select>
                 {selectedTemplate && (
                   <p className="mt-2 text-xs text-slate-500">
-                    Template questions: {selectedTemplate.questions.length}. Role is locked to{" "}
-                    {ROLE_LABELS[selectedTemplate.target_role] ?? selectedTemplate.target_role}.
+                    {t("form.templateLocked", {
+                      count: selectedTemplate.questions.length,
+                      role: roleT(selectedTemplate.target_role),
+                    })}
                   </p>
                 )}
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
                 <Field
-                  label="Deadline"
+                  label={t("form.deadline")}
                   type="datetime-local"
                   value={form.deadline_at}
                   onChange={(value) => setForm({ ...form, deadline_at: value })}
                 />
                 <Field
-                  label="Expires at"
+                  label={t("form.expiresAt")}
                   type="datetime-local"
                   value={form.expires_at}
                   onChange={(value) => setForm({ ...form, expires_at: value })}
@@ -326,13 +320,13 @@ export default function EmployeesPage() {
 
               <div className="grid gap-4 md:grid-cols-2">
                 <Field
-                  label="Branding name"
+                  label={t("form.brandingName")}
                   value={form.branding_name}
                   onChange={(value) => setForm({ ...form, branding_name: value })}
                   placeholder="Engineering Hiring Sprint"
                 />
                 <Field
-                  label="Branding logo URL"
+                  label={t("form.brandingLogoUrl")}
                   value={form.branding_logo_url}
                   onChange={(value) => setForm({ ...form, branding_logo_url: value })}
                   placeholder="https://cdn.example.com/logo.png"
@@ -350,18 +344,18 @@ export default function EmployeesPage() {
                 disabled={saving}
                 className="w-full rounded-2xl bg-blue-600 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
               >
-                {saving ? "Creating campaign…" : "Create private campaign"}
+                {saving ? t("form.creating") : t("form.submit")}
               </button>
             </div>
 
             <div className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
-              <div className="text-sm font-semibold text-white">How this campaign behaves</div>
+              <div className="text-sm font-semibold text-white">{t("guide.title")}</div>
               <ul className="mt-4 space-y-3 text-sm text-slate-400">
-                <li>The invite remains private and never appears in the public marketplace.</li>
-                <li>`opened` means the landing page was viewed but the interview has not started yet.</li>
-                <li>`deadline` and `expires_at` both block new starts once the timestamp is reached.</li>
-                <li>Completed campaigns expose company-scoped report and replay links directly from this page.</li>
-                <li>Branding only changes the invite experience; report visibility still stays company-scoped.</li>
+                <li>{t("guide.private")}</li>
+                <li>{t("guide.opened")}</li>
+                <li>{t("guide.deadline")}</li>
+                <li>{t("guide.completed")}</li>
+                <li>{t("guide.branding")}</li>
               </ul>
             </div>
           </form>
@@ -369,11 +363,9 @@ export default function EmployeesPage() {
 
         {assessments.length === 0 && !showForm ? (
           <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-16 text-center">
-            <div className="text-5xl">🎯</div>
-            <h2 className="mt-4 text-xl font-semibold text-white">No assessment campaigns yet</h2>
+            <h2 className="mt-4 text-xl font-semibold text-white">{t("empty.title")}</h2>
             <p className="mx-auto mt-2 max-w-lg text-sm text-slate-400">
-              Create a private campaign for an employee or external candidate, optionally attach a custom template,
-              and track invite lifecycle through completion.
+              {t("empty.description")}
             </p>
           </div>
         ) : (
@@ -388,7 +380,7 @@ export default function EmployeesPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <div className="text-lg font-semibold text-white">{assessment.employee_name}</div>
                         <span className="rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-300">
-                          {ASSESSMENT_TYPE_LABELS[assessment.assessment_type]}
+                          {assessment.assessment_type === "employee_internal" ? t("labels.employeeInternal") : t("labels.candidateExternal")}
                         </span>
                         <span className={`rounded-full border px-2.5 py-1 text-xs ${STATUS_STYLES[assessment.status]}`}>
                           {statusLabel(assessment.status)}
@@ -396,14 +388,14 @@ export default function EmployeesPage() {
                       </div>
                       <div className="mt-1 text-sm text-slate-400">{assessment.employee_email}</div>
                       <div className="mt-4 grid gap-3 text-sm text-slate-400 md:grid-cols-2 xl:grid-cols-4">
-                        <Meta label="Role" value={ROLE_LABELS[assessment.target_role] ?? assessment.target_role} />
-                        <Meta label="Template" value={assessment.template_name ?? "Adaptive default"} />
-                        <Meta label="Created" value={formatDate(assessment.created_at)} />
-                        <Meta label="Brand" value={assessment.branding_name ?? "Company default"} />
-                        <Meta label="Deadline" value={formatDate(assessment.deadline_at)} />
-                        <Meta label="Expires" value={formatDate(assessment.expires_at)} />
-                        <Meta label="Opened" value={formatDate(assessment.opened_at)} />
-                        <Meta label="Completed" value={formatDate(assessment.completed_at)} />
+                        <Meta label={t("meta.role")} value={roleT(assessment.target_role)} />
+                        <Meta label={t("meta.template")} value={assessment.template_name ?? t("meta.adaptiveDefault")} />
+                        <Meta label={t("meta.created")} value={formatDate(assessment.created_at)} />
+                        <Meta label={t("meta.brand")} value={assessment.branding_name ?? t("meta.companyDefault")} />
+                        <Meta label={t("meta.deadline")} value={formatDate(assessment.deadline_at)} />
+                        <Meta label={t("meta.expires")} value={formatDate(assessment.expires_at)} />
+                        <Meta label={t("meta.opened")} value={formatDate(assessment.opened_at)} />
+                        <Meta label={t("meta.completed")} value={formatDate(assessment.completed_at)} />
                       </div>
                     </div>
 
@@ -412,17 +404,17 @@ export default function EmployeesPage() {
                         <>
                           <button
                             onClick={() => navigator.clipboard.writeText(`${window.location.origin}${invitePath}`)}
-                            className="rounded-xl bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700"
-                          >
-                            Copy link
+                          className="rounded-xl bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700"
+                        >
+                            {t("invite.copy")}
                           </button>
                           <a
                             href={invitePath}
                             target="_blank"
                             rel="noreferrer"
-                            className="rounded-xl bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700"
-                          >
-                            Open invite
+                          className="rounded-xl bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700"
+                        >
+                            {t("invite.open")}
                           </a>
                         </>
                       )}
@@ -431,7 +423,7 @@ export default function EmployeesPage() {
                           href={`/company/reports/${assessment.report_id}`}
                           className="rounded-xl bg-emerald-500/15 px-3 py-2 text-xs font-medium text-emerald-200 transition-colors hover:bg-emerald-500/25"
                         >
-                          View report
+                          {t("actions.viewReport")}
                         </Link>
                       )}
                       {assessment.status === "completed" && assessment.interview_id && (
@@ -439,7 +431,7 @@ export default function EmployeesPage() {
                           href={`/company/interviews/${assessment.interview_id}/replay`}
                           className="rounded-xl bg-blue-500/15 px-3 py-2 text-xs font-medium text-blue-200 transition-colors hover:bg-blue-500/25"
                         >
-                          View replay
+                          {t("actions.viewReplay")}
                         </Link>
                       )}
                       {canDelete && canManageCampaigns && (
@@ -447,7 +439,7 @@ export default function EmployeesPage() {
                           onClick={() => handleDelete(assessment.id)}
                           className="rounded-xl border border-rose-500/20 px-3 py-2 text-xs font-medium text-rose-300 transition-colors hover:bg-rose-500/10"
                         >
-                          Delete
+                          {t("actions.delete")}
                         </button>
                       )}
                     </div>
@@ -460,7 +452,7 @@ export default function EmployeesPage() {
 
         {pendingCount > 0 && (
           <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-            {pendingCount} campaigns have not been opened yet. These are still good candidates for follow-up.
+            {t("pendingNotice", { count: pendingCount })}
           </div>
         )}
       </div>
@@ -525,8 +517,8 @@ function Field({
 function Meta({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{label}</div>
-      <div className="mt-1 text-sm text-slate-200">{value}</div>
+      <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mt-1 text-sm text-slate-300">{value}</div>
     </div>
   );
 }

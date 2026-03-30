@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { LocaleSwitcher } from "@/components/locale-switcher";
+import { Link, useRouter } from "@/i18n/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { useTTS } from "@/hooks/useTTS";
 import { useMediaRecorder } from "@/hooks/useMediaRecorder";
@@ -15,6 +17,8 @@ const REPORT_POLL_INTERVAL_MS = 1500;
 const REPORT_POLL_TIMEOUT_MS = 120000;
 
 export default function InterviewPage() {
+  const t = useTranslations("interview");
+  const startT = useTranslations("interviewStart");
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { loading: authLoading } = useAuth();
@@ -25,6 +29,8 @@ export default function InterviewPage() {
   const [maxQuestions, setMaxQuestions] = useState(8);
   const [currentQuestion, setCurrentQuestion] = useState<string | null>(null);
   const [canFinish, setCanFinish] = useState(false);
+  const [isFollowup, setIsFollowup] = useState(false);
+  const [questionType, setQuestionType] = useState("main");
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [finishing, setFinishing] = useState(false);
@@ -46,6 +52,7 @@ export default function InterviewPage() {
   // Resume panel
   const [resumeText, setResumeText] = useState<string | null>(null);
   const [resumeOpen, setResumeOpen] = useState(false);
+  const reportGenerationFailedMessage = t("reportGenerationFailed");
 
   // Recording is mandatory for interview flow.
   const [recordingConsent, setRecordingConsent] = useState(false);
@@ -105,7 +112,7 @@ export default function InterviewPage() {
           speak(lastAssistant.content, data.language ?? "ru");
         }
       })
-      .catch(() => setError("Could not load interview"));
+      .catch(() => setError(t("loadFailed")));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, authLoading]);
 
@@ -133,7 +140,7 @@ export default function InterviewPage() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, sending]);
 
   useEffect(() => {
     if (!interview || interview.status !== "in_progress") return;
@@ -160,16 +167,16 @@ export default function InterviewPage() {
           return detail.report_id;
         }
         if (detail.status === "failed") {
-          throw new Error("Report generation failed. Please retry finishing the interview.");
+          throw new Error(reportGenerationFailedMessage);
         }
       } catch (err: unknown) {
-        if (err instanceof Error && err.message.includes("Report generation failed")) {
+        if (err instanceof Error && err.message.includes(reportGenerationFailedMessage)) {
           throw err;
         }
       }
       await new Promise((resolve) => setTimeout(resolve, REPORT_POLL_INTERVAL_MS));
     }
-    throw new Error("Report is taking too long. Please refresh this page in a few moments.");
+    throw new Error(t("reportDelayed"));
   }
 
   async function handleSend() {
@@ -199,6 +206,8 @@ export default function InterviewPage() {
       const res = await interviewApi.sendMessage(id, { message: text });
       setQuestionCount(res.question_count);
       setCurrentQuestion(res.current_question);
+      setIsFollowup(res.is_followup ?? false);
+      setQuestionType(res.question_type ?? "main");
 
       if (res.current_question) {
         currentQNumRef.current = res.question_count;
@@ -215,7 +224,7 @@ export default function InterviewPage() {
         setCanFinish(true);
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to send message");
+      setError(err instanceof Error ? err.message : t("sendFailed"));
       setMessages((prev) => prev.slice(0, -1));
       setInput(text);
     } finally {
@@ -243,7 +252,7 @@ export default function InterviewPage() {
           clearRecording();
         } catch (uploadErr: unknown) {
           setRecordingUploadState("failed");
-          setError(uploadErr instanceof Error ? uploadErr.message : "Recording upload failed");
+          setError(uploadErr instanceof Error ? uploadErr.message : t("recordingUploadFailed"));
           recordingNotice = "recording_failed";
         }
       } else {
@@ -269,7 +278,7 @@ export default function InterviewPage() {
       const suffix = recordingNotice ? `?notice=${recordingNotice}` : "";
       router.push(`/candidate/reports/${reportId}${suffix}`);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to finish interview");
+      setError(err instanceof Error ? err.message : t("finishFailed"));
     } finally {
       setWaitingForReport(false);
       setFinishing(false);
@@ -282,25 +291,40 @@ export default function InterviewPage() {
   }
 
   if (authLoading || !interview) {
+    if (error) {
+      return (
+        <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+          <div className="text-red-400">{error}</div>
+        </div>
+      );
+    }
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-slate-400">{error || "Loading interview…"}</div>
+      <div className="min-h-screen bg-slate-900 flex flex-col">
+        <header className="border-b border-slate-800 px-6 py-4 flex items-center gap-4 shrink-0">
+          <div className="h-4 w-4 bg-slate-700 rounded animate-pulse" />
+          <div className="h-4 w-48 bg-slate-700 rounded animate-pulse" />
+        </header>
+        <div className="flex-1 px-4 py-6 max-w-2xl w-full mx-auto space-y-4">
+          <div className="h-16 bg-slate-800 rounded-2xl animate-pulse" />
+          <div className="h-10 bg-slate-800 rounded-2xl animate-pulse ml-auto w-3/4" />
+          <div className="h-16 bg-slate-800 rounded-2xl animate-pulse" />
+        </div>
       </div>
     );
   }
 
-  const roleLabel = interview.target_role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  const roleLabel = startT(`roles.${interview.target_role}.label`);
   const progress = Math.round((questionCount / maxQuestions) * 100);
   const voiceMode = answerMode === "voice";
   const uploadStatusLabel =
     recordingUploadState === "uploading"
-      ? "Uploading recording…"
+      ? t("uploadStatus.uploading")
       : recordingUploadState === "uploaded"
-      ? "Recording uploaded"
+      ? t("uploadStatus.uploaded")
       : recordingUploadState === "failed"
-      ? "Recording upload failed"
+      ? t("uploadStatus.failed")
       : recordingUploadState === "skipped"
-      ? "Interview finished without recording upload"
+      ? t("uploadStatus.skipped")
       : null;
 
   return (
@@ -311,14 +335,21 @@ export default function InterviewPage() {
           <Link href="/candidate/reports" className="text-slate-500 hover:text-slate-300 text-sm transition-colors">
             ←
           </Link>
-          <div>
-            <span className="text-white font-semibold">{roleLabel} Interview</span>
-            <span className="text-slate-400 text-sm ml-3">
-              Question {questionCount} of {maxQuestions}
-            </span>
+          <div className="flex items-center gap-3">
+            <span className="text-white font-semibold">{t("interviewTitle", {role: roleLabel})}</span>
+            {isFollowup ? (
+              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/30 text-purple-300 font-medium">
+                {questionType === "verification" ? t("verification") : questionType === "deep_technical" ? t("deepDive") : t("followup")}
+              </span>
+            ) : (
+              <span className="text-slate-400 text-sm">
+                {t("question", {current: questionCount, total: maxQuestions})}
+              </span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <LocaleSwitcher />
           {/* Webcam preview */}
           {isRecording && (
             <video
@@ -340,9 +371,9 @@ export default function InterviewPage() {
                 className={`text-xs font-medium ${
                   isScreenSharing ? "text-emerald-400" : "text-yellow-400"
                 }`}
-                title={isScreenSharing ? "Screen is being recorded" : "Screen sharing inactive"}
+                title={isScreenSharing ? t("tooltips.screenRecorded") : t("tooltips.screenInactive")}
               >
-                {isScreenSharing ? "🖥️ Screen on" : "🖥️ Screen off"}
+                {isScreenSharing ? t("screenOn") : t("screenOff")}
               </span>
               {faceModelLoaded && (
                 <span
@@ -351,36 +382,38 @@ export default function InterviewPage() {
                       ? "text-orange-400"
                       : "text-green-400"
                   }`}
-                  title={`Face detection: ${faceAwayPct !== null ? Math.round(faceAwayPct * 100) + "% away" : "detecting…"}`}
+                  title={t("tooltips.faceDetection", {
+                    status: faceAwayPct !== null ? `${Math.round(faceAwayPct * 100)}% away` : t("tooltips.detecting"),
+                  })}
                 >
-                  {faceAwayPct !== null && faceAwayPct > 0.3 ? "👁️‍🗨️ Look at camera" : "👁️"}
+                  {faceAwayPct !== null && faceAwayPct > 0.3 ? t("lookAtCamera") : t("face")}
                 </span>
               )}
             </span>
           )}
           {!recordingConsent && interview.status === "in_progress" && (
             <span className="text-xs px-3 py-1.5 rounded-lg border border-yellow-500/40 bg-yellow-500/10 text-yellow-300">
-              Recording required
+              {t("recordingRequired")}
             </span>
           )}
           {/* Resume panel toggle */}
           {resumeText && (
             <button
               onClick={() => setResumeOpen((v) => !v)}
-              title="Toggle resume panel"
+              title={t("tooltips.toggleResume")}
               className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
                 resumeOpen
                   ? "bg-purple-500/15 border-purple-500/30 text-purple-400"
                   : "bg-slate-700/50 border-slate-600 text-slate-400 hover:text-slate-300"
               }`}
             >
-              Резюме
+              {t("resume")}
             </button>
           )}
           {/* TTS toggle */}
           <button
             onClick={toggleTTS}
-            title={ttsEnabled ? "Mute voice" : "Enable voice"}
+            title={ttsEnabled ? t("tooltips.muteVoice") : t("tooltips.enableVoice")}
             className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${
               ttsEnabled
                 ? "bg-blue-500/15 border-blue-500/30 text-blue-400 hover:bg-blue-500/25"
@@ -394,9 +427,9 @@ export default function InterviewPage() {
                 <span className="w-0.5 bg-current rounded-full animate-[soundbar_0.8s_ease-in-out_0.4s_infinite]" style={{ height: "60%" }} />
               </span>
             ) : (
-              <span>{ttsEnabled ? "🔊" : "🔇"}</span>
+              <span>{ttsEnabled ? t("on") : t("off")}</span>
             )}
-            {ttsEnabled ? "Voice on" : "Voice off"}
+            {ttsEnabled ? t("voiceOn") : t("voiceOff")}
           </button>
           {/* Progress bar */}
           <div className="w-24 h-1.5 bg-slate-700 rounded-full overflow-hidden">
@@ -420,6 +453,7 @@ export default function InterviewPage() {
               speaking={speaking}
             />
           ))}
+          {sending && <TypingIndicator />}
           <div ref={bottomRef} />
         </div>
 
@@ -427,12 +461,12 @@ export default function InterviewPage() {
         {resumeOpen && resumeText && (
           <aside className="fixed right-0 top-0 h-full w-80 bg-slate-800 border-l border-slate-700 overflow-y-auto p-4 z-10">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-white font-semibold text-sm">Резюме</h3>
+              <h3 className="text-white font-semibold text-sm">{t("resume")}</h3>
               <button
                 onClick={() => setResumeOpen(false)}
                 className="text-slate-400 hover:text-white text-lg leading-none"
               >
-                ✕
+                ×
               </button>
             </div>
             <pre className="text-slate-300 text-xs whitespace-pre-wrap leading-relaxed font-sans">
@@ -454,15 +488,15 @@ export default function InterviewPage() {
       {!recordingConsent && interview.status === "in_progress" && (
         <div className="max-w-2xl w-full mx-auto px-4 pb-4">
           <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-5">
-            <div className="text-yellow-300 font-semibold mb-1">Recording required</div>
+            <div className="text-yellow-300 font-semibold mb-1">{t("recordingRequired")}</div>
             <div className="text-slate-300 text-sm mb-4">
-              To continue the interview, enable screen, camera, and microphone recording.
+              {t("recordingDescription")}
             </div>
             <button
               onClick={handleConsentAndRecord}
               className="bg-yellow-500/80 hover:bg-yellow-500 text-slate-900 font-semibold px-4 py-2 rounded-lg transition-colors"
             >
-              Enable recording
+              {t("enableRecording")}
             </button>
           </div>
         </div>
@@ -472,9 +506,9 @@ export default function InterviewPage() {
       {canFinish && (
         <div className="max-w-2xl w-full mx-auto px-4 pb-4">
           <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-5 text-center">
-            <div className="text-white font-semibold mb-1">Interview complete!</div>
+            <div className="text-white font-semibold mb-1">{t("completeTitle")}</div>
             <div className="text-slate-400 text-sm mb-4">
-              You&apos;ve answered all {maxQuestions} questions. Generate your assessment report now.
+              {t("completeDescription", {count: maxQuestions})}
             </div>
             {uploadStatusLabel && (
               <div className={`mb-4 text-sm ${recordingUploadState === "failed" ? "text-red-400" : "text-slate-300"}`}>
@@ -486,8 +520,30 @@ export default function InterviewPage() {
               disabled={finishing}
               className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold px-8 py-2.5 rounded-lg transition-colors"
             >
-              {finishing ? (waitingForReport ? "Waiting for report…" : "Generating report…") : "Finish & Get Report"}
+              {finishing ? (waitingForReport ? t("waiting") : t("generating")) : t("finish")}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Full-screen finishing overlay */}
+      {finishing && (
+        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm flex flex-col items-center justify-center z-50">
+          <div className="flex flex-col items-center gap-6 text-center px-8">
+            <div className="relative w-16 h-16">
+              <div className="absolute inset-0 rounded-full border-4 border-slate-700" />
+              <div className="absolute inset-0 rounded-full border-4 border-t-blue-500 animate-spin" />
+            </div>
+            <div>
+              <p className="text-white font-semibold text-lg">
+                {waitingForReport ? t("analyzing") : t("finishing")}
+              </p>
+              <p className="text-slate-400 text-sm mt-1">
+                {waitingForReport
+                  ? t("analysisDuration")
+                  : t("savingResponses")}
+              </p>
+            </div>
           </div>
         </div>
       )}
@@ -506,7 +562,7 @@ export default function InterviewPage() {
                       : "border-slate-700 text-slate-400 hover:text-slate-200"
                   }`}
                 >
-                  Text mode
+                  {t("textMode")}
                 </button>
                 <button
                   onClick={() => setAnswerMode("voice")}
@@ -516,12 +572,12 @@ export default function InterviewPage() {
                       : "border-slate-700 text-slate-400 hover:text-slate-200"
                   }`}
                 >
-                  Voice mode
+                  {t("voiceMode")}
                 </button>
               </div>
               {voiceMode && (
                 <p className="text-xs text-slate-500">
-                  Hold the mic, then review the transcript before sending.
+                  {t("voiceHint")}
                 </p>
               )}
             </div>
@@ -530,7 +586,7 @@ export default function InterviewPage() {
               <div className="rounded-xl border border-slate-800 bg-slate-800/60 px-4 py-3 text-sm">
                 {latestTranscript && (
                   <p className="text-slate-300">
-                    Latest transcript captured. Edit the draft below before sending.
+                    {t("latestTranscript")}
                   </p>
                 )}
                 {voiceError && <p className="text-red-400 mt-1">{voiceError}</p>}
@@ -549,17 +605,20 @@ export default function InterviewPage() {
                   handleSend();
                 }
               }}
+              disabled={sending}
               placeholder={
-                voiceMode && voiceState === "recording"
-                  ? "🎙 Listening…"
+                sending
+                  ? t("placeholderThinking")
+                  : voiceMode && voiceState === "recording"
+                  ? t("placeholderListening")
                   : voiceMode && voiceState === "transcribing"
-                  ? "⏳ Transcribing…"
+                  ? t("placeholderTranscribing")
                   : voiceMode
-                  ? "Transcript preview. Edit before sending…"
-                  : "Type your answer… (Enter to send, Shift+Enter for new line)"
+                  ? t("placeholderVoice")
+                  : t("placeholderText")
               }
               rows={2}
-              className="flex-1 bg-slate-800 border border-slate-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500 resize-none"
+              className="flex-1 bg-slate-800 border border-slate-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500 resize-none disabled:opacity-50 disabled:cursor-not-allowed"
             />
             {voiceMode && (
               <button
@@ -568,7 +627,7 @@ export default function InterviewPage() {
                 onTouchStart={startVoice}
                 onTouchEnd={stopVoice}
                 disabled={sending || voiceState === "transcribing"}
-                title="Hold to speak"
+                title={t("tooltips.holdToSpeak")}
                 className={`px-4 rounded-xl transition-colors font-medium border select-none ${
                   voiceState === "recording"
                     ? "bg-red-500/20 border-red-500/50 text-red-400 animate-pulse"
@@ -579,7 +638,7 @@ export default function InterviewPage() {
                     : "bg-slate-700 border-slate-600 text-slate-300 hover:border-slate-500"
                 }`}
               >
-                {voiceState === "recording" ? "🔴" : voiceState === "transcribing" ? "⏳" : "🎙"}
+                {voiceState === "recording" ? "REC" : voiceState === "transcribing" ? "..." : "MIC"}
               </button>
             )}
             <button
@@ -587,12 +646,27 @@ export default function InterviewPage() {
               disabled={!input.trim() || sending}
               className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-5 rounded-xl transition-colors font-medium"
             >
-              {sending ? "…" : "Send"}
+              {sending ? "..." : t("send")}
             </button>
             </div>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function TypingIndicator() {
+  return (
+    <div className="flex justify-start">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl rounded-bl-sm px-4 py-3">
+        <div className="text-blue-400 text-xs font-medium mb-1.5 uppercase tracking-wide">AI</div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-slate-500 animate-bounce" style={{ animationDelay: "0ms" }} />
+          <span className="w-2 h-2 rounded-full bg-slate-500 animate-bounce" style={{ animationDelay: "150ms" }} />
+          <span className="w-2 h-2 rounded-full bg-slate-500 animate-bounce" style={{ animationDelay: "300ms" }} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -606,6 +680,7 @@ function MessageBubble({
   onReplay?: () => void;
   speaking: boolean;
 }) {
+  const t = useTranslations("interview");
   const isAI = msg.role === "assistant";
   return (
     <div className={`flex ${isAI ? "justify-start" : "justify-end"}`}>
@@ -619,7 +694,7 @@ function MessageBubble({
         >
           {isAI && (
             <div className="text-blue-400 text-xs font-medium mb-1 uppercase tracking-wide">
-              AI Interviewer
+              AI
             </div>
           )}
           {msg.content}
@@ -628,7 +703,7 @@ function MessageBubble({
         {isAI && onReplay && (
           <button
             onClick={onReplay}
-            title="Replay question"
+            title={t("tooltips.replayQuestion")}
             className="absolute -bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded-full w-6 h-6 flex items-center justify-center"
           >
             {speaking ? "■" : "▶"}

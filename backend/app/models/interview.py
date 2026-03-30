@@ -21,6 +21,7 @@ class Interview(Base):
     # backend_engineer | qa_engineer | product_manager
     question_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     max_questions: Mapped[int] = mapped_column(Integer, default=8, nullable=False)
+    followup_depth: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     language: Mapped[str] = mapped_column(String(10), server_default="ru", nullable=False)
@@ -32,6 +33,8 @@ class Interview(Base):
     )
     behavioral_signals: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # {response_times: [{q, seconds}], paste_count, tab_switches, face_away_pct}
+    interview_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # {mentioned_technologies, verified_skills, contradiction_flags, pending_verification, last_question_type}
 
     messages: Mapped[list["InterviewMessage"]] = relationship(
         "InterviewMessage", back_populates="interview", order_by="InterviewMessage.created_at"

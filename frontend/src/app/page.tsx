@@ -1,48 +1,84 @@
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
+import { getTranslations } from "next-intl/server";
+import { LocaleSwitcher } from "@/components/locale-switcher";
 
-export default function HomePage() {
+export default async function HomePage() {
+  const t = await getTranslations("home");
+
   return (
-    <main className="min-h-screen bg-slate-900 text-white">
-      <Nav />
-      <Hero />
-      <Stats />
-      <HowItWorks />
-      <Features />
-      <ForCompanies />
-      <CTA />
-      <Footer />
+    <main className="ai-shell min-h-screen text-white">
+      <Nav
+        howItWorks={t("nav.howItWorks")}
+        features={t("nav.features")}
+        signIn={t("nav.signIn")}
+        forCompanies={t("nav.forCompanies")}
+      />
+      <Hero
+        badge={t("hero.badge")}
+        title={t("hero.title")}
+        highlight={t("hero.highlight")}
+        description={t("hero.description")}
+        candidateCta={t("hero.candidateCta")}
+        companyCta={t("hero.companyCta")}
+        note={t("hero.note")}
+        panelTitle={t("heroPanel.title")}
+        panelSubtitle={t("heroPanel.subtitle")}
+        panelStatus={t("heroPanel.status")}
+        summaryTitle={t("heroPanel.summaryTitle")}
+        summaryText={t("heroPanel.summaryText")}
+        benefit1Title={t("heroPanel.benefit1Title")}
+        benefit1Text={t("heroPanel.benefit1Text")}
+        benefit2Title={t("heroPanel.benefit2Title")}
+        benefit2Text={t("heroPanel.benefit2Text")}
+        benefit3Title={t("heroPanel.benefit3Title")}
+        benefit3Text={t("heroPanel.benefit3Text")}
+      />
+      <Stats t={t} />
+      <HowItWorks t={t} />
+      <Features t={t} />
+      <ForCompanies t={t} />
+      <CTA t={t} />
+      <Footer t={t} />
     </main>
   );
 }
 
-// ── Nav ───────────────────────────────────────────────────────────────────────
-
-function Nav() {
+function Nav({
+  howItWorks,
+  features,
+  signIn,
+  forCompanies,
+}: {
+  howItWorks: string;
+  features: string;
+  signIn: string;
+  forCompanies: string;
+}) {
   return (
-    <nav className="border-b border-slate-800 px-6 py-4">
-      <div className="max-w-6xl mx-auto flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-blue-400 font-bold text-xl">AI</span>
-          <span className="text-white font-bold text-xl">Recruit</span>
+    <nav className="ai-section sticky top-0 z-30 border-b border-[color:var(--color-border)] bg-[rgba(5,12,24,0.72)] px-6 py-4 backdrop-blur-xl">
+      <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-blue-400/30 bg-blue-500/10 text-sm font-semibold tracking-[0.16em] text-blue-200 shadow-[0_16px_34px_rgba(47,115,255,0.24)]">
+            AR
+          </div>
+          <div>
+            <div className="text-white font-semibold text-lg leading-none">AI Recruit</div>
+            <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Verification Cloud</div>
+          </div>
         </div>
-        <div className="flex items-center gap-6">
-          <a href="#how-it-works" className="text-slate-400 hover:text-white text-sm transition-colors hidden sm:block">
-            How it works
+        <div className="flex items-center gap-3 sm:gap-6">
+          <a href="#how-it-works" className="hidden text-sm text-slate-400 transition-colors hover:text-white sm:block">
+            {howItWorks}
           </a>
-          <a href="#features" className="text-slate-400 hover:text-white text-sm transition-colors hidden sm:block">
-            Features
+          <a href="#features" className="hidden text-sm text-slate-400 transition-colors hover:text-white sm:block">
+            {features}
           </a>
-          <Link
-            href="/candidate/login"
-            className="text-slate-400 hover:text-white text-sm transition-colors"
-          >
-            Sign in
+          <LocaleSwitcher />
+          <Link href="/candidate/login" className="text-sm text-slate-400 transition-colors hover:text-white">
+            {signIn}
           </Link>
-          <Link
-            href="/company/register"
-            className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
-          >
-            For Companies
+          <Link href="/company/register" className="ai-button-secondary rounded-full px-4 py-2 text-sm font-semibold">
+            {forCompanies}
           </Link>
         </div>
       </div>
@@ -50,251 +86,98 @@ function Nav() {
   );
 }
 
-// ── Hero ──────────────────────────────────────────────────────────────────────
-
-function Hero() {
+function Hero({
+  badge,
+  title,
+  highlight,
+  description,
+  candidateCta,
+  companyCta,
+  note,
+  panelTitle,
+  panelSubtitle,
+  panelStatus,
+  summaryTitle,
+  summaryText,
+  benefit1Title,
+  benefit1Text,
+  benefit2Title,
+  benefit2Text,
+  benefit3Title,
+  benefit3Text,
+}: {
+  badge: string;
+  title: string;
+  highlight: string;
+  description: string;
+  candidateCta: string;
+  companyCta: string;
+  note: string;
+  panelTitle: string;
+  panelSubtitle: string;
+  panelStatus: string;
+  summaryTitle: string;
+  summaryText: string;
+  benefit1Title: string;
+  benefit1Text: string;
+  benefit2Title: string;
+  benefit2Text: string;
+  benefit3Title: string;
+  benefit3Text: string;
+}) {
   return (
-    <section className="px-6 py-24 text-center">
-      <div className="max-w-4xl mx-auto">
-        <span className="inline-block bg-blue-500/10 text-blue-400 text-sm font-medium px-4 py-1.5 rounded-full border border-blue-500/20 mb-6">
-          AI-Powered Recruiting Platform
-        </span>
-        <h1 className="text-5xl sm:text-6xl font-bold leading-tight mb-6">
-          Hire verified talent.
-          <br />
-          <span className="text-blue-400">Skip the noise.</span>
-        </h1>
-        <p className="text-slate-400 text-xl max-w-2xl mx-auto mb-10 leading-relaxed">
-          Candidates complete structured AI interviews and receive scientific skill reports.
-          Companies access a database of pre-assessed, AI-verified professionals — ready to hire.
-        </p>
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Link
-            href="/candidate/register"
-            className="bg-blue-600 hover:bg-blue-500 text-white font-semibold px-8 py-3.5 rounded-xl transition-colors text-lg"
-          >
-            Start as a Candidate →
-          </Link>
-          <Link
-            href="/company/register"
-            className="bg-slate-800 hover:bg-slate-700 text-white font-semibold px-8 py-3.5 rounded-xl border border-slate-700 transition-colors text-lg"
-          >
-            Hire as a Company
-          </Link>
-        </div>
-        <p className="text-slate-500 text-sm mt-4">Free to start · No credit card required</p>
-      </div>
-    </section>
-  );
-}
-
-// ── Stats ─────────────────────────────────────────────────────────────────────
-
-function Stats() {
-  const stats = [
-    { value: "8", label: "Questions per interview" },
-    { value: "15–20 min", label: "Average interview time" },
-    { value: "5", label: "Score dimensions assessed" },
-    { value: "8 roles", label: "Supported job roles" },
-  ];
-  return (
-    <section className="border-y border-slate-800 bg-slate-800/30 px-6 py-12">
-      <div className="max-w-5xl mx-auto grid grid-cols-2 sm:grid-cols-4 gap-8 text-center">
-        {stats.map((s, i) => (
-          <div key={i}>
-            <div className="text-3xl font-bold text-white mb-1">{s.value}</div>
-            <div className="text-slate-400 text-sm">{s.label}</div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-// ── How it works ──────────────────────────────────────────────────────────────
-
-function HowItWorks() {
-  const candidateSteps = [
-    { icon: "📄", title: "Upload your resume", desc: "PDF or DOCX — we extract skills and experience automatically." },
-    { icon: "🎙", title: "Complete AI interview", desc: "8 adaptive questions tailored to your role. Answer by text or voice." },
-    { icon: "📊", title: "Get your skill report", desc: "Scientific assessment across 5 dimensions: hard skills, problem solving, communication, soft skills, and consistency." },
-    { icon: "✅", title: "Join the database", desc: "Verified professionals are visible to hiring companies." },
-  ];
-
-  const companySteps = [
-    { icon: "🔍", title: "Browse verified candidates", desc: "Filter by role, score, and hiring recommendation." },
-    { icon: "📋", title: "View detailed reports", desc: "Competency heatmaps, skill matrices, red flags — per-question analysis." },
-    { icon: "👥", title: "Assess your employees", desc: "Send invite links for internal performance reviews and skill audits." },
-    { icon: "🤝", title: "Make data-driven decisions", desc: "Hire based on verified evidence, not just CVs and gut feeling." },
-  ];
-
-  return (
-    <section id="how-it-works" className="px-6 py-24">
-      <div className="max-w-6xl mx-auto">
-        <div className="text-center mb-16">
-          <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">How it works</h2>
-          <p className="text-slate-400 text-lg">Two sides of the same platform.</p>
-        </div>
-
-        <div className="grid sm:grid-cols-2 gap-16">
-          {/* Candidates */}
-          <div>
-            <div className="flex items-center gap-3 mb-8">
-              <span className="bg-blue-500/15 text-blue-400 text-sm font-semibold px-3 py-1.5 rounded-full border border-blue-500/30">
-                For Candidates
-              </span>
-            </div>
-            <div className="space-y-6">
-              {candidateSteps.map((step, i) => (
-                <div key={i} className="flex gap-4">
-                  <div className="w-10 h-10 bg-slate-800 border border-slate-700 rounded-xl flex items-center justify-center text-xl shrink-0">
-                    {step.icon}
-                  </div>
-                  <div>
-                    <div className="text-white font-semibold mb-1">{step.title}</div>
-                    <div className="text-slate-400 text-sm leading-relaxed">{step.desc}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <Link
-              href="/candidate/register"
-              className="inline-block mt-8 bg-blue-600 hover:bg-blue-500 text-white font-semibold px-6 py-2.5 rounded-lg transition-colors"
-            >
-              Get verified →
-            </Link>
-          </div>
-
-          {/* Companies */}
-          <div>
-            <div className="flex items-center gap-3 mb-8">
-              <span className="bg-purple-500/15 text-purple-400 text-sm font-semibold px-3 py-1.5 rounded-full border border-purple-500/30">
-                For Companies
-              </span>
-            </div>
-            <div className="space-y-6">
-              {companySteps.map((step, i) => (
-                <div key={i} className="flex gap-4">
-                  <div className="w-10 h-10 bg-slate-800 border border-slate-700 rounded-xl flex items-center justify-center text-xl shrink-0">
-                    {step.icon}
-                  </div>
-                  <div>
-                    <div className="text-white font-semibold mb-1">{step.title}</div>
-                    <div className="text-slate-400 text-sm leading-relaxed">{step.desc}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <Link
-              href="/company/register"
-              className="inline-block mt-8 bg-purple-600 hover:bg-purple-500 text-white font-semibold px-6 py-2.5 rounded-lg transition-colors"
-            >
-              Start hiring →
-            </Link>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-// ── Features ──────────────────────────────────────────────────────────────────
-
-function Features() {
-  const features = [
-    {
-      icon: "🧠",
-      title: "Adaptive AI Interviewer",
-      desc: "Questions adapt based on your resume and previous answers. The AI follows up on weak spots and digs deeper into strengths.",
-    },
-    {
-      icon: "📐",
-      title: "Scientific Assessment",
-      desc: "Two-pass LLM pipeline: per-question evidence extraction followed by competency scoring with BARS calibration to eliminate rating bias.",
-    },
-    {
-      icon: "🎯",
-      title: "Competency Heatmaps",
-      desc: "10 competencies per role scored individually. See exactly where a candidate excels and where they need growth.",
-    },
-    {
-      icon: "🎙",
-      title: "Voice Interviews",
-      desc: "Candidates can answer by voice using Groq Whisper STT. Questions are read aloud via AI text-to-speech.",
-    },
-    {
-      icon: "👥",
-      title: "Multi-user Teams",
-      desc: "Invite recruiters to your company account. Admins manage access; members can browse candidates and view reports.",
-    },
-    {
-      icon: "🏢",
-      title: "Employee Assessments",
-      desc: "Send invite links to existing employees for performance review, promotion decisions, or skill audits.",
-    },
-    {
-      icon: "🔴",
-      title: "Red Flag Detection",
-      desc: "Automatic detection of contradictions, fabricated experience, evasive answers, and inconsistencies across responses.",
-    },
-    {
-      icon: "📊",
-      title: "5 Score Dimensions",
-      desc: "Overall score, hard skills, soft skills, communication, and problem solving — each backed by weighted competency aggregation.",
-    },
-  ];
-
-  return (
-    <section id="features" className="px-6 py-24 bg-slate-800/20">
-      <div className="max-w-6xl mx-auto">
-        <div className="text-center mb-16">
-          <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">Everything you need</h2>
-          <p className="text-slate-400 text-lg max-w-2xl mx-auto">
-            Built on industrial/organizational psychology research. Powered by state-of-the-art LLMs.
+    <section className="ai-section px-6 pb-16 pt-20 sm:pt-24">
+      <div className="max-w-6xl mx-auto grid gap-10 lg:grid-cols-[1.08fr_0.92fr] lg:items-center">
+        <div>
+          <span className="ai-kicker mb-6">{badge}</span>
+          <h1 className="max-w-4xl text-5xl font-semibold leading-[1.02] tracking-[-0.05em] sm:text-[4.4rem] lg:text-[5.2rem]">
+            {title}
+            <br />
+            <span className="bg-gradient-to-r from-blue-100 via-blue-300 to-cyan-300 bg-clip-text text-transparent">
+              {highlight}
+            </span>
+          </h1>
+          <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300 sm:text-xl">
+            {description}
           </p>
-        </div>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          {features.map((f, i) => (
-            <div key={i} className="bg-slate-800 border border-slate-700 rounded-xl p-5 hover:border-slate-600 transition-colors">
-              <div className="text-3xl mb-3">{f.icon}</div>
-              <div className="text-white font-semibold mb-2">{f.title}</div>
-              <div className="text-slate-400 text-sm leading-relaxed">{f.desc}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-// ── For Companies ─────────────────────────────────────────────────────────────
-
-function ForCompanies() {
-  const roles = [
-    "Backend Engineer", "Frontend Engineer", "QA Engineer", "DevOps Engineer",
-    "Data Scientist", "Product Manager", "Mobile Engineer", "UX/UI Designer",
-  ];
-
-  return (
-    <section className="px-6 py-24">
-      <div className="max-w-5xl mx-auto">
-        <div className="grid sm:grid-cols-2 gap-16 items-center">
-          <div>
-            <span className="text-blue-400 text-sm font-semibold uppercase tracking-wide">Supported Roles</span>
-            <h2 className="text-3xl font-bold text-white mt-2 mb-4">8 role-specific competency matrices</h2>
-            <p className="text-slate-400 leading-relaxed mb-6">
-              Each role has a unique competency matrix with 10 skills, category weights, and behaviorally anchored rating scales.
-              No generic scoring — every assessment is tailored to the position.
-            </p>
-            <p className="text-slate-400 leading-relaxed">
-              Create custom interview templates with your own question sets.
-              Mark them public so candidates can self-select into your pipeline.
-            </p>
+          <div className="mt-10 flex flex-col gap-4 sm:flex-row">
+            <Link href="/candidate/register" className="ai-button-primary rounded-2xl px-8 py-3.5 text-center text-lg font-semibold">
+              {candidateCta}
+            </Link>
+            <Link href="/company/register" className="ai-button-secondary rounded-2xl px-8 py-3.5 text-center text-lg font-semibold">
+              {companyCta}
+            </Link>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            {roles.map((role, i) => (
-              <div key={i} className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-slate-300 text-sm">
-                {role}
+          <p className="mt-4 text-sm text-slate-500">{note}</p>
+        </div>
+        <div className="ai-panel-strong rounded-[2rem] p-6 sm:p-7">
+          <div className="flex items-center justify-between gap-4 border-b border-white/5 pb-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{panelTitle}</p>
+              <h2 className="mt-2 text-lg font-semibold text-white sm:text-xl">{panelSubtitle}</h2>
+            </div>
+            <div className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-300">
+              {panelStatus}
+            </div>
+          </div>
+          <div className="mt-5 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4">
+            <p className="text-sm font-semibold text-white">{summaryTitle}</p>
+            <p className="mt-2 text-sm leading-6 text-slate-300">{summaryText}</p>
+          </div>
+          <div className="mt-4 space-y-3">
+            {[
+              [benefit1Title, benefit1Text],
+              [benefit2Title, benefit2Text],
+              [benefit3Title, benefit3Text],
+            ].map(([label, text]) => (
+              <div key={label} className="rounded-2xl border border-white/6 bg-white/[0.03] px-4 py-4">
+                <div className="flex items-start gap-3">
+                  <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-cyan-400 shadow-[0_0_14px_rgba(61,217,200,0.7)]" />
+                  <div>
+                    <p className="text-sm font-semibold text-slate-100">{label}</p>
+                    <p className="mt-1 text-sm leading-6 text-slate-400">{text}</p>
+                  </div>
+                </div>
               </div>
             ))}
           </div>
@@ -304,30 +187,201 @@ function ForCompanies() {
   );
 }
 
-// ── CTA ───────────────────────────────────────────────────────────────────────
+function Stats({ t }: { t: (key: string, values?: Record<string, string | number>) => string }) {
+  const stats = [
+    { value: "8", label: t("stats.questions") },
+    { value: t("stats.durationValue"), label: t("stats.duration") },
+    { value: "5", label: t("stats.dimensions") },
+    { value: "8", label: t("stats.roles") },
+  ];
 
-function CTA() {
   return (
-    <section className="px-6 py-24 bg-blue-600/10 border-y border-blue-500/20">
-      <div className="max-w-3xl mx-auto text-center">
-        <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
-          Ready to hire smarter?
-        </h2>
-        <p className="text-slate-400 text-lg mb-10">
-          Join candidates who&apos;ve completed AI interviews and companies who make data-driven hiring decisions.
-        </p>
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Link
-            href="/candidate/register"
-            className="bg-blue-600 hover:bg-blue-500 text-white font-semibold px-8 py-3.5 rounded-xl transition-colors text-lg"
-          >
-            I&apos;m a Candidate
+    <section className="ai-section px-6 pb-10">
+      <div className="max-w-6xl mx-auto grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {stats.map((s, i) => (
+          <div key={i} className="ai-stat rounded-[1.6rem] px-5 py-5">
+            <div className="mt-2 text-4xl font-semibold tracking-[-0.04em] text-white">{s.value}</div>
+            <div className="mt-2 text-sm text-slate-400">{s.label}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function HowItWorks({ t }: { t: (key: string, values?: Record<string, string | number>) => string }) {
+  const candidateSteps = [
+    { icon: "01", title: t("how.candidate.step1.title"), desc: t("how.candidate.step1.desc") },
+    { icon: "02", title: t("how.candidate.step2.title"), desc: t("how.candidate.step2.desc") },
+    { icon: "03", title: t("how.candidate.step3.title"), desc: t("how.candidate.step3.desc") },
+    { icon: "04", title: t("how.candidate.step4.title"), desc: t("how.candidate.step4.desc") },
+  ];
+  const companySteps = [
+    { icon: "01", title: t("how.company.step1.title"), desc: t("how.company.step1.desc") },
+    { icon: "02", title: t("how.company.step2.title"), desc: t("how.company.step2.desc") },
+    { icon: "03", title: t("how.company.step3.title"), desc: t("how.company.step3.desc") },
+    { icon: "04", title: t("how.company.step4.title"), desc: t("how.company.step4.desc") },
+  ];
+
+  return (
+    <section id="how-it-works" className="ai-section px-6 py-24">
+      <div className="max-w-6xl mx-auto">
+        <div className="text-center mb-16">
+          <span className="ai-kicker mb-5">{t("how.title")}</span>
+          <h2 className="text-3xl sm:text-4xl font-semibold tracking-[-0.03em] text-white mb-4">{t("how.title")}</h2>
+          <p className="text-slate-400 text-lg">{t("how.subtitle")}</p>
+        </div>
+
+        <div className="grid gap-8 sm:grid-cols-2">
+          <JourneyCard
+            title={t("how.forCandidates")}
+            accent="blue"
+            steps={candidateSteps}
+            ctaHref="/candidate/register"
+            ctaLabel={t("how.candidate.cta")}
+          />
+          <JourneyCard
+            title={t("how.forCompanies")}
+            accent="cyan"
+            steps={companySteps}
+            ctaHref="/company/register"
+            ctaLabel={t("how.company.cta")}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function JourneyCard({
+  title,
+  accent,
+  steps,
+  ctaHref,
+  ctaLabel,
+}: {
+  title: string;
+  accent: "blue" | "cyan";
+  steps: { icon: string; title: string; desc: string }[];
+  ctaHref: string;
+  ctaLabel: string;
+}) {
+  const badgeClass = accent === "blue"
+    ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
+    : "border-cyan-500/30 bg-cyan-500/10 text-cyan-300";
+  const iconClass = accent === "blue"
+    ? "border-blue-500/20 bg-blue-500/10 text-blue-200"
+    : "border-cyan-500/20 bg-cyan-500/10 text-cyan-200";
+  const buttonClass = accent === "blue" ? "ai-button-primary" : "ai-button-secondary";
+
+  return (
+    <div className="ai-panel-strong rounded-[2rem] p-8">
+      <div className="flex items-center gap-3 mb-8">
+        <span className={`rounded-full border px-3 py-1.5 text-sm font-semibold ${badgeClass}`}>
+          {title}
+        </span>
+      </div>
+      <div className="space-y-6">
+        {steps.map((step, i) => (
+          <div key={i} className="flex gap-4">
+            <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border text-xs font-semibold tracking-[0.2em] ${iconClass}`}>
+              {step.icon}
+            </div>
+            <div>
+              <div className="text-white font-semibold mb-1">{step.title}</div>
+              <div className="text-slate-400 text-sm leading-relaxed">{step.desc}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <Link href={ctaHref} className={`${buttonClass} inline-block mt-8 rounded-2xl px-6 py-3 text-sm font-semibold`}>
+        {ctaLabel}
+      </Link>
+    </div>
+  );
+}
+
+function Features({ t }: { t: (key: string, values?: Record<string, string | number>) => string }) {
+  const features = [
+    { icon: "AD", title: t("features.items.ai.title"), desc: t("features.items.ai.desc") },
+    { icon: "SC", title: t("features.items.science.title"), desc: t("features.items.science.desc") },
+    { icon: "HM", title: t("features.items.heatmap.title"), desc: t("features.items.heatmap.desc") },
+    { icon: "VX", title: t("features.items.voice.title"), desc: t("features.items.voice.desc") },
+    { icon: "TM", title: t("features.items.team.title"), desc: t("features.items.team.desc") },
+    { icon: "HR", title: t("features.items.employee.title"), desc: t("features.items.employee.desc") },
+    { icon: "RF", title: t("features.items.flags.title"), desc: t("features.items.flags.desc") },
+    { icon: "5D", title: t("features.items.dimensions.title"), desc: t("features.items.dimensions.desc") },
+  ];
+
+  return (
+    <section id="features" className="ai-section px-6 py-24">
+      <div className="max-w-6xl mx-auto">
+        <div className="text-center mb-16">
+          <span className="ai-kicker mb-5">{t("features.title")}</span>
+          <h2 className="text-3xl sm:text-4xl font-semibold tracking-[-0.03em] text-white mb-4">{t("features.title")}</h2>
+          <p className="text-slate-400 text-lg max-w-2xl mx-auto">{t("features.subtitle")}</p>
+        </div>
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          {features.map((feature, i) => (
+            <div key={i} className="ai-panel rounded-[1.6rem] p-5 transition-transform duration-200 hover:-translate-y-1">
+              <div className="mb-4 inline-flex rounded-xl border border-white/8 bg-slate-950/60 px-3 py-2 text-xs font-semibold tracking-[0.22em] text-slate-300">
+                {feature.icon}
+              </div>
+              <div className="text-white font-semibold mb-2">{feature.title}</div>
+              <div className="text-slate-400 text-sm leading-relaxed">{feature.desc}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ForCompanies({ t }: { t: (key: string, values?: Record<string, string | number>) => string }) {
+  const roles = [
+    t("roles.backend_engineer"),
+    t("roles.frontend_engineer"),
+    t("roles.qa_engineer"),
+    t("roles.devops_engineer"),
+    t("roles.data_scientist"),
+    t("roles.product_manager"),
+    t("roles.mobile_engineer"),
+    t("roles.designer"),
+  ];
+
+  return (
+    <section className="ai-section px-6 py-24">
+      <div className="max-w-6xl mx-auto grid gap-8 lg:grid-cols-[1fr_1.05fr] lg:items-center">
+        <div className="ai-panel-strong rounded-[2rem] p-8">
+          <span className="ai-kicker mb-5">{t("companies.kicker")}</span>
+          <h2 className="text-3xl font-semibold tracking-[-0.03em] text-white mt-2 mb-4">{t("companies.title")}</h2>
+          <p className="text-slate-400 leading-8 mb-6">{t("companies.description1")}</p>
+          <p className="text-slate-400 leading-8">{t("companies.description2")}</p>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          {roles.map((role, i) => (
+            <div key={i} className="ai-panel rounded-[1.4rem] px-4 py-4 text-sm text-slate-200">
+              {role}
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CTA({ t }: { t: (key: string, values?: Record<string, string | number>) => string }) {
+  return (
+    <section className="ai-section px-6 py-24">
+      <div className="ai-panel-strong max-w-4xl mx-auto rounded-[2rem] p-10 text-center">
+        <h2 className="text-3xl sm:text-4xl font-semibold tracking-[-0.03em] text-white mb-4">{t("cta.title")}</h2>
+        <p className="text-slate-400 text-lg mb-10 max-w-2xl mx-auto">{t("cta.subtitle")}</p>
+        <div className="flex flex-col justify-center gap-4 sm:flex-row">
+          <Link href="/candidate/register" className="ai-button-primary rounded-2xl px-8 py-3.5 text-lg font-semibold">
+            {t("cta.candidate")}
           </Link>
-          <Link
-            href="/company/register"
-            className="bg-slate-800 hover:bg-slate-700 text-white font-semibold px-8 py-3.5 rounded-xl border border-slate-700 transition-colors text-lg"
-          >
-            I&apos;m a Company
+          <Link href="/company/register" className="ai-button-secondary rounded-2xl px-8 py-3.5 text-lg font-semibold">
+            {t("cta.company")}
           </Link>
         </div>
       </div>
@@ -335,21 +389,23 @@ function CTA() {
   );
 }
 
-// ── Footer ────────────────────────────────────────────────────────────────────
-
-function Footer() {
+function Footer({ t }: { t: (key: string, values?: Record<string, string | number>) => string }) {
   return (
-    <footer className="px-6 py-10 border-t border-slate-800">
-      <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
-          <span className="text-blue-400 font-bold">AI</span>
-          <span className="text-white font-bold">Recruit</span>
-          <span className="text-slate-600 text-sm ml-2">© 2026</span>
+    <footer className="ai-section px-6 py-10 border-t border-slate-800/80">
+      <div className="max-w-6xl mx-auto flex flex-col items-center justify-between gap-4 sm:flex-row">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-blue-400/20 bg-blue-500/10 text-sm font-semibold tracking-[0.16em] text-blue-200">
+            AR
+          </div>
+          <div>
+            <div className="text-white font-semibold">AI Recruit</div>
+            <div className="text-slate-600 text-[10px] uppercase tracking-[0.16em]">Verification Cloud</div>
+          </div>
         </div>
         <div className="flex items-center gap-6 text-sm text-slate-500">
-          <Link href="/candidate/register" className="hover:text-slate-300 transition-colors">For Candidates</Link>
-          <Link href="/company/register" className="hover:text-slate-300 transition-colors">For Companies</Link>
-          <Link href="/candidate/login" className="hover:text-slate-300 transition-colors">Sign in</Link>
+          <Link href="/candidate/register" className="transition-colors hover:text-slate-300">{t("footer.candidates")}</Link>
+          <Link href="/company/register" className="transition-colors hover:text-slate-300">{t("footer.companies")}</Link>
+          <Link href="/candidate/login" className="transition-colors hover:text-slate-300">{t("footer.signIn")}</Link>
         </div>
       </div>
     </footer>

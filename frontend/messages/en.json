@@ -1,0 +1,983 @@
+{
+  "common": {
+    "appName": "AI Recruit",
+    "locale": {
+      "label": "Switch language"
+    },
+    "actions": {
+      "back": "Back",
+      "save": "Save",
+      "saving": "Saving...",
+      "open": "Open",
+      "close": "Close",
+      "signOut": "Sign out"
+    },
+    "status": {
+      "loading": "Loading...",
+      "copied": "Copied",
+      "copyFailed": "Copy failed"
+    }
+  },
+  "systemPages": {
+    "notFound": {
+      "title": "Page not found",
+      "description": "The page you're looking for doesn't exist.",
+      "candidate": "Candidate Dashboard",
+      "company": "Company Dashboard"
+    },
+    "error": {
+      "title": "Something went wrong",
+      "description": "An unexpected error occurred. Please try again.",
+      "retry": "Try again",
+      "home": "Go home"
+    }
+  },
+  "sharedProfile": {
+    "loading": "Loading shared profile...",
+    "kicker": "Shared Candidate Profile",
+    "salaryExpectation": "Salary expectation",
+    "notShared": "Not shared",
+    "requestOnlyDescription": "This candidate uses request-only visibility. Companies need explicit approval before workspace access is granted.",
+    "publicDescription": "Structured interview results shared directly by the candidate. Marketplace discovery is disabled for this profile.",
+    "requestOnlyTitle": "Request-only access",
+    "requestOnlyHelp": "Reports stay hidden on this page until the candidate approves a company access request.",
+    "access": {
+      "approved": "Access approved",
+      "openWorkspace": "Open in company workspace",
+      "pending": "Request pending",
+      "denied": "Request denied",
+      "none": "No request sent",
+      "request": "Request access",
+      "requestAgain": "Request again",
+      "requesting": "Requesting...",
+      "signInHint": "Sign in as a company user to request workspace access."
+    },
+    "errors": {
+      "notFound": "Shared profile not found.",
+      "unavailable": "Link unavailable",
+      "noLongerAvailable": "This shared profile is no longer available.",
+      "returnHome": "Return to home"
+    },
+    "reports": {
+      "hidden": "Interview reports are hidden until access is approved.",
+      "empty": "No public interview reports are attached to this shared profile yet.",
+      "overall": "overall",
+      "noSummary": "No summary provided.",
+      "keySkills": "Key Skills",
+      "noStrengths": "No strengths shared.",
+      "noRecommendations": "No recommendations shared."
+    }
+  },
+  "employeeInvite": {
+    "loading": "Loading invite...",
+    "errors": {
+      "notFoundOrExpired": "Invite not found or expired",
+      "startFailed": "Failed to start assessment"
+    },
+    "unavailable": {
+      "title": "Invite unavailable"
+    },
+    "kinds": {
+      "candidate": "Candidate Assessment",
+      "internal": "Internal Assessment"
+    },
+    "description": {
+      "candidate": "{company} invited you to complete a private AI screening flow for {role}.",
+      "internal": "{company} invited you to complete a private AI assessment as part of an internal review flow."
+    },
+    "details": {
+      "candidate": "Candidate",
+      "invitee": "Invitee",
+      "email": "Email",
+      "targetRole": "Target role",
+      "status": "Status",
+      "template": "Template",
+      "adaptiveDefault": "Adaptive default",
+      "company": "Company",
+      "deadline": "Deadline",
+      "expires": "Invite expires"
+    },
+    "status": {
+      "pending": "Pending",
+      "opened": "Opened",
+      "in_progress": "In progress",
+      "completed": "Completed",
+      "expired": "Expired"
+    },
+    "flow": {
+      "questionsPrefix": "The flow contains",
+      "questionsCount": "8 structured questions",
+      "questionsSuffix": "and usually takes 15-20 minutes.",
+      "visibilityPrefix": "Your answers will be reviewed by AI and the results will remain visible only to ",
+      "visibilitySuffix": "."
+    },
+    "state": {
+      "completedTitle": "Assessment completed",
+      "completedBody": "This invite has already been completed. {company} can already access the private report.",
+      "expiredTitle": "Invite expired",
+      "expiredBody": "This invite can no longer be started. Contact the company if you need a new campaign link."
+    },
+    "language": {
+      "title": "Interview language",
+      "ru": "Russian",
+      "en": "English"
+    },
+    "actions": {
+      "starting": "Starting...",
+      "start": "Start assessment",
+      "signInAndStart": "Sign in and start",
+      "needAccount": "You need a candidate account to continue.",
+      "register": "Register here"
+    },
+    "checklist": {
+      "title": "Before you begin",
+      "emailTitle": "Use the invited email",
+      "emailBody": "The assessment is locked to the email on this page. A different candidate account will be rejected.",
+      "timeTitle": "Keep enough time",
+      "timeBody": "Once started, the flow becomes an in-progress private campaign linked to your account.",
+      "privateTitle": "Private by design",
+      "privateBody": "This report will not be exposed in the public candidate marketplace.",
+      "templateTitle": "Template-aware",
+      "templateCustom": "This campaign uses the \"{name}\" template.",
+      "templateDefault": "This campaign uses the adaptive default interview."
+    }
+  },
+  "home": {
+    "nav": {
+      "howItWorks": "How it works",
+      "features": "Features",
+      "signIn": "Sign in",
+      "forCompanies": "For companies"
+    },
+    "hero": {
+      "badge": "AI-powered recruiting platform",
+      "title": "Verify your skills.",
+      "highlight": "Build a stronger profile.",
+      "description": "Complete an AI interview, get a clear report about your strengths, and apply with more confidence. Companies see more than a resume alone.",
+      "candidateCta": "Start as candidate",
+      "companyCta": "I represent a company",
+      "note": "Free to start. No credit card required."
+    },
+    "heroPanel": {
+      "title": "Candidate journey",
+      "subtitle": "What you get after the interview",
+      "status": "Personal",
+      "summaryTitle": "Verified profile",
+      "summaryText": "One clear flow: resume, interview, report, and a stronger position for applications.",
+      "benefit1Title": "Skill report",
+      "benefit1Text": "See strengths, growth areas, and level across key competencies.",
+      "benefit2Title": "Clear next step",
+      "benefit2Text": "Understand which roles and openings you can target with more confidence.",
+      "benefit3Title": "Profile companies trust",
+      "benefit3Text": "Companies see validated signals, not just resume lines."
+    },
+    "stats": {
+      "durationValue": "15-20 min",
+      "questions": "Questions per interview",
+      "duration": "Average interview time",
+      "dimensions": "Score dimensions assessed",
+      "roles": "Supported job roles"
+    },
+    "how": {
+      "title": "How it works",
+      "subtitle": "Two sides of the same platform.",
+      "forCandidates": "For candidates",
+      "forCompanies": "For companies",
+      "candidate": {
+        "cta": "Get verified",
+        "step1": { "title": "Upload your resume", "desc": "PDF or DOCX. Skills and experience are extracted automatically." },
+        "step2": { "title": "Complete AI interview", "desc": "Adaptive questions tailored to your role. Answer by text or voice." },
+        "step3": { "title": "Get your skill report", "desc": "Assessment across hard skills, problem solving, communication, soft skills, and consistency." },
+        "step4": { "title": "Join the database", "desc": "Verified professionals become visible to hiring companies." }
+      },
+      "company": {
+        "cta": "Start hiring",
+        "step1": { "title": "Browse verified candidates", "desc": "Filter by role, score, and hiring recommendation." },
+        "step2": { "title": "View detailed reports", "desc": "Competency heatmaps, skill matrices, red flags, and per-question analysis." },
+        "step3": { "title": "Assess your employees", "desc": "Send invite links for internal reviews and skill audits." },
+        "step4": { "title": "Make data-driven decisions", "desc": "Hire from verified evidence, not just CVs and gut feeling." }
+      }
+    },
+    "features": {
+      "title": "Everything you need",
+      "subtitle": "Built on industrial and organizational psychology research. Powered by state-of-the-art LLMs.",
+      "items": {
+        "ai": { "title": "Adaptive AI Interviewer", "desc": "Questions adapt based on the resume and previous answers. The AI follows up on weak spots and digs deeper into strengths." },
+        "science": { "title": "Scientific Assessment", "desc": "Two-pass LLM pipeline: per-question evidence extraction followed by competency scoring with calibrated rubrics." },
+        "heatmap": { "title": "Competency Heatmaps", "desc": "Ten competencies per role are scored individually. See exactly where a candidate excels and where they need growth." },
+        "voice": { "title": "Voice Interviews", "desc": "Candidates can answer by voice using speech-to-text. Questions can also be read aloud by AI." },
+        "team": { "title": "Multi-user Teams", "desc": "Invite recruiters to your company account. Admins manage access, members browse candidates and reports." },
+        "employee": { "title": "Employee Assessments", "desc": "Send invite links to existing employees for performance review, promotion decisions, or skill audits." },
+        "flags": { "title": "Red Flag Detection", "desc": "Automatic detection of contradictions, fabricated experience, evasive answers, and inconsistencies across responses." },
+        "dimensions": { "title": "5 Score Dimensions", "desc": "Overall score, hard skills, soft skills, communication, and problem solving — all backed by weighted competency aggregation." }
+      }
+    },
+    "companies": {
+      "kicker": "Supported roles",
+      "title": "8 role-specific competency matrices",
+      "description1": "Each role has a unique competency matrix with ten skills, category weights, and behaviorally anchored rating scales. No generic scoring — every assessment is tailored to the position.",
+      "description2": "Create custom interview templates with your own question sets and mark them public so candidates can self-select into your pipeline."
+    },
+    "cta": {
+      "title": "Ready to get started?",
+      "subtitle": "Complete the interview, get your report, and use it as a stronger starting point for hiring. If you are a company, you can join the platform too.",
+      "candidate": "Start as candidate",
+      "company": "I represent a company"
+    },
+    "footer": {
+      "candidates": "For Candidates",
+      "companies": "For Companies",
+      "signIn": "Sign in"
+    },
+    "roles": {
+      "backend_engineer": "Backend Engineer",
+      "frontend_engineer": "Frontend Engineer",
+      "qa_engineer": "QA Engineer",
+      "devops_engineer": "DevOps Engineer",
+      "data_scientist": "Data Scientist",
+      "product_manager": "Product Manager",
+      "mobile_engineer": "Mobile Engineer",
+      "designer": "UX/UI Designer"
+    }
+  },
+  "companyEmployees": {
+    "loading": "Loading campaigns...",
+    "back": "Back to dashboard",
+    "title": "Assessment Campaigns",
+    "subtitle": "Run private AI assessment campaigns for employees or external candidates, attach a template, set a deadline, and track invite lifecycle through completion.",
+    "readonly": "Read-only mode: only admins can create or delete campaigns.",
+    "closeForm": "Close form",
+    "new": "New campaign",
+    "summary": {
+      "total": "Total campaigns",
+      "completed": "Completed",
+      "openedInProgress": "Opened / In progress",
+      "completionRate": "Completion rate"
+    },
+    "invite": {
+      "createdFor": "Campaign created for {label}",
+      "copy": "Copy link",
+      "open": "Open invite"
+    },
+    "labels": {
+      "employeeInternal": "Internal employee",
+      "candidateExternal": "External candidate"
+    },
+    "form": {
+      "inviteType": "Invite type",
+      "targetRole": "Target role",
+      "employeeName": "Employee name",
+      "candidateName": "Candidate name",
+      "employeeEmail": "Employee email",
+      "candidateEmail": "Candidate email",
+      "optionalTemplate": "Optional template",
+      "defaultAdaptive": "Default adaptive interview",
+      "templateLocked": "Template questions: {count}. Role is locked to {role}.",
+      "deadline": "Deadline",
+      "expiresAt": "Expires at",
+      "brandingName": "Branding name",
+      "brandingLogoUrl": "Branding logo URL",
+      "creating": "Creating campaign...",
+      "submit": "Create private campaign"
+    },
+    "guide": {
+      "title": "How this campaign behaves",
+      "private": "The invite remains private and never appears in the public marketplace.",
+      "opened": "`opened` means the landing page was viewed but the interview has not started yet.",
+      "deadline": "`deadline` and `expires_at` both block new starts once the timestamp is reached.",
+      "completed": "Completed campaigns expose company-scoped report and replay links directly from this page.",
+      "branding": "Branding only changes the invite experience; report visibility still stays company-scoped."
+    },
+    "empty": {
+      "title": "No assessment campaigns yet",
+      "description": "Create a private campaign for an employee or external candidate, optionally attach a custom template, and track invite lifecycle through completion."
+    },
+    "meta": {
+      "role": "Role",
+      "template": "Template",
+      "created": "Created",
+      "brand": "Brand",
+      "deadline": "Deadline",
+      "expires": "Expires",
+      "opened": "Opened",
+      "completed": "Completed",
+      "notSet": "Not set",
+      "adaptiveDefault": "Adaptive default",
+      "companyDefault": "Company default"
+    },
+    "actions": {
+      "viewReport": "View report",
+      "viewReplay": "View replay",
+      "delete": "Delete"
+    },
+    "pendingNotice": "{count} campaigns have not been opened yet. These are still good candidates for follow-up.",
+    "errors": {
+      "load": "Failed to load campaigns",
+      "adminOnlyCreate": "Only admins can create campaigns",
+      "adminOnlyDelete": "Only admins can delete campaigns",
+      "create": "Failed to create campaign",
+      "delete": "Failed to delete campaign"
+    }
+  },
+  "companyCandidate": {
+    "loading": "Loading candidate...",
+    "back": "Back to candidates",
+    "completedInterviews": "{count} interviews completed",
+    "viewerMode": "Viewer mode: you can review notes, reports, and replay, but not modify pipeline state.",
+    "salaryExpectation": "Salary expectation:",
+    "shortlists": {
+      "title": "Shortlists",
+      "subtitle": "Organize this candidate into reusable hiring buckets.",
+      "manage": "Manage on dashboard",
+      "empty": "No shortlists created yet.",
+      "add": "Add {name}",
+      "remove": "Remove {name}"
+    },
+    "decision": {
+      "title": "Hiring Decision",
+      "notesPlaceholder": "Notes (optional)",
+      "save": "Save Decision",
+      "saving": "Saving...",
+      "saved": "Saved ✓"
+    },
+    "notes": {
+      "title": "Shared Notes",
+      "placeholder": "Add context for your team: interview feedback, follow-up ideas, concerns.",
+      "add": "Add Note",
+      "saving": "Saving note...",
+      "empty": "No team notes yet."
+    },
+    "activity": {
+      "title": "Activity Log",
+      "empty": "No collaboration activity yet."
+    },
+    "report": {
+      "viewReplay": "View Replay",
+      "showCompetencies": "Show competency breakdown",
+      "hideCompetencies": "Hide competency breakdown",
+      "skills": "Skills",
+      "weaknesses": "Weaknesses"
+    },
+    "labels": {
+      "unknown": "Unknown",
+      "system": "System"
+    },
+    "errors": {
+      "load": "Failed to load candidate",
+      "viewerReadonly": "Viewer access is read-only",
+      "shortlist": "Failed to update shortlist",
+      "note": "Failed to add note"
+    }
+  },
+  "companySettings": {
+    "loading": "Loading...",
+    "back": "Back to dashboard",
+    "title": "Account Settings",
+    "changePassword": "Change Password",
+    "success": "Password changed successfully.",
+    "currentPassword": "Current Password",
+    "newPassword": "New Password",
+    "confirmPassword": "Confirm New Password",
+    "minCharacters": "Minimum 8 characters",
+    "saving": "Saving...",
+    "submit": "Change Password",
+    "errors": {
+      "mismatch": "New passwords don't match",
+      "minLength": "New password must be at least 8 characters",
+      "failed": "Failed"
+    }
+  },
+  "auth": {
+    "login": {
+      "title": "Welcome back",
+      "subtitle": "Sign in to your candidate account",
+      "email": "Email",
+      "password": "Password",
+      "submit": "Sign in",
+      "submitting": "Signing in...",
+      "invalid": "Invalid email or password",
+      "noAccount": "Don't have an account?",
+      "register": "Register"
+    },
+    "register": {
+      "title": "Create your account",
+      "subtitle": "Start your AI interview journey",
+      "fullName": "Full name",
+      "email": "Email",
+      "password": "Password",
+      "passwordHint": "Minimum 8 characters",
+      "submit": "Create account",
+      "submitting": "Creating account...",
+      "failed": "Registration failed",
+      "hasAccount": "Already have an account?",
+      "signIn": "Sign in"
+    }
+  },
+  "companyAuth": {
+    "login": {
+      "title": "Company portal",
+      "subtitle": "Sign in to access the candidate database",
+      "email": "Email",
+      "password": "Password",
+      "submit": "Sign in",
+      "submitting": "Signing in...",
+      "failed": "Login failed",
+      "noAccount": "Don't have an account?",
+      "register": "Register your company"
+    },
+    "register": {
+      "title": "Register your company",
+      "subtitle": "Access the AI-verified candidate database",
+      "companyName": "Company name",
+      "workEmail": "Work email",
+      "password": "Password",
+      "passwordHint": "Min 8 characters",
+      "submit": "Create account",
+      "submitting": "Creating account...",
+      "failed": "Registration failed",
+      "hasAccount": "Already have an account?",
+      "signIn": "Sign in"
+    }
+  },
+  "companyDashboard": {
+    "loading": "Loading company workspace...",
+    "title": "Company Hiring OS",
+    "subtitle": "Search, shortlist, compare, and analyze verified AI interview results.",
+    "viewerMode": "Viewer mode: reports, replay, and analytics are available read-only.",
+    "tabs": {
+      "candidates": "Candidates",
+      "analytics": "Analytics"
+    },
+    "nav": {
+      "templates": "Templates",
+      "employees": "Employees",
+      "team": "Team",
+      "settings": "Settings"
+    },
+    "errors": {
+      "loadCandidates": "Failed to load candidates",
+      "loadAnalytics": "Failed to load analytics",
+      "loadShortlists": "Failed to load shortlists",
+      "viewerReadonly": "Viewer access is read-only",
+      "createShortlist": "Failed to create shortlist",
+      "deleteShortlist": "Failed to delete shortlist",
+      "updateShortlist": "Failed to update shortlist"
+    },
+    "search": {
+      "title": "Server-side candidate search",
+      "reset": "Reset",
+      "nameOrEmail": "Name or email",
+      "allRoles": "All roles",
+      "skills": "Skills, comma separated",
+      "minScore": "Min score",
+      "allRecommendations": "All recommendations",
+      "allDecisions": "All decisions",
+      "salaryMin": "Salary min",
+      "salaryMax": "Salary max",
+      "allShortlists": "All shortlists",
+      "sortScoreDesc": "Sort: Score desc",
+      "sortScoreAsc": "Sort: Score asc",
+      "sortLatest": "Sort: Latest",
+      "sortSalaryAsc": "Sort: Salary asc",
+      "sortSalaryDesc": "Sort: Salary desc",
+      "refreshing": "Refreshing server-side results...",
+      "resultCount": "{count} candidates in result set",
+      "apply": "Apply filters"
+    },
+    "shortlists": {
+      "title": "Shortlists",
+      "subtitle": "Create named buckets and reuse them across filters and compare flows.",
+      "placeholder": "e.g. Backend Finalists",
+      "creating": "Creating...",
+      "create": "Create",
+      "delete": "Delete",
+      "loading": "Loading shortlists...",
+      "empty": "No shortlists yet.",
+      "candidateCount": "{count} candidates"
+    },
+    "compare": {
+      "title": "Compare Candidates",
+      "subtitle": "Side-by-side view of your selected shortlist picks.",
+      "remove": "Remove",
+      "noScore": "No score",
+      "salary": "Salary",
+      "decision": "Decision",
+      "flags": "Flags",
+      "unreviewed": "Unreviewed"
+    },
+    "candidates": {
+      "loading": "Loading candidates...",
+      "emptyTitle": "No candidates found",
+      "emptyDescription": "Adjust the server-side filters or wait for more candidates to complete AI interviews.",
+      "highCheatRisk": "High cheat risk",
+      "scoreLabel": "Score",
+      "salaryLabel": "Salary",
+      "openProfile": "Open profile",
+      "selectedForCompare": "Selected for compare",
+      "selectToCompare": "Select to compare",
+      "shortlistActions": "Shortlist Actions",
+      "createShortlistPrompt": "Create a shortlist to start organizing candidates.",
+      "addToShortlist": "Add {name}",
+      "removeFromShortlist": "Remove {name}"
+    },
+    "analytics": {
+      "loading": "Loading analytics...",
+      "noData": "No data",
+      "noSalaryData": "No salary data yet for the current analytics filter.",
+      "noTemplateData": "No template-linked public interview data yet.",
+      "roleBreakdown": "Role Breakdown",
+      "recommendationBreakdown": "Recommendation Breakdown",
+      "cheatRiskDistribution": "Cheat Risk Distribution",
+      "redFlagSummary": "Red Flag Summary",
+      "funnelTitle": "Recommendation to Outcome Funnel",
+      "salaryInsights": "Salary Insights",
+      "filteredRole": "Filtered to {role}",
+      "allRoles": "All roles",
+      "activeShortlist": " and active shortlist filter",
+      "candidatesWithSalary": "{count} candidates with salary data",
+      "marketBand": "Market Band",
+      "shortlistSpread": "Shortlist Spread",
+      "scoreBuckets": "Score Buckets",
+      "outcomeTrends": "Outcome Trends",
+      "templatePerformance": "Template Performance",
+      "runs": "{count} runs",
+      "avgScore": "Avg score",
+      "metrics": {
+        "marketplaceCandidates": "Marketplace Candidates",
+        "trackedReports": "Tracked Reports",
+        "shortlisted": "Shortlisted",
+        "flaggedCandidates": "Flagged Candidates",
+        "candidatesWithFlags": "Candidates with Flags",
+        "totalFlags": "Total Flags"
+      },
+      "table": {
+        "recommendation": "Recommendation",
+        "total": "Total",
+        "unreviewed": "Unreviewed",
+        "interviewing": "Interviewing",
+        "hired": "Hired",
+        "rejected": "Rejected",
+        "noShow": "No Show"
+      }
+    },
+    "recommendations": {
+      "strong_yes": "Strong yes",
+      "yes": "Yes",
+      "maybe": "Maybe",
+      "no": "No"
+    },
+    "outcomes": {
+      "hired": "Hired",
+      "rejected": "Rejected",
+      "interviewing": "Interviewing",
+      "no_show": "No show"
+    }
+  },
+  "companyTeam": {
+    "loading": "Loading...",
+    "back": "Back to dashboard",
+    "title": "Team",
+    "subtitleAdmin": "Manage who has access to your company account.",
+    "subtitleViewer": "Members of your company account.",
+    "joined": "Joined {date}",
+    "remove": "Remove",
+    "empty": "No team members yet.",
+    "roles": {
+      "admin": "Admin",
+      "recruiter": "Recruiter",
+      "viewer": "Viewer"
+    },
+    "invite": {
+      "title": "Invite member",
+      "invited": "Invited {email}",
+      "tempPassword": "Temporary password:",
+      "shareOnce": "Share this once — it won't be shown again.",
+      "existingUser": "User already existed and has been added to your team.",
+      "emailPlaceholder": "colleague@company.com",
+      "submitting": "Inviting...",
+      "submit": "Invite"
+    },
+    "errors": {
+      "load": "Failed to load team",
+      "invite": "Failed to invite",
+      "remove": "Failed to remove member"
+    }
+  },
+  "companyTemplates": {
+    "loading": "Loading...",
+    "back": "Back to dashboard",
+    "title": "Interview templates",
+    "subtitle": "Create custom question sets for candidates.",
+    "readonly": "Read-only mode: only admins can create or delete templates.",
+    "cancel": "Cancel",
+    "new": "New template",
+    "public": "Public",
+    "delete": "Delete",
+    "questionCount": "{count} questions",
+    "form": {
+      "title": "New template",
+      "name": "Name",
+      "namePlaceholder": "e.g. Senior Backend Engineer Screen",
+      "targetRole": "Target role",
+      "description": "Description (optional)",
+      "descriptionPlaceholder": "Brief description for candidates",
+      "questions": "Questions",
+      "questionPlaceholder": "Question {number}",
+      "addQuestion": "Add question",
+      "makePublic": "Make public (visible to all candidates on the interview start page)",
+      "creating": "Creating...",
+      "submit": "Create template"
+    },
+    "empty": {
+      "title": "No templates yet",
+      "description": "Create a template to define a custom set of interview questions for candidates."
+    },
+    "errors": {
+      "load": "Failed to load templates",
+      "adminOnly": "Only admins can manage templates",
+      "noQuestions": "Add at least one question.",
+      "create": "Failed to create template",
+      "delete": "Failed to delete template"
+    }
+  },
+  "companyReplay": {
+    "loading": "Loading replay...",
+    "back": "Back",
+    "goBack": "Go back",
+    "title": "Interview replay",
+    "completed": "Completed {date}",
+    "questionCount": "{count} questions",
+    "errors": {
+      "load": "Could not load replay",
+      "notFound": "Replay not found"
+    }
+  },
+  "candidateDashboard": {
+    "workspaceLabel": "Candidate workspace",
+    "workspaceKicker": "Candidate control layer",
+    "statusTitle": "Profile status",
+    "profileState": "Profile",
+    "active": "Active",
+    "title": "Welcome back",
+    "subtitle": "Complete each step to build your verified profile.",
+    "nav": {
+      "profile": "Profile"
+    },
+    "stats": {
+      "resume": "Resume",
+      "interviews": "Interviews",
+      "reports": "Reports",
+      "uploaded": "Uploaded",
+      "missing": "Missing",
+      "started": "{count} started",
+      "completed": "{count} completed"
+    },
+    "salary": {
+      "title": "Salary expectations",
+      "min": "Min",
+      "max": "Max",
+      "currency": "Currency",
+      "saved": "Saved"
+    },
+    "privacy": {
+      "title": "Profile visibility",
+      "visibility": "Visibility",
+      "marketplace": "Marketplace",
+      "directLink": "Direct link",
+      "requestOnly": "Request only",
+      "private": "Private",
+      "shareableLink": "Shareable profile link",
+      "requestLink": "Request-access link",
+      "copyLink": "Copy full link",
+      "openSharedProfile": "Open shared profile",
+      "shareHelp": {
+        "directLink": "Anyone with this link can open the shared profile.",
+        "requestOnly": "Companies with this link can request workspace access. You approve or deny those requests below."
+      },
+      "help": {
+        "private": {
+          "title": "Private",
+          "body": "Your profile stays hidden from marketplace companies and direct links."
+        },
+        "marketplace": {
+          "title": "Marketplace",
+          "body": "Companies can discover your profile, reports, and salary expectations in the public talent database."
+        },
+        "directLink": {
+          "title": "Direct link",
+          "body": "Your profile is hidden from marketplace search, but anyone with your link can open the shared profile."
+        },
+        "requestOnly": {
+          "title": "Request only",
+          "body": "Your profile is hidden from marketplace search. Companies need your approval before they can open it in their workspace."
+        }
+      }
+    },
+    "accessRequests": {
+      "title": "Companies requesting your profile",
+      "description": "These are companies asking to view your profile and reports when you use the request-only visibility mode. You decide who gets access.",
+      "empty": "No one has requested access to your profile yet.",
+      "requestedBy": "Requested by {email} on {date}",
+      "companyMember": "company member",
+      "approve": "Approve",
+      "deny": "Deny",
+      "status": {
+        "approved": "Approved",
+        "denied": "Denied",
+        "pending": "Pending"
+      }
+    },
+    "steps": {
+      "uploadResume": "Upload resume",
+      "uploadResumeDesc": "Upload your CV in PDF or DOCX to get started",
+      "startInterview": "Start AI interview",
+      "startInterviewDesc": "Complete a structured interview for your target role",
+      "viewReports": "View reports",
+      "viewReportsDesc": "See your assessment scores and hiring recommendation",
+      "reportsReady": "{count} report ready",
+      "reportsReady_other": "{count} reports ready"
+    }
+  },
+  "candidateReports": {
+    "back": "Back to dashboard",
+    "title": "My interviews",
+    "newInterview": "New interview",
+    "loadFailed": "Failed to load interviews",
+    "emptyTitle": "No interviews yet",
+    "emptyDescription": "Complete an AI interview to receive your assessment report.",
+    "startInterview": "Start interview",
+    "questions": "{current}/{total} questions",
+    "viewReport": "View report",
+    "retake": "Retake",
+    "continue": "Continue",
+    "statuses": {
+      "created": "Created",
+      "in_progress": "In progress",
+      "completed": "Processing...",
+      "report_generated": "Report ready",
+      "failed": "Failed"
+    }
+  },
+  "candidateResume": {
+    "back": "Back to dashboard",
+    "kicker": "Resume",
+    "title": "Upload resume",
+    "subtitle": "PDF or DOCX, up to 10 MB. Your active resume is used for AI interviews.",
+    "fileBadge": "FILE",
+    "success": "Resume uploaded successfully",
+    "uploadFailed": "Upload failed",
+    "charactersExtracted": "{count} characters extracted",
+    "pickFile": "Click to select file",
+    "fileHint": "PDF or DOCX, max 10 MB",
+    "selectedFile": "Selected file",
+    "nextStepTitle": "Next step",
+    "nextStepBody": "After upload, you can move straight into the interview for your target role.",
+    "upload": "Upload resume",
+    "uploading": "Uploading...",
+    "startInterview": "Start interview"
+  },
+  "candidateProfile": {
+    "back": "Back to dashboard",
+    "kicker": "Profile",
+    "title": "My profile",
+    "subtitle": "Manage your account and active resume.",
+    "account": "Account",
+    "email": "Email",
+    "role": "Role",
+    "candidate": "Candidate",
+    "activeResume": "Active resume",
+    "updated": "Resume updated successfully.",
+    "uploadFailed": "Upload failed",
+    "uploaded": "Uploaded",
+    "active": "Active",
+    "noResume": "No resume uploaded yet.",
+    "replaceResume": "Replace resume",
+    "uploadResume": "Upload resume",
+    "uploading": "Uploading...",
+    "fileHint": "PDF or DOCX, max 10 MB",
+    "resumeCardHint": "Your current resume is used for new interviews and shared profile links.",
+    "manageResume": "Manage resume"
+  },
+  "interviewStart": {
+    "back": "Back to dashboard",
+    "title": "Start AI interview",
+    "subtitle": "Choose your target role. Interviews usually take 15-20 minutes. Screen, camera, and microphone recording are required during the session.",
+    "grantAccessError": "Grant screen, camera, and microphone access to start the interview.",
+    "startError": "Could not start interview",
+    "companyTemplates": "Company templates",
+    "noTemplates": "No public templates for this role.",
+    "clearTemplate": "Clear template selection",
+    "usingTemplate": "Using template: {name} ({count} custom questions)",
+    "templateQuestions": "{count}q",
+    "language": "Interview language",
+    "start": "Start interview",
+    "starting": "Starting...",
+    "recordingHint": "Recording is required for the interview session.",
+    "roles": {
+      "backend_engineer": {
+        "label": "Backend Engineer",
+        "desc": "Systems, APIs, databases, and performance"
+      },
+      "frontend_engineer": {
+        "label": "Frontend Engineer",
+        "desc": "UI, accessibility, frameworks, and performance"
+      },
+      "qa_engineer": {
+        "label": "QA Engineer",
+        "desc": "Automation, test strategy, and quality workflows"
+      },
+      "devops_engineer": {
+        "label": "DevOps Engineer",
+        "desc": "CI/CD, infrastructure, Kubernetes, and observability"
+      },
+      "data_scientist": {
+        "label": "Data Scientist",
+        "desc": "Models, experiments, analytics, and production AI"
+      },
+      "product_manager": {
+        "label": "Product Manager",
+        "desc": "Roadmaps, delivery, metrics, and stakeholder alignment"
+      },
+      "mobile_engineer": {
+        "label": "Mobile Engineer",
+        "desc": "iOS, Android, React Native, and Flutter"
+      },
+      "designer": {
+        "label": "UX/UI Designer",
+        "desc": "Research, prototyping, and design systems"
+      }
+    }
+  },
+  "interview": {
+    "loadFailed": "Could not load interview",
+    "reportGenerationFailed": "Report generation failed. Please retry finishing the interview.",
+    "question": "Question {current} of {total}",
+    "followup": "Follow-up",
+    "verification": "Verification",
+    "deepDive": "Deep dive",
+    "screenOn": "Screen on",
+    "screenOff": "Screen off",
+    "lookAtCamera": "Look at camera",
+    "resume": "Resume",
+    "voiceOn": "Voice on",
+    "voiceOff": "Voice off",
+    "recordingRequired": "Recording required",
+    "enableRecording": "Enable recording",
+    "recordingDescription": "To continue the interview, enable screen, camera, and microphone recording.",
+    "completeTitle": "Interview complete",
+    "completeDescription": "You've answered all {count} questions. Generate your assessment report now.",
+    "finish": "Finish and get report",
+    "generating": "Generating report...",
+    "waiting": "Waiting for report...",
+    "analyzing": "Analyzing your interview...",
+    "finishing": "Finishing interview...",
+    "savingResponses": "Saving your responses...",
+    "analysisDuration": "AI is generating your assessment report. This usually takes 20-40 seconds.",
+    "reportDelayed": "Report generation is taking longer than usual. Refresh this page in a few moments.",
+    "sendFailed": "Failed to send message",
+    "recordingUploadFailed": "Recording upload failed",
+    "finishFailed": "Failed to finish interview",
+    "interviewTitle": "{role} interview",
+    "face": "Face",
+    "on": "On",
+    "off": "Off",
+    "send": "Send",
+    "textMode": "Text mode",
+    "voiceMode": "Voice mode",
+    "voiceHint": "Hold the mic, then review the transcript before sending.",
+    "latestTranscript": "Latest transcript captured. Edit the draft below before sending.",
+    "placeholderThinking": "AI is thinking...",
+    "placeholderListening": "Listening...",
+    "placeholderTranscribing": "Transcribing...",
+    "placeholderVoice": "Transcript preview. Edit before sending...",
+    "placeholderText": "Type your answer... (Enter to send, Shift+Enter for a new line)",
+    "uploadStatus": {
+      "uploading": "Uploading recording...",
+      "uploaded": "Recording uploaded",
+      "failed": "Recording upload failed",
+      "skipped": "Interview finished without recording upload"
+    },
+    "tooltips": {
+      "screenRecorded": "Screen is being recorded",
+      "screenInactive": "Screen sharing inactive",
+      "faceDetection": "Face detection: {status}",
+      "detecting": "detecting…",
+      "toggleResume": "Toggle resume panel",
+      "muteVoice": "Mute voice",
+      "enableVoice": "Enable voice",
+      "holdToSpeak": "Hold to speak",
+      "replayQuestion": "Replay question"
+    }
+  },
+  "report": {
+    "backToDashboard": "Back to dashboard",
+    "backToInterviews": "Back to my interviews",
+    "title": "Assessment report",
+    "loadFailed": "Could not load report",
+    "recordingFailed": "Report generated successfully, but interview recording upload failed.",
+    "recordingSkipped": "Report generated without a recording upload.",
+    "recommendation": "Hiring recommendation",
+    "overallScore": "Overall score",
+    "hardSkills": "Hard skills",
+    "softSkills": "Soft skills",
+    "communication": "Communication",
+    "problemSolving": "Problem solving",
+    "consistency": "Consistency",
+    "strongSkills": "Strong skills",
+    "developSkills": "To develop",
+    "competencyHeatmap": "Competency heatmap",
+    "skillsIdentified": "Skills identified",
+    "redFlags": "Red flags",
+    "strengths": "Strengths",
+    "areasToImprove": "Areas to improve",
+    "recommendations": "Recommendations",
+    "perQuestionAnalysis": "Per-question analysis",
+    "generatedBy": "Generated by model {model} on {date}",
+    "toImprove": "To improve",
+    "scoreOutOfTen": "/10",
+    "empty": "None",
+    "general": "General",
+    "question": "Question",
+    "answer": "Answer",
+    "evidence": "Evidence",
+    "skillsMentioned": "Skills mentioned",
+    "flags": "Flags",
+    "specificity": "Specificity",
+    "depthLabel": "Depth",
+    "alert": "Alert",
+    "behavioralRisk": "Behavioral risk signals",
+    "risk": "Risk",
+    "aiLikelihood": "AI likelihood",
+    "depth": {
+      "expert": "Expert",
+      "strong": "Strong",
+      "adequate": "Adequate",
+      "surface": "Surface",
+      "none": "None"
+    },
+    "specificityValue": {
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "severity": {
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "questionShort": "Q{number}",
+    "strengthBand": "expert / advanced",
+    "developBand": "beginner / intermediate",
+    "labels": {
+      "strongYes": "Strong yes",
+      "yes": "Yes",
+      "maybe": "Maybe",
+      "no": "No",
+      "technicalCore": "Technical core",
+      "technicalBreadth": "Technical breadth",
+      "problemSolving": "Problem solving",
+      "communication": "Communication",
+      "behavioral": "Behavioral"
+    }
+  }
+}

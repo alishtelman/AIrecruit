@@ -21,6 +21,39 @@ UNIVERSAL_ANCHORS = """
 
 **CRITICAL RULE: Most candidates score 4–7. Reserve 8–10 ONLY for exceptional responses with concrete evidence. Reserve 1–3 for clear deficiencies or incorrect understanding.**
 
+---
+## PENALIZATION RULES — MANDATORY (applied before scoring)
+
+### Rule 1 — Short answers (<10 words)
+- Score MUST be ≤ 4, no exceptions
+- These answers demonstrate zero depth and signal avoidance or disengagement
+- Example: Q: "How do you handle race conditions?" A: "Use locks." → score 2
+
+### Rule 2 — Generic answers (no real-world example)
+- Score MUST be ≤ 5
+- "I would use Redis for caching" without ANY project context = generic
+- Only answers citing a specific project, team, or measured outcome qualify for 6+
+- Example: "I've worked with databases and used indexing" → score 4 (no project, no specifics)
+
+### Rule 3 — No HOW or WHY explanation
+- If candidate says WHAT they did but not HOW or WHY → max score 5
+- Trade-off reasoning ("I chose X over Y because Z") is required for 6+
+
+### Rule 4 — Evasive / off-topic answer
+- Score ≤ 3 if candidate clearly avoids the question
+- Add red_flag "evasive"
+
+### Rule 5 — Repeated answers
+- If candidate repeats content from a previous answer without adding new information
+- Reduce score by 2 compared to isolated quality; add red_flag "repeated"
+
+### NO EVIDENCE = LOW SCORE (absolute rule)
+- If the evidence field cannot contain a real quote or specific claim → score ≤ 4
+- A paraphrase of the question is NOT evidence
+- Saying "candidate mentioned X" without a quote is NOT evidence
+
+---
+
 ### Score 1–2 — No Competency Demonstrated
 - Cannot explain the concept or gives a fundamentally incorrect answer
 - Confuses basic terminology
@@ -139,6 +172,40 @@ POOR answer (score 4): "We disagreed about the database choice. I said my opinio
 
 STRONG answer (score 8): "My lead wanted to add a message queue before we had evidence of the bottleneck. I prepared a load test showing we wouldn't hit the queue limit for 6 months with current growth. I proposed we add instrumentation first so we'd know exactly when to add it. They agreed. 4 months later the metrics showed we needed it, and we had the right data to choose Kafka over RabbitMQ. I learned to make disagreements data-driven rather than opinion-based."
 → Score: 8. Data-driven dissent, influenced outcome, clear personal learning.
+
+---
+### Example 4 — WEAK CANDIDATE (penalization in action)
+
+Q: "Tell me about a complex backend system you designed."
+A: "I designed APIs and used databases."
+→ Score: 2. Under 10 words effectively. No project, no specifics, no how/why. Penalized to ≤3.
+red_flags: ["answer too short", "answer generic — no real-world example"]
+specificity: low, depth: none
+
+Q: "How do you ensure your code is maintainable?"
+A: "I write clean code and follow best practices."
+→ Score: 3. Generic textbook answer. No example of a specific practice they actually applied.
+red_flags: ["answer generic — no real-world example"]
+specificity: low, depth: surface
+
+Q: "Describe a performance issue you solved."
+A: "Yeah I fixed slow queries before."
+→ Score: 3. No project, no query details, no before/after metric, no root cause.
+red_flags: ["answer generic — no real-world example"]
+→ overall_score for this candidate: 3–4. hiring_recommendation: "no"
+
+---
+### Example 5 — STRONG CANDIDATE (evidence-based scoring)
+
+Q: "Tell me about a complex backend system you designed."
+A: "At my last job we had a notification service sending 2M emails/day. The original architecture was synchronous — every event triggered a direct SMTP call. We were hitting timeouts under load. I redesigned it to use a Kafka topic with consumer groups per notification type. Each consumer batches 500 messages before flushing to SendGrid. We went from 15% timeout rate to <0.1%. The main challenge was idempotency — we added a deduplication key in Redis with 24h TTL."
+→ Score: 8. Specific scale (2M/day), concrete problem (15% timeouts), solution with reasoning, metrics, edge case handled (idempotency).
+specificity: high, depth: strong
+
+Q: "How do you ensure your code is maintainable?"
+A: "We used hexagonal architecture — the core domain never imports from the infrastructure layer. In practice this meant our payment service could swap Stripe for Adyen by changing one adapter file. We also mandated 80% branch coverage and had a pre-commit hook that ran arch-unit tests to catch layer violations. Caught 3 violations in the first week that would have become major refactors later."
+→ Score: 8. Specific pattern (hexagonal), concrete example (payment adapter swap), measurable enforcement (80% coverage, arch-unit), personal impact (3 violations caught).
+→ overall_score for this candidate: 7.5–8.5. hiring_recommendation: "yes" or "strong_yes"
 """
 
 

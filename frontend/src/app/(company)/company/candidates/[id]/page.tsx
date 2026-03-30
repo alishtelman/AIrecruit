@@ -1,36 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
+import { useTranslations } from "next-intl";
 import { useParams } from "next/navigation";
 import { companyApi } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import type { CandidateActivity, CandidateDetail, CandidateNote, CompanyShortlist, HiringRecommendation, ReportWithRole, CompetencyScore, RedFlag } from "@/lib/types";
 
-const ROLE_LABELS: Record<string, string> = {
-  backend_engineer: "Backend Engineer",
-  frontend_engineer: "Frontend Engineer",
-  qa_engineer: "QA Engineer",
-  devops_engineer: "DevOps Engineer",
-  data_scientist: "Data Scientist",
-  product_manager: "Product Manager",
-  mobile_engineer: "Mobile Engineer",
-  designer: "UX/UI Designer",
-};
-
-const REC_STYLES: Record<HiringRecommendation, { label: string; className: string }> = {
-  strong_yes: { label: "Strong Yes", className: "bg-green-500/15 text-green-400 border-green-500/30" },
-  yes:        { label: "Yes",         className: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
-  maybe:      { label: "Maybe",       className: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" },
-  no:         { label: "No",          className: "bg-red-500/15 text-red-400 border-red-500/30" },
-};
-
-const CATEGORY_LABELS: Record<string, string> = {
-  technical_core: "Core",
-  technical_breadth: "Breadth",
-  problem_solving: "Problem Solving",
-  communication: "Communication",
-  behavioral: "Behavioral",
+const REC_STYLES: Record<HiringRecommendation, { className: string }> = {
+  strong_yes: { className: "bg-green-500/15 text-green-400 border-green-500/30" },
+  yes:        { className: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
+  maybe:      { className: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" },
+  no:         { className: "bg-red-500/15 text-red-400 border-red-500/30" },
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -73,6 +55,7 @@ function ScoreBar({ label, value }: { label: string; value: number | null }) {
 }
 
 function CompetencyRow({ cs }: { cs: CompetencyScore }) {
+  const reportT = useTranslations("report");
   const pct = (cs.score / 10) * 100;
   const categoryColor = CATEGORY_COLORS[cs.category] ?? "bg-slate-700 text-slate-400 border-slate-600";
   const barColor = cs.score >= 7 ? "bg-green-500" : cs.score >= 5 ? "bg-yellow-500" : "bg-red-500";
@@ -84,7 +67,7 @@ function CompetencyRow({ cs }: { cs: CompetencyScore }) {
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-slate-300 text-xs truncate">{cs.competency}</span>
           <span className={`text-xs px-1.5 py-0.5 rounded border shrink-0 ${categoryColor}`}>
-            {CATEGORY_LABELS[cs.category] ?? cs.category}
+            {reportT(`labels.${cs.category}`)}
           </span>
         </div>
         <span className={`text-xs font-bold shrink-0 ${scoreColor}`}>{cs.score.toFixed(1)}</span>
@@ -96,14 +79,18 @@ function CompetencyRow({ cs }: { cs: CompetencyScore }) {
   );
 }
 
-const OUTCOME_LABELS: Record<string, { label: string; cls: string }> = {
-  hired:       { label: "Hired",       cls: "bg-green-500/15 text-green-400 border-green-500/30" },
-  rejected:    { label: "Rejected",    cls: "bg-red-500/15 text-red-400 border-red-500/30" },
-  interviewing:{ label: "Interviewing",cls: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
-  no_show:     { label: "No Show",     cls: "bg-slate-500/15 text-slate-400 border-slate-600" },
+const OUTCOME_LABELS: Record<string, { cls: string }> = {
+  hired:       { cls: "bg-green-500/15 text-green-400 border-green-500/30" },
+  rejected:    { cls: "bg-red-500/15 text-red-400 border-red-500/30" },
+  interviewing:{ cls: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
+  no_show:     { cls: "bg-slate-500/15 text-slate-400 border-slate-600" },
 };
 
 function ReportCard({ report }: { report: ReportWithRole }) {
+  const t = useTranslations("companyCandidate");
+  const roleT = useTranslations("interviewStart.roles");
+  const reportT = useTranslations("report");
+  const dashboardT = useTranslations("companyDashboard");
   const rec = REC_STYLES[report.hiring_recommendation] ?? REC_STYLES.maybe;
   const [showCompetencies, setShowCompetencies] = useState(false);
 
@@ -113,7 +100,7 @@ function ReportCard({ report }: { report: ReportWithRole }) {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-white font-semibold">
-            {ROLE_LABELS[report.target_role] ?? report.target_role}
+            {roleT(report.target_role)}
           </h3>
           <p className="text-slate-500 text-xs mt-0.5">
             {new Date(report.created_at).toLocaleDateString()}
@@ -125,11 +112,11 @@ function ReportCard({ report }: { report: ReportWithRole }) {
               href={`/company/interviews/${report.interview_id}/replay`}
               className="text-xs text-blue-400 hover:text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded transition-colors"
             >
-              View Replay
+              {t("report.viewReplay")}
             </Link>
           )}
           <span className={`text-xs px-2.5 py-1 rounded-full border ${rec.className}`}>
-            {rec.label}
+            {dashboardT(`recommendations.${report.hiring_recommendation}`)}
           </span>
           <div className="text-right">
             <div className="text-2xl font-bold text-white">
@@ -146,14 +133,14 @@ function ReportCard({ report }: { report: ReportWithRole }) {
 
       {/* Aggregate score bars */}
       <div className="space-y-2.5">
-        <ScoreBar label="Hard Skills" value={report.hard_skills_score} />
-        <ScoreBar label="Soft Skills" value={report.soft_skills_score} />
-        <ScoreBar label="Communication" value={report.communication_score} />
+        <ScoreBar label={reportT("hardSkills")} value={report.hard_skills_score} />
+        <ScoreBar label={reportT("softSkills")} value={report.soft_skills_score} />
+        <ScoreBar label={reportT("communication")} value={report.communication_score} />
         {report.problem_solving_score != null && (
-          <ScoreBar label="Problem Solving" value={report.problem_solving_score} />
+          <ScoreBar label={reportT("problemSolving")} value={report.problem_solving_score} />
         )}
         {report.response_consistency != null && (
-          <ScoreBar label="Consistency" value={report.response_consistency} />
+          <ScoreBar label={reportT("consistency")} value={report.response_consistency} />
         )}
       </div>
 
@@ -164,7 +151,7 @@ function ReportCard({ report }: { report: ReportWithRole }) {
             onClick={() => setShowCompetencies(!showCompetencies)}
             className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
           >
-            {showCompetencies ? "▲ Hide" : "▼ Show"} competency breakdown ({report.competency_scores.length})
+            {showCompetencies ? t("report.hideCompetencies") : t("report.showCompetencies")} ({report.competency_scores.length})
           </button>
           {showCompetencies && (
             <div className="mt-3 space-y-2.5">
@@ -179,7 +166,7 @@ function ReportCard({ report }: { report: ReportWithRole }) {
       {/* Skill tags */}
       {report.skill_tags && report.skill_tags.length > 0 && (
         <div>
-          <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">Skills</p>
+          <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">{t("report.skills")}</p>
           <div className="flex flex-wrap gap-1.5">
             {report.skill_tags.map((tag, i) => (
               <span key={i} className={`px-2 py-0.5 rounded-full text-xs ${PROFICIENCY_COLORS[tag.proficiency] ?? PROFICIENCY_COLORS.intermediate}`}>
@@ -193,7 +180,7 @@ function ReportCard({ report }: { report: ReportWithRole }) {
       {/* Red flags */}
       {report.red_flags && report.red_flags.length > 0 && (
         <div>
-          <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">Red Flags</p>
+          <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">{reportT("redFlags")}</p>
           <div className="space-y-2">
             {report.red_flags.map((rf: RedFlag, i) => (
               <div key={i} className={`border rounded-lg px-3 py-2 text-sm ${SEVERITY_COLORS[rf.severity] ?? SEVERITY_COLORS.low}`}>
@@ -208,7 +195,7 @@ function ReportCard({ report }: { report: ReportWithRole }) {
       {/* Qualitative sections */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
         <div>
-          <h4 className="text-green-400 text-xs font-semibold uppercase tracking-wide mb-2">Strengths</h4>
+          <h4 className="text-green-400 text-xs font-semibold uppercase tracking-wide mb-2">{reportT("strengths")}</h4>
           <ul className="space-y-1">
             {report.strengths.map((s, i) => (
               <li key={i} className="text-slate-300 text-sm flex gap-2">
@@ -218,7 +205,7 @@ function ReportCard({ report }: { report: ReportWithRole }) {
           </ul>
         </div>
         <div>
-          <h4 className="text-red-400 text-xs font-semibold uppercase tracking-wide mb-2">Weaknesses</h4>
+          <h4 className="text-red-400 text-xs font-semibold uppercase tracking-wide mb-2">{t("report.weaknesses")}</h4>
           <ul className="space-y-1">
             {report.weaknesses.map((w, i) => (
               <li key={i} className="text-slate-300 text-sm flex gap-2">
@@ -228,7 +215,7 @@ function ReportCard({ report }: { report: ReportWithRole }) {
           </ul>
         </div>
         <div>
-          <h4 className="text-blue-400 text-xs font-semibold uppercase tracking-wide mb-2">Recommendations</h4>
+          <h4 className="text-blue-400 text-xs font-semibold uppercase tracking-wide mb-2">{reportT("recommendations")}</h4>
           <ul className="space-y-1">
             {report.recommendations.map((r, i) => (
               <li key={i} className="text-slate-300 text-sm flex gap-2">
@@ -243,6 +230,8 @@ function ReportCard({ report }: { report: ReportWithRole }) {
 }
 
 export default function CandidateDetailPage() {
+  const t = useTranslations("companyCandidate");
+  const roleT = useTranslations("interviewStart.roles");
   const { id } = useParams<{ id: string }>();
   const { user, loading: authLoading } = useAuth("/company/login");
   const [candidate, setCandidate] = useState<CandidateDetail | null>(null);
@@ -278,9 +267,9 @@ export default function CandidateDetailPage() {
         setOutcome(c.hire_outcome ?? "");
         setOutcomeNotes(c.hire_notes ?? "");
       })
-      .catch((err) => setError(err.message ?? "Failed to load candidate"))
+      .catch((err) => setError(err.message ?? t("errors.load")))
       .finally(() => setLoading(false));
-  }, [id, authLoading]);
+  }, [id, authLoading, t]);
 
   async function reloadCandidateAndShortlists() {
     const [candidateData, shortlistItems, noteItems, activityItems] = await Promise.all([
@@ -300,7 +289,7 @@ export default function CandidateDetailPage() {
   async function handleSaveOutcome() {
     if (!outcome) return;
     if (!canManagePipeline) {
-      setError("Viewer access is read-only");
+      setError(t("errors.viewerReadonly"));
       return;
     }
     setSavingOutcome(true);
@@ -318,7 +307,7 @@ export default function CandidateDetailPage() {
 
   async function toggleShortlist(shortlistId: string, isMember: boolean) {
     if (!canManagePipeline) {
-      setShortlistError("Viewer access is read-only");
+      setShortlistError(t("errors.viewerReadonly"));
       return;
     }
     setShortlistError("");
@@ -330,14 +319,14 @@ export default function CandidateDetailPage() {
       }
       await reloadCandidateAndShortlists();
     } catch (err: unknown) {
-      setShortlistError(err instanceof Error ? err.message : "Failed to update shortlist");
+      setShortlistError(err instanceof Error ? err.message : t("errors.shortlist"));
     }
   }
 
   async function handleAddNote() {
     if (!noteBody.trim()) return;
     if (!canManagePipeline) {
-      setNoteError("Viewer access is read-only");
+      setNoteError(t("errors.viewerReadonly"));
       return;
     }
     setSavingNote(true);
@@ -347,7 +336,7 @@ export default function CandidateDetailPage() {
       setNoteBody("");
       await reloadCandidateAndShortlists();
     } catch (err: unknown) {
-      setNoteError(err instanceof Error ? err.message : "Failed to add note");
+      setNoteError(err instanceof Error ? err.message : t("errors.note"));
     } finally {
       setSavingNote(false);
     }
@@ -360,10 +349,10 @@ export default function CandidateDetailPage() {
           href="/company/dashboard"
           className="text-slate-400 hover:text-white text-sm flex items-center gap-1 mb-6 transition-colors"
         >
-          ← Back to candidates
+          ← {t("back")}
         </Link>
 
-        {loading && <div className="text-center py-16 text-slate-400">Loading…</div>}
+        {loading && <div className="text-center py-16 text-slate-400">{t("loading")}</div>}
 
         {error && (
           <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-4 py-3">
@@ -377,16 +366,16 @@ export default function CandidateDetailPage() {
               <h1 className="text-2xl font-bold text-white">{candidate.full_name}</h1>
               <p className="text-slate-400 mt-1">{candidate.email}</p>
               <p className="text-slate-500 text-sm mt-0.5">
-                {candidate.reports.length} interview{candidate.reports.length !== 1 ? "s" : ""} completed
+                {t("completedInterviews", { count: candidate.reports.length })}
               </p>
               {companyRole === "viewer" && (
-                <p className="text-amber-300 text-sm mt-2">Viewer mode: you can review notes, reports, and replay, but not modify pipeline state.</p>
+                <p className="text-amber-300 text-sm mt-2">{t("viewerMode")}</p>
               )}
 
               {/* Salary expectation */}
               {(candidate.salary_min || candidate.salary_max) && (
                 <p className="text-slate-300 text-sm mt-2">
-                  💰 Salary expectation:{" "}
+                  {t("salaryExpectation")}{" "}
                   {candidate.salary_min && candidate.salary_max
                     ? `${candidate.salary_min.toLocaleString()}–${candidate.salary_max.toLocaleString()}`
                     : (candidate.salary_min || candidate.salary_max)?.toLocaleString()}{" "}
@@ -397,11 +386,11 @@ export default function CandidateDetailPage() {
               <div className="mt-4 p-4 bg-slate-800 border border-slate-700 rounded-xl space-y-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">Shortlists</p>
-                    <p className="text-slate-500 text-sm mt-1">Organize this candidate into reusable hiring buckets.</p>
+                    <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">{t("shortlists.title")}</p>
+                    <p className="text-slate-500 text-sm mt-1">{t("shortlists.subtitle")}</p>
                   </div>
                   <Link href="/company/dashboard" className="text-blue-400 hover:text-blue-300 text-sm transition-colors">
-                    Manage on dashboard
+                    {t("shortlists.manage")}
                   </Link>
                 </div>
                 {shortlistError && <p className="text-red-400 text-sm">{shortlistError}</p>}
@@ -415,7 +404,7 @@ export default function CandidateDetailPage() {
                   </div>
                 )}
                 {shortlists.length === 0 ? (
-                  <p className="text-slate-500 text-sm">No shortlists created yet.</p>
+                  <p className="text-slate-500 text-sm">{t("shortlists.empty")}</p>
                 ) : (
                   <div className="flex flex-wrap gap-2">
                     {shortlists.map((shortlist) => {
@@ -431,7 +420,7 @@ export default function CandidateDetailPage() {
                               : "border-slate-600 text-slate-400 hover:text-white"
                           }`}
                         >
-                          {isMember ? `Remove ${shortlist.name}` : `Add ${shortlist.name}`}
+                          {isMember ? t("shortlists.remove", { name: shortlist.name }) : t("shortlists.add", { name: shortlist.name })}
                         </button>
                       );
                     })}
@@ -441,7 +430,7 @@ export default function CandidateDetailPage() {
 
               {/* Hire outcome */}
               <div className="mt-4 p-4 bg-slate-800 border border-slate-700 rounded-xl space-y-3">
-                <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">Hiring Decision</p>
+                <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">{t("decision.title")}</p>
                 <div className="flex flex-wrap gap-2">
                   {(["hired", "interviewing", "rejected", "no_show"] as const).map((o) => {
                     const cfg = OUTCOME_LABELS[o];
@@ -461,7 +450,7 @@ export default function CandidateDetailPage() {
                 </div>
                 <input
                   type="text"
-                  placeholder="Notes (optional)"
+                  placeholder={t("decision.notesPlaceholder")}
                   value={outcomeNotes}
                   onChange={(e) => setOutcomeNotes(e.target.value)}
                   disabled={!canManagePipeline}
@@ -472,12 +461,12 @@ export default function CandidateDetailPage() {
                   disabled={!outcome || savingOutcome || !canManagePipeline}
                   className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
                 >
-                  {outcomeSaved ? "Saved ✓" : savingOutcome ? "Saving…" : "Save Decision"}
+                  {outcomeSaved ? t("decision.saved") : savingOutcome ? t("decision.saving") : t("decision.save")}
                 </button>
               </div>
 
               <div className="mt-4 p-4 bg-slate-800 border border-slate-700 rounded-xl space-y-3">
-                <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">Shared Notes</p>
+                <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">{t("notes.title")}</p>
                 {noteError && <p className="text-red-400 text-sm">{noteError}</p>}
                 <div className="space-y-2">
                   <textarea
@@ -485,7 +474,7 @@ export default function CandidateDetailPage() {
                     onChange={(e) => setNoteBody(e.target.value)}
                     disabled={!canManagePipeline}
                     rows={3}
-                    placeholder="Add context for your team: interview feedback, follow-up ideas, concerns."
+                    placeholder={t("notes.placeholder")}
                     className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 resize-y"
                   />
                   <button
@@ -493,18 +482,18 @@ export default function CandidateDetailPage() {
                     disabled={savingNote || !noteBody.trim() || !canManagePipeline}
                     className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
                   >
-                    {savingNote ? "Saving note…" : "Add Note"}
+                    {savingNote ? t("notes.saving") : t("notes.add")}
                   </button>
                 </div>
                 {notes.length === 0 ? (
-                  <p className="text-slate-500 text-sm">No team notes yet.</p>
+                  <p className="text-slate-500 text-sm">{t("notes.empty")}</p>
                 ) : (
                   <div className="space-y-3">
                     {notes.map((note) => (
                       <div key={note.note_id} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-3">
                         <p className="text-slate-200 text-sm whitespace-pre-wrap">{note.body}</p>
                         <p className="text-slate-500 text-xs mt-2">
-                          {note.author_email ?? "Unknown"} · {new Date(note.created_at).toLocaleString()}
+                          {note.author_email ?? t("labels.unknown")} · {new Date(note.created_at).toLocaleString()}
                         </p>
                       </div>
                     ))}
@@ -513,16 +502,16 @@ export default function CandidateDetailPage() {
               </div>
 
               <div className="mt-4 p-4 bg-slate-800 border border-slate-700 rounded-xl space-y-3">
-                <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">Activity Log</p>
+                <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">{t("activity.title")}</p>
                 {activity.length === 0 ? (
-                  <p className="text-slate-500 text-sm">No collaboration activity yet.</p>
+                  <p className="text-slate-500 text-sm">{t("activity.empty")}</p>
                 ) : (
                   <div className="space-y-3">
                     {activity.map((item) => (
                       <div key={item.activity_id} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-3">
                         <p className="text-slate-200 text-sm">{item.summary}</p>
                         <p className="text-slate-500 text-xs mt-1">
-                          {item.actor_email ?? "System"} · {new Date(item.created_at).toLocaleString()}
+                          {item.actor_email ?? t("labels.system")} · {new Date(item.created_at).toLocaleString()}
                         </p>
                       </div>
                     ))}
