@@ -7,8 +7,8 @@ import { ttsApi } from "@/lib/api";
  * useTTS — text-to-speech hook.
  *
  * Priority:
- *   1. Groq TTS via backend /api/v1/tts  (high quality)
- *   2. Browser SpeechSynthesis            (fallback, no API key)
+ *   1. Backend TTS via /api/v1/tts        (ElevenLabs or Groq)
+ *   2. Browser SpeechSynthesis            (fallback)
  */
 export function useTTS(language?: string) {
   const [enabled, setEnabled] = useState(true);
@@ -38,14 +38,15 @@ export function useTTS(language?: string) {
   }
 
   const speak = useCallback(
-    async (text: string) => {
+    async (text: string, languageOverride?: string) => {
       if (!enabled || !text.trim()) return;
       stopCurrent();
       setSpeaking(true);
+      const activeLanguage = (languageOverride ?? language ?? "en").toLowerCase();
 
-      // Try Groq TTS first
+      // Try backend TTS provider chain first
       try {
-        const blob = await ttsApi.synthesize(text);
+        const blob = await ttsApi.synthesize(text, activeLanguage);
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         audioRef.current = audio;
@@ -68,7 +69,12 @@ export function useTTS(language?: string) {
       // Fallback: browser SpeechSynthesis
       if (typeof window !== "undefined" && "speechSynthesis" in window) {
         const utter = new SpeechSynthesisUtterance(text);
-        utter.lang = language === "en" ? "en-US" : "ru-RU";
+        utter.lang =
+          activeLanguage.startsWith("en")
+            ? "en-US"
+            : activeLanguage.startsWith("ru")
+            ? "ru-RU"
+            : activeLanguage;
         utter.rate = 0.95;
         utter.onend = () => setSpeaking(false);
         utter.onerror = () => setSpeaking(false);

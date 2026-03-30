@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     SESSION_COOKIE_SECURE: bool = False
     ANTHROPIC_API_KEY: str = ""
     GROQ_API_KEY: str = ""
+    ELEVENLABS_API_KEY: str = ""
+    TTS_PROVIDER: str = "groq"
+    TTS_FALLBACK_PROVIDER: str = "groq"
+    ELEVENLABS_VOICE_ID: str = ""
+    ELEVENLABS_TTS_MODEL: str = "eleven_flash_v2_5"
     UPLOAD_DIR: str = "/app/uploads"
     RESUME_STORAGE_DIR: str = "/app/storage/resumes"
     RECORDING_STORAGE_DIR: str = "/app/storage/recordings"

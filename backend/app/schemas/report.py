@@ -60,6 +60,11 @@ class AssessmentReportResponse(BaseModel):
     skill_tags: list[SkillTag] | None = None
     red_flags: list[RedFlag] | None = None
     response_consistency: float | None = None
+    overall_confidence: float | None = None
+    competency_confidence: dict[str, float] | None = None
+    confidence_reasons: list[str] | None = None
+    evidence_coverage: dict | None = None
+    decision_policy_version: str | None = None
     cheat_risk_score: float | None = None
     cheat_flags: list[str] | None = None
 

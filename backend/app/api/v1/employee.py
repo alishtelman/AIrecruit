@@ -4,7 +4,8 @@ Employee assessment invite endpoints.
 GET  /api/v1/employee/invite/{token}        — public, returns invite info
 POST /api/v1/employee/invite/{token}/start  — authenticated candidate, starts interview
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
+from groq import AuthenticationError as GroqAuthenticationError
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -91,17 +92,22 @@ async def start_employee_assessment(
     from app.services.assessment_invite_service import get_assessment_by_token as _get
     assessment = await _get(db, token)
     if not assessment:
-        from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invite not found")
 
-    assessment_obj, interview = await link_interview_to_assessment(
-        db,
-        token=token,
-        candidate=candidate,
-        candidate_email=user.email,
-        target_role=assessment.target_role,
-        language=body.language,
-    )
+    try:
+        assessment_obj, interview = await link_interview_to_assessment(
+            db,
+            token=token,
+            candidate=candidate,
+            candidate_email=user.email,
+            target_role=assessment.target_role,
+            language=body.language,
+        )
+    except GroqAuthenticationError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service authentication failed. Check GROQ_API_KEY configuration.",
+        ) from None
     return StartAssessmentResponse(
         interview_id=str(interview.id),
         assessment_id=str(assessment_obj.id),

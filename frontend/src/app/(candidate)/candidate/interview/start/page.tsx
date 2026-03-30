@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { interviewApi, templateApi } from "@/lib/api";
+import { clearPreparedInterviewMedia, prepareInterviewMediaSession } from "@/lib/interviewMediaSession";
 import type { InterviewTemplate, TargetRole } from "@/lib/types";
 
 const ROLES: { value: TargetRole; label: string; desc: string }[] = [
@@ -48,6 +49,14 @@ function StartInterviewInner() {
     setError("");
     setStarting(true);
     try {
+      await prepareInterviewMediaSession();
+    } catch {
+      setError("Grant screen, camera, and microphone access to start the interview.");
+      setStarting(false);
+      return;
+    }
+
+    try {
       const res = await interviewApi.start({
         target_role: selected,
         template_id: selectedTemplate?.template_id ?? null,
@@ -55,6 +64,7 @@ function StartInterviewInner() {
       });
       router.push(`/candidate/interview/${res.interview_id}`);
     } catch (err: unknown) {
+      clearPreparedInterviewMedia();
       setError(err instanceof Error ? err.message : "Could not start interview");
       setStarting(false);
     }
@@ -89,6 +99,7 @@ function StartInterviewInner() {
         <h1 className="text-2xl font-bold text-white mb-2">Start AI Interview</h1>
         <p className="text-slate-400 mb-8">
           Choose your target role. You&apos;ll answer 8 questions. The interview takes 15–20 minutes.
+          Screen, camera, and microphone recording is required during the session.
         </p>
 
         {error && (

@@ -4,11 +4,15 @@ AI Interviewer module.
 Singleton `interviewer` is an LLMInterviewer (Groq) when GROQ_API_KEY is set,
 otherwise falls back to MockInterviewer.
 """
+import re
+import logging
 from dataclasses import dataclass, field
 
 from groq import AsyncGroq
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 MAX_QUESTIONS = 8
 
@@ -23,6 +27,27 @@ _ROLE_LABELS: dict[str, str] = {
     "designer": "UX/UI Дизайнер",
 }
 
+_MAX_QUESTION_CHARS = 240
+_QUESTION_SEGMENT_RE = re.compile(r"[^?]{8,}\?")
+_WHITESPACE_RE = re.compile(r"\s+")
+_MARKUP_RE = re.compile(r"[*_`#>\[\]\|]")
+_LEADING_FILLERS = (
+    "я понимаю",
+    "это важный аспект",
+    "когда мы говорим",
+    "давайте поговорим",
+    "давайте обсудим",
+    "отлично",
+    "хорошо",
+    "интересно",
+    "хороший ответ",
+    "great question",
+    "great answer",
+    "good answer",
+    "i understand",
+    "let's discuss",
+)
+
 
 @dataclass
 class InterviewContext:
@@ -35,6 +60,116 @@ class InterviewContext:
     template_questions: list[str] | None = None
     competency_targets: list[str] | None = None  # competency names for this question
     language: str = "ru"
+
+
+def _trim_question(text: str, limit: int = _MAX_QUESTION_CHARS) -> str:
+    """Trim question text to a safe UI length while keeping it readable."""
+    if len(text) <= limit:
+        return text
+    trimmed = text[:limit]
+    if " " in trimmed:
+        trimmed = trimmed.rsplit(" ", 1)[0]
+    return trimmed.rstrip(" ,.;:") + "?"
+
+
+def _normalize_question_output(raw: str, ctx: InterviewContext) -> str:
+    """Normalize LLM output to one concise interview question."""
+    cleaned = _MARKUP_RE.sub(" ", raw or "")
+    cleaned = cleaned.replace("AI INTERVIEWER", " ")
+    cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
+    if not cleaned:
+        return (
+            "Can you describe your most recent relevant project?"
+            if ctx.language == "en"
+            else "Расскажите о вашем самом релевантном проекте за последнее время?"
+        )
+
+    segments = [
+        _WHITESPACE_RE.sub(" ", seg).strip()
+        for seg in _QUESTION_SEGMENT_RE.findall(cleaned)
+    ]
+
+    question = ""
+    for seg in segments:
+        normalized = seg.lstrip(" -:;,")
+        sentence_candidates = [
+            sentence.strip(" ,;:")
+            for sentence in re.split(r"[.!]", normalized)
+            if sentence.strip(" ,;:")
+        ]
+        prioritized = (
+            [item for item in sentence_candidates if "?" in item]
+            + [item for item in sentence_candidates if "?" not in item]
+        )
+        for candidate in prioritized:
+            if not candidate:
+                continue
+            lowered = candidate.lower()
+            if any(lowered.startswith(prefix) for prefix in _LEADING_FILLERS):
+                continue
+            question = candidate if candidate.endswith("?") else f"{candidate}?"
+            break
+        if question:
+            break
+
+    if not question:
+        first_sentence = ""
+        for sentence in re.split(r"[.!]", cleaned):
+            candidate = sentence.strip(" ,;:")
+            if not candidate:
+                continue
+            lowered = candidate.lower()
+            if any(lowered.startswith(prefix) for prefix in _LEADING_FILLERS):
+                continue
+            first_sentence = candidate
+            break
+        if not first_sentence:
+            first_sentence = cleaned[:120].strip(" ,;:")
+        question = first_sentence if first_sentence.endswith("?") else f"{first_sentence}?"
+
+    if question.count("?") > 1:
+        question = question.split("?", 1)[0].strip() + "?"
+    return _trim_question(question)
+
+
+def _resume_anchored_first_question(ctx: InterviewContext) -> str:
+    """Deterministic first question anchored to resume context."""
+    anchor = None
+    if ctx.resume_text:
+        for raw_line in ctx.resume_text.splitlines():
+            line = _WHITESPACE_RE.sub(" ", raw_line).strip(" \t-•|")
+            if len(line) < 12:
+                continue
+            lowered = line.lower()
+            if (
+                "@" in line
+                or lowered.startswith(("email", "телефон", "phone", "github", "linkedin"))
+                or lowered.startswith(("skills", "навыки", "summary", "education", "образование"))
+            ):
+                continue
+            anchor = line[:72]
+            break
+
+    if ctx.language == "en":
+        if anchor:
+            return _trim_question(
+                f"In your resume you mention '{anchor}'. Walk me through that project: "
+                "your role, one key technical decision, and measurable impact?"
+            )
+        return (
+            "Based on your resume, walk me through your most recent relevant project: "
+            "your role, one key technical decision, and measurable impact?"
+        )
+
+    if anchor:
+        return _trim_question(
+            f"В резюме вы указали «{anchor}». Расскажите про этот проект: "
+            "вашу роль, одно ключевое техническое решение и измеримый результат?"
+        )
+    return (
+        "Опираясь на ваше резюме, расскажите про самый свежий релевантный проект: "
+        "вашу роль, одно ключевое техническое решение и измеримый результат?"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +217,7 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
 
         "## Формат ответа\n"
         "- Только ОДИН вопрос. Без нумерации.\n"
+        "- Коротко: 1-2 предложения, максимум 220 символов.\n"
         "- НЕ начинай с оценки («Отлично!», «Хороший ответ», «Интересно»).\n"
         "- НЕ повторяй вопрос. НЕ давай советов и комментариев.\n"
     )
@@ -180,6 +316,9 @@ class LLMInterviewer:
         self._client = client
 
     async def get_next_question(self, ctx: InterviewContext) -> str:
+        if ctx.question_number == 1:
+            return _resume_anchored_first_question(ctx)
+
         system = _build_system_prompt(ctx)
 
         messages: list[dict] = [
@@ -190,13 +329,19 @@ class LLMInterviewer:
             role = "assistant" if msg["role"] == "assistant" else "user"
             messages.append({"role": role, "content": msg["content"]})
 
-        response = await self._client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            max_tokens=512,
-            temperature=0.7,
-            messages=messages,
-        )
-        return response.choices[0].message.content.strip()
+        try:
+            response = await self._client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                max_tokens=220,
+                temperature=0.5,
+                messages=messages,
+            )
+            raw = response.choices[0].message.content.strip()
+            normalized = _normalize_question_output(raw, ctx)
+            return normalized
+        except Exception:
+            logger.exception("Interviewer LLM failed, using deterministic fallback question")
+            return await MockInterviewer().get_next_question(ctx)
 
 
 # ---------------------------------------------------------------------------

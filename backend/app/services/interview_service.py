@@ -377,6 +377,11 @@ async def finish_interview(
             response_consistency=result.response_consistency,
             cheat_risk_score=result.cheat_risk_score,
             cheat_flags=result.cheat_flags or None,
+            overall_confidence=result.overall_confidence,
+            competency_confidence=result.competency_confidence or None,
+            confidence_reasons=result.confidence_reasons or None,
+            evidence_coverage=result.evidence_coverage or None,
+            decision_policy_version=result.decision_policy_version,
         )
         db.add(report)
         await db.flush()

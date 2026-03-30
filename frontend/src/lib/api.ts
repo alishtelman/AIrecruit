@@ -414,7 +414,7 @@ export const sttApi = {
 // ── TTS ───────────────────────────────────────────────────────────────────────
 
 export const ttsApi = {
-  synthesize: async (text: string): Promise<Blob> => {
+  synthesize: async (text: string, language?: string): Promise<Blob> => {
     const token = getToken();
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -423,7 +423,7 @@ export const ttsApi = {
       method: "POST",
       headers,
       credentials: "include",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, language }),
     });
     if (!res.ok) {
       const error = await res.json().catch(() => ({ detail: "Request failed" }));

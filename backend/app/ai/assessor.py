@@ -9,6 +9,7 @@ otherwise falls back to MockAssessor.
 """
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -19,6 +20,7 @@ from app.ai.competencies import get_competencies, get_category_weights
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+_DECISION_POLICY_VERSION = "v1-baseline"
 
 _ROLE_LABELS: dict[str, str] = {
     "backend_engineer": "Backend-разработчик",
@@ -75,6 +77,11 @@ _QUESTION_ANALYSIS_TOOL = {
                                     },
                                     "required": ["skill", "proficiency"],
                                 },
+                                "description": (
+                                    "ONLY explicit, demonstrated skills from the answer. "
+                                    "Do not include broad terms like api/rest/soap/backend/sql "
+                                    "without concrete personal usage."
+                                ),
                             },
                             "red_flags": {
                                 "type": "array",
@@ -240,6 +247,11 @@ class AssessmentResult:
     problem_solving_score: float | None = None
     cheat_risk_score: float | None = None
     cheat_flags: list[str] = field(default_factory=list)
+    overall_confidence: float | None = None
+    competency_confidence: dict[str, float] | None = None
+    confidence_reasons: list[str] = field(default_factory=list)
+    evidence_coverage: dict | None = None
+    decision_policy_version: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -289,24 +301,212 @@ def _compute_aggregates(
     }
 
 
+def _to_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _question_evidence_confidence(q: dict) -> float:
+    """Estimate confidence in a question-level evidence item (0.0–1.0)."""
+    quality = max(0.0, min(_to_float(q.get("answer_quality"), 0.0), 10.0))
+    specificity = str(q.get("specificity", "low")).lower()
+    depth = str(q.get("depth", "none")).lower()
+    ai_likelihood = max(0.0, min(_to_float(q.get("ai_likelihood"), 0.0), 1.0))
+    evidence_len = len(str(q.get("evidence", "")).strip())
+
+    confidence = quality / 10.0
+    confidence += {"high": 0.15, "medium": 0.05}.get(specificity, -0.15)
+    confidence += {"expert": 0.2, "strong": 0.15, "adequate": 0.05}.get(depth, -0.15)
+    confidence += 0.05 if evidence_len >= 24 else -0.05
+    confidence -= ai_likelihood * 0.2
+    return max(0.0, min(confidence, 1.0))
+
+
+def _compute_confidence_metrics(
+    competency_scores: list[dict],
+    per_question_analysis: list[dict],
+) -> dict:
+    """Compute confidence envelope for report-level and competency-level signals."""
+    competency_evidence: dict[str, list[float]] = {}
+    question_confidences: list[float] = []
+    ai_scores: list[float] = []
+    concrete_evidence_count = 0
+
+    for q in per_question_analysis:
+        q_conf = _question_evidence_confidence(q)
+        question_confidences.append(q_conf)
+
+        ai = q.get("ai_likelihood")
+        if ai is not None:
+            ai_scores.append(max(0.0, min(_to_float(ai, 0.0), 1.0)))
+
+        evidence_len = len(str(q.get("evidence", "")).strip())
+        specificity = str(q.get("specificity", "low")).lower()
+        if evidence_len >= 24 and specificity != "low":
+            concrete_evidence_count += 1
+
+        for name in q.get("targeted_competencies", []):
+            comp_name = str(name).strip()
+            if comp_name:
+                competency_evidence.setdefault(comp_name, []).append(q_conf)
+
+    competency_confidence: dict[str, float] = {}
+    weighted_sum = 0.0
+    total_weight = 0.0
+    for cs in competency_scores:
+        name = str(cs.get("competency", "")).strip()
+        if not name:
+            continue
+        from_questions = competency_evidence.get(name, [])
+        base = sum(from_questions) / len(from_questions) if from_questions else 0.45
+        evidence_len = len(str(cs.get("evidence", "")).strip())
+        evidence_bonus = min(evidence_len / 240.0, 1.0) * 0.15
+        score = max(0.0, min(base + evidence_bonus, 1.0))
+        competency_confidence[name] = round(score, 2)
+
+        weight = max(_to_float(cs.get("weight"), 0.0), 0.0) or 1.0
+        weighted_sum += score * weight
+        total_weight += weight
+
+    if total_weight > 0:
+        overall_conf = weighted_sum / total_weight
+    elif question_confidences:
+        overall_conf = sum(question_confidences) / len(question_confidences)
+    else:
+        overall_conf = 0.0
+    overall_conf = round(max(0.0, min(overall_conf, 1.0)), 2)
+
+    analyzed_questions = len(per_question_analysis)
+    high_conf_q = sum(1 for c in question_confidences if c >= 0.7)
+    low_conf_q = sum(1 for c in question_confidences if c < 0.5)
+    avg_ai = round(sum(ai_scores) / len(ai_scores), 2) if ai_scores else None
+    coverage_ratio = (
+        round(concrete_evidence_count / analyzed_questions, 2)
+        if analyzed_questions
+        else 0.0
+    )
+
+    reasons: list[str] = []
+    if analyzed_questions == 0:
+        reasons.append("No per-question evidence extracted; confidence is limited.")
+    else:
+        if coverage_ratio < 0.5:
+            reasons.append("Low concrete evidence coverage reduced confidence.")
+        elif coverage_ratio >= 0.75:
+            reasons.append("High evidence coverage increased confidence.")
+
+        if low_conf_q >= max(2, analyzed_questions // 2):
+            reasons.append("Multiple low-confidence answers reduced certainty.")
+        elif high_conf_q >= max(2, analyzed_questions // 2):
+            reasons.append("Several answers contained high-confidence evidence.")
+
+    if avg_ai is not None and avg_ai >= 0.6:
+        reasons.append("High AI-likelihood signal lowered confidence.")
+    elif avg_ai is not None and avg_ai <= 0.2 and analyzed_questions > 0:
+        reasons.append("Low AI-likelihood signal improved confidence.")
+
+    if not reasons:
+        reasons.append("Confidence derived from mixed evidence quality signals.")
+
+    evidence_coverage = {
+        "questions_analyzed": analyzed_questions,
+        "high_confidence_questions": high_conf_q,
+        "low_confidence_questions": low_conf_q,
+        "concrete_evidence_ratio": coverage_ratio,
+        "avg_ai_likelihood": avg_ai,
+    }
+
+    return {
+        "overall_confidence": overall_conf,
+        "competency_confidence": competency_confidence,
+        "confidence_reasons": reasons[:4],
+        "evidence_coverage": evidence_coverage,
+    }
+
+
 def _aggregate_skills(per_question: list[dict]) -> list[dict]:
-    """Aggregate skill_tags from per-question analysis, deduplicated."""
+    """Aggregate skill tags from per-question analysis with evidence gating."""
+    proficiency_order = ["beginner", "intermediate", "advanced", "expert"]
+    generic_terms = {
+        "api",
+        "rest",
+        "soap",
+        "backend",
+        "frontend",
+        "web",
+        "software",
+        "development",
+        "programming",
+        "database",
+        "databases",
+        "sql",
+        "architecture",
+        "system",
+        "systems",
+        "service",
+        "services",
+        "support",
+        "testing",
+        "test",
+    }
+
+    def _normalize_skill_name(name: str) -> str:
+        normalized = re.sub(r"\s+", " ", (name or "").strip().lower())
+        return normalized.strip(".,:;!?/\\-")
+
+    def _is_noise_skill(name: str) -> bool:
+        if not name or len(name) < 2 or len(name) > 48:
+            return True
+        if name.isdigit():
+            return True
+        if len(name.split()) > 4:
+            return True
+        return name in generic_terms
+
     skill_map: dict[str, dict] = {}
     for q in per_question:
+        question_confidence = _question_evidence_confidence(q)
+        if question_confidence < 0.6:
+            continue
         for sm in q.get("skills_mentioned", []):
-            name = sm.get("skill", "").strip().lower()
-            if not name:
+            name = _normalize_skill_name(str(sm.get("skill", "")))
+            if _is_noise_skill(name):
                 continue
-            prof = sm.get("proficiency", "intermediate")
+            prof = str(sm.get("proficiency", "intermediate")).lower()
+            if prof not in proficiency_order:
+                prof = "intermediate"
             if name in skill_map:
                 skill_map[name]["mentions_count"] += 1
-                # Keep higher proficiency
-                prof_order = ["beginner", "intermediate", "advanced", "expert"]
-                if prof_order.index(prof) > prof_order.index(skill_map[name]["proficiency"]):
+                skill_map[name]["confidence_sum"] += question_confidence
+                if proficiency_order.index(prof) > proficiency_order.index(skill_map[name]["proficiency"]):
                     skill_map[name]["proficiency"] = prof
             else:
-                skill_map[name] = {"skill": name, "proficiency": prof, "mentions_count": 1}
-    return sorted(skill_map.values(), key=lambda x: x["mentions_count"], reverse=True)
+                skill_map[name] = {
+                    "skill": name,
+                    "proficiency": prof,
+                    "mentions_count": 1,
+                    "confidence_sum": question_confidence,
+                }
+
+    filtered: list[dict] = []
+    for data in skill_map.values():
+        avg_confidence = data["confidence_sum"] / data["mentions_count"]
+        # Single low-confidence mention is often noisy extraction.
+        if data["mentions_count"] == 1 and avg_confidence < 0.75:
+            continue
+        if avg_confidence < 0.65:
+            continue
+        filtered.append(
+            {
+                "skill": data["skill"],
+                "proficiency": data["proficiency"],
+                "mentions_count": data["mentions_count"],
+            }
+        )
+
+    return sorted(filtered, key=lambda x: x["mentions_count"], reverse=True)
 
 
 def _compute_cheat_risk(
@@ -490,6 +690,8 @@ class LLMAssessor:
             "   Признаки живого человека: личные примеры ('я делал X'), неполные мысли, паузы,\n"
             "   специфические детали, неформальный язык.\n\n"
             "Будь объективным. Оценивай только по фактическому содержанию ответов.\n"
+            "Если ответ общий/слабый, оставляй skills_mentioned пустым списком.\n"
+            "НЕ записывай в skills_mentioned общие направления/протоколы без личного опыта.\n"
             "Шкала answer_quality (1-10): 1-4 = нет/поверхностный ответ, 5-6 = рабочие знания без глубины, "
             "7-8 = конкретные примеры + trade-offs, 9-10 = экспертное мышление. "
             "Большинство ответов попадают в диапазон 4-7. Не завышай оценки без цитат."
@@ -573,6 +775,7 @@ class LLMAssessor:
         comp_scores = data.get("competency_scores", [])
         aggregates = _compute_aggregates(comp_scores, target_role)
         skill_tags = _aggregate_skills(pass1_data)
+        confidence_metrics = _compute_confidence_metrics(comp_scores, pass1_data)
 
         full_json = {
             "competency_scores": comp_scores,
@@ -581,6 +784,11 @@ class LLMAssessor:
             "red_flags": data.get("red_flags", []),
             "response_consistency": data.get("response_consistency"),
             "aggregates": aggregates,
+            "overall_confidence": confidence_metrics["overall_confidence"],
+            "competency_confidence": confidence_metrics["competency_confidence"],
+            "confidence_reasons": confidence_metrics["confidence_reasons"],
+            "evidence_coverage": confidence_metrics["evidence_coverage"],
+            "decision_policy_version": _DECISION_POLICY_VERSION,
         }
 
         return AssessmentResult(
@@ -601,6 +809,11 @@ class LLMAssessor:
             skill_tags=skill_tags,
             red_flags=data.get("red_flags", []),
             response_consistency=data.get("response_consistency"),
+            overall_confidence=confidence_metrics["overall_confidence"],
+            competency_confidence=confidence_metrics["competency_confidence"],
+            confidence_reasons=confidence_metrics["confidence_reasons"],
+            evidence_coverage=confidence_metrics["evidence_coverage"],
+            decision_policy_version=_DECISION_POLICY_VERSION,
         )
 
     async def _legacy_assess(self, target_role: str, transcript: str) -> AssessmentResult:
@@ -624,6 +837,12 @@ class LLMAssessor:
 
         tool_call = response.choices[0].message.tool_calls[0]
         data: dict = json.loads(tool_call.function.arguments)
+        confidence_metrics = _compute_confidence_metrics([], [])
+        data["overall_confidence"] = confidence_metrics["overall_confidence"]
+        data["competency_confidence"] = confidence_metrics["competency_confidence"]
+        data["confidence_reasons"] = confidence_metrics["confidence_reasons"]
+        data["evidence_coverage"] = confidence_metrics["evidence_coverage"]
+        data["decision_policy_version"] = _DECISION_POLICY_VERSION
 
         return AssessmentResult(
             overall_score=float(data["overall_score"]),
@@ -637,6 +856,11 @@ class LLMAssessor:
             interview_summary=data.get("interview_summary"),
             model_version="llama-3.3-70b-versatile",
             full_report_json=data,
+            overall_confidence=confidence_metrics["overall_confidence"],
+            competency_confidence=confidence_metrics["competency_confidence"],
+            confidence_reasons=confidence_metrics["confidence_reasons"],
+            evidence_coverage=confidence_metrics["evidence_coverage"],
+            decision_policy_version=_DECISION_POLICY_VERSION,
         )
 
 
@@ -702,6 +926,7 @@ class MockAssessor:
                 })
 
         role_label = target_role.replace("_", " ")
+        confidence_metrics = _compute_confidence_metrics(comp_scores, per_q)
         full_json = {
             "competency_scores": comp_scores,
             "per_question_analysis": per_q,
@@ -709,6 +934,11 @@ class MockAssessor:
             "red_flags": [],
             "response_consistency": round(base, 1),
             "aggregates": aggregates,
+            "overall_confidence": confidence_metrics["overall_confidence"],
+            "competency_confidence": confidence_metrics["competency_confidence"],
+            "confidence_reasons": confidence_metrics["confidence_reasons"],
+            "evidence_coverage": confidence_metrics["evidence_coverage"],
+            "decision_policy_version": _DECISION_POLICY_VERSION,
             "mock": True,
         }
 
@@ -737,6 +967,11 @@ class MockAssessor:
             response_consistency=round(base, 1),
             cheat_risk_score=cheat_risk,
             cheat_flags=cheat_flags,
+            overall_confidence=confidence_metrics["overall_confidence"],
+            competency_confidence=confidence_metrics["competency_confidence"],
+            confidence_reasons=confidence_metrics["confidence_reasons"],
+            evidence_coverage=confidence_metrics["evidence_coverage"],
+            decision_policy_version=_DECISION_POLICY_VERSION,
         )
 
 

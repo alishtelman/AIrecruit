@@ -11,6 +11,9 @@ import { useFaceDetection } from "@/hooks/useFaceDetection";
 import { candidateApi, interviewApi } from "@/lib/api";
 import type { InterviewDetail, InterviewMessage } from "@/lib/types";
 
+const REPORT_POLL_INTERVAL_MS = 1500;
+const REPORT_POLL_TIMEOUT_MS = 120000;
+
 export default function InterviewPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -25,11 +28,13 @@ export default function InterviewPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const [waitingForReport, setWaitingForReport] = useState(false);
   const [error, setError] = useState("");
   const [answerMode, setAnswerMode] = useState<"text" | "voice">("text");
   const [latestTranscript, setLatestTranscript] = useState("");
   const [recordingUploadState, setRecordingUploadState] = useState<"idle" | "uploading" | "uploaded" | "failed" | "skipped">("idle");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const autoRecordingAttemptedRef = useRef(false);
 
   // Behavioral signals tracking (Feature 7)
   const pasteCountRef = useRef(0);
@@ -42,13 +47,22 @@ export default function InterviewPage() {
   const [resumeText, setResumeText] = useState<string | null>(null);
   const [resumeOpen, setResumeOpen] = useState(false);
 
-  // Recording consent
+  // Recording is mandatory for interview flow.
   const [recordingConsent, setRecordingConsent] = useState(false);
 
   // Language is loaded from interview, default "ru" until loaded
   const [interviewLanguage, setInterviewLanguage] = useState<string>("ru");
   const { enabled: ttsEnabled, speaking, speak, stop, toggle: toggleTTS } = useTTS(interviewLanguage);
-  const { isRecording, previewRef, startRecording, stopRecording, getBlob, clearRecording, errorMessage: recordingError } = useMediaRecorder();
+  const {
+    isRecording,
+    isScreenSharing,
+    previewRef,
+    startRecording,
+    stopRecording,
+    getBlob,
+    clearRecording,
+    errorMessage: recordingError,
+  } = useMediaRecorder();
   const { faceAwayPct, isModelLoaded: faceModelLoaded } = useFaceDetection(previewRef, recordingConsent);
   const { state: voiceState, start: startVoice, stop: stopVoice, errorMessage: voiceError, clearError: clearVoiceError } = useVoiceInput({
     onTranscript: (text) => {
@@ -88,7 +102,7 @@ export default function InterviewPage() {
           setCurrentQuestion(null);
         } else if (waitingForAnswer && lastAssistant) {
           setCurrentQuestion(lastAssistant.content);
-          speak(lastAssistant.content);
+          speak(lastAssistant.content, data.language ?? "ru");
         }
       })
       .catch(() => setError("Could not load interview"));
@@ -121,8 +135,45 @@ export default function InterviewPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    if (!interview || interview.status !== "in_progress") return;
+    if (recordingConsent || autoRecordingAttemptedRef.current) return;
+    autoRecordingAttemptedRef.current = true;
+
+    void startRecording().then((ok) => {
+      setRecordingConsent(ok);
+    });
+  }, [interview, recordingConsent, startRecording]);
+
+  useEffect(() => {
+    if (interview && interview.status !== "in_progress") {
+      stopRecording();
+    }
+  }, [interview, stopRecording]);
+
+  async function waitForReport(interviewId: string): Promise<string> {
+    const deadline = Date.now() + REPORT_POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      try {
+        const detail = await interviewApi.getDetail(interviewId);
+        if (detail.status === "report_generated" && detail.report_id) {
+          return detail.report_id;
+        }
+        if (detail.status === "failed") {
+          throw new Error("Report generation failed. Please retry finishing the interview.");
+        }
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes("Report generation failed")) {
+          throw err;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, REPORT_POLL_INTERVAL_MS));
+    }
+    throw new Error("Report is taking too long. Please refresh this page in a few moments.");
+  }
+
   async function handleSend() {
-    if (!input.trim() || sending || !id) return;
+    if (!recordingConsent || !input.trim() || sending || !id) return;
     const text = input.trim();
 
     // Record response time for this question
@@ -159,7 +210,7 @@ export default function InterviewPage() {
         };
         setMessages((prev) => [...prev, aiMsg]);
         setCanFinish(false);
-        speak(res.current_question);
+        speak(res.current_question, interviewLanguage);
       } else {
         setCanFinish(true);
       }
@@ -175,19 +226,15 @@ export default function InterviewPage() {
   async function handleFinish() {
     if (!id || finishing) return;
     stop();
+    stopRecording();
     setFinishing(true);
+    setWaitingForReport(false);
     setError("");
     try {
       let recordingNotice: string | null = null;
-      // Stop recording and upload
-      const recordingBlob =
-        isRecording
-          ? (stopRecording(), await new Promise((resolve) => setTimeout(resolve, 300)), getBlob())
-          : getBlob();
-
-      if (isRecording) {
-        // handled above
-      }
+      // Ensure MediaRecorder has time to flush its last chunk.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const recordingBlob = getBlob();
       if (recordingBlob && recordingBlob.size > 0) {
         setRecordingUploadState("uploading");
         try {
@@ -212,17 +259,26 @@ export default function InterviewPage() {
       }).catch(() => null);
 
       const res = await interviewApi.finish(id);
+      let reportId: string | null = null;
+      if (res.status === "report_generated" && res.report_id) {
+        reportId = res.report_id;
+      } else {
+        setWaitingForReport(true);
+        reportId = await waitForReport(id);
+      }
       const suffix = recordingNotice ? `?notice=${recordingNotice}` : "";
-      router.push(`/candidate/reports/${res.report_id}${suffix}`);
+      router.push(`/candidate/reports/${reportId}${suffix}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to finish interview");
+    } finally {
+      setWaitingForReport(false);
       setFinishing(false);
     }
   }
 
-  function handleConsentAndRecord() {
-    setRecordingConsent(true);
-    startRecording();
+  async function handleConsentAndRecord() {
+    const ok = await startRecording();
+    setRecordingConsent(ok);
   }
 
   if (authLoading || !interview) {
@@ -280,6 +336,14 @@ export default function InterviewPage() {
                 <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                 REC
               </span>
+              <span
+                className={`text-xs font-medium ${
+                  isScreenSharing ? "text-emerald-400" : "text-yellow-400"
+                }`}
+                title={isScreenSharing ? "Screen is being recorded" : "Screen sharing inactive"}
+              >
+                {isScreenSharing ? "🖥️ Screen on" : "🖥️ Screen off"}
+              </span>
               {faceModelLoaded && (
                 <span
                   className={`text-xs font-medium ${
@@ -294,15 +358,10 @@ export default function InterviewPage() {
               )}
             </span>
           )}
-          {/* Consent button to start recording */}
           {!recordingConsent && interview.status === "in_progress" && (
-            <button
-              onClick={handleConsentAndRecord}
-              title="Enable video recording"
-              className="text-xs px-3 py-1.5 rounded-lg border border-slate-600 bg-slate-700/50 text-slate-400 hover:text-slate-300 transition-colors"
-            >
-              📹 Record
-            </button>
+            <span className="text-xs px-3 py-1.5 rounded-lg border border-yellow-500/40 bg-yellow-500/10 text-yellow-300">
+              Recording required
+            </span>
           )}
           {/* Resume panel toggle */}
           {resumeText && (
@@ -357,7 +416,7 @@ export default function InterviewPage() {
             <MessageBubble
               key={i}
               msg={msg}
-              onReplay={msg.role === "assistant" ? () => speak(msg.content) : undefined}
+              onReplay={msg.role === "assistant" ? () => speak(msg.content, interviewLanguage) : undefined}
               speaking={speaking}
             />
           ))}
@@ -392,6 +451,23 @@ export default function InterviewPage() {
         </div>
       )}
 
+      {!recordingConsent && interview.status === "in_progress" && (
+        <div className="max-w-2xl w-full mx-auto px-4 pb-4">
+          <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-5">
+            <div className="text-yellow-300 font-semibold mb-1">Recording required</div>
+            <div className="text-slate-300 text-sm mb-4">
+              To continue the interview, enable screen, camera, and microphone recording.
+            </div>
+            <button
+              onClick={handleConsentAndRecord}
+              className="bg-yellow-500/80 hover:bg-yellow-500 text-slate-900 font-semibold px-4 py-2 rounded-lg transition-colors"
+            >
+              Enable recording
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Finish CTA */}
       {canFinish && (
         <div className="max-w-2xl w-full mx-auto px-4 pb-4">
@@ -410,14 +486,14 @@ export default function InterviewPage() {
               disabled={finishing}
               className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold px-8 py-2.5 rounded-lg transition-colors"
             >
-              {finishing ? "Generating report…" : "Finish & Get Report"}
+              {finishing ? (waitingForReport ? "Waiting for report…" : "Generating report…") : "Finish & Get Report"}
             </button>
           </div>
         </div>
       )}
 
       {/* Input */}
-      {!canFinish && interview.status === "in_progress" && (
+      {!canFinish && interview.status === "in_progress" && recordingConsent && (
         <div className="border-t border-slate-800 px-4 py-4 shrink-0">
           <div className="max-w-2xl mx-auto space-y-3">
             <div className="flex items-center justify-between gap-3">

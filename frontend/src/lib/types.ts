@@ -535,6 +535,11 @@ export interface AssessmentReport {
   skill_tags: SkillTag[] | null;
   red_flags: RedFlag[] | null;
   response_consistency: number | null;
+  overall_confidence: number | null;
+  competency_confidence: Record<string, number> | null;
+  confidence_reasons: string[] | null;
+  evidence_coverage: Record<string, unknown> | null;
+  decision_policy_version: string | null;
   cheat_risk_score: number | null;
   cheat_flags: string[] | null;
 }

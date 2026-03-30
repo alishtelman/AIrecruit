@@ -39,11 +39,13 @@ services:
       - backend
     env_file:
       - .env
+    environment:
+      NEXT_DIST_DIR: .next-dev
     volumes:
       - ./frontend:/app
       - /app/node_modules
-      - /app/.next
-    command: npm run dev
+      - /app/.next-dev
+    command: sh -lc 'mkdir -p "${NEXT_DIST_DIR:-.next-dev}" && find "${NEXT_DIST_DIR:-.next-dev}" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true; npm run dev'
 
 volumes:
   postgres_data:

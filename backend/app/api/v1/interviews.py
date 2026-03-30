@@ -16,6 +16,7 @@ Why path over body:
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from groq import AuthenticationError as GroqAuthenticationError
 from groq import RateLimitError as GroqRateLimitError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,6 +53,13 @@ from app.services.interview_service import (
 from app.services.template_service import list_public_templates
 
 router = APIRouter(prefix="/interviews", tags=["interviews"])
+
+
+def _ai_auth_http_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="AI service authentication failed. Check GROQ_API_KEY configuration.",
+    )
 
 
 def _candidate(
@@ -113,6 +121,8 @@ async def start(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No active resume found. Please upload a resume before starting an interview.",
         )
+    except GroqAuthenticationError:
+        raise _ai_auth_http_error()
     except GroqRateLimitError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -150,6 +160,8 @@ async def send_message(
             status_code=status.HTTP_409_CONFLICT,
             detail="Interview is not active.",
         )
+    except GroqAuthenticationError:
+        raise _ai_auth_http_error()
     except GroqRateLimitError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -181,6 +193,8 @@ async def finish(
             status_code=status.HTTP_409_CONFLICT,
             detail="Interview is not active.",
         )
+    except GroqAuthenticationError:
+        raise _ai_auth_http_error()
     except MaxQuestionsNotReachedError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

@@ -36,7 +36,7 @@ A platform where candidates complete structured AI interviews and receive verifi
 | Backend | Python 3.11, FastAPI, SQLAlchemy (async), Alembic |
 | Database | PostgreSQL 16 |
 | Auth | HttpOnly session cookie + JWT (python-jose), bcrypt (passlib) |
-| AI | Groq API — Llama 3.3 70B (interviewer + assessor) |
+| AI | Groq API — Llama 3.3 70B (interviewer + assessor + STT), optional ElevenLabs dev TTS |
 | Frontend | Next.js 14, TypeScript, Tailwind CSS |
 | Infrastructure | Docker, Docker Compose |
 
@@ -183,6 +183,10 @@ Open `.env` and set:
 APP_ENV=development
 SECRET_KEY=your-random-secret     # change before any real use
 GROQ_API_KEY=gsk_...              # required for LLM interviews (free at console.groq.com)
+ELEVENLABS_API_KEY=               # optional dev/test TTS provider
+TTS_PROVIDER=groq                 # set to elevenlabs to try ElevenLabs TTS in dev
+TTS_FALLBACK_PROVIDER=groq        # keeps the app working when ElevenLabs is unavailable
+ELEVENLABS_TTS_MODEL=eleven_flash_v2_5
 NEXT_PUBLIC_API_URL=http://localhost:8001
 APP_URL=http://localhost:3000
 CORS_ORIGINS=http://localhost:3000
@@ -192,6 +196,15 @@ SESSION_COOKIE_SAMESITE=lax
 SESSION_COOKIE_SECURE=false
 RESEND_API_KEY=re_...             # optional, enables email notifications
 ```
+
+For dev-only ElevenLabs voice validation:
+```bash
+TTS_PROVIDER=elevenlabs
+TTS_FALLBACK_PROVIDER=groq
+ELEVENLABS_API_KEY=<your-elevenlabs-key>
+```
+
+If ElevenLabs credits are missing or exhausted, `/api/v1/tts` falls back to Groq, and the browser still falls back to `speechSynthesis` if backend TTS fails entirely.
 
 For production-like deployments:
 ```
@@ -334,7 +347,12 @@ docker compose down
 | `SECRET_KEY` | — | JWT signing secret (change in production) |
 | `ALGORITHM` | `HS256` | JWT algorithm |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Token TTL |
-| `GROQ_API_KEY` | — | Groq API key for interviews, assessment, STT, and TTS |
+| `GROQ_API_KEY` | — | Groq API key for interviews, assessment, STT, and TTS fallback |
+| `ELEVENLABS_API_KEY` | empty | Optional dev/test TTS provider key for `/api/v1/tts` |
+| `TTS_PROVIDER` | `groq` | Primary backend TTS provider: `groq` or `elevenlabs` |
+| `TTS_FALLBACK_PROVIDER` | `groq` | Backup TTS provider if the primary fails |
+| `ELEVENLABS_VOICE_ID` | empty | Optional ElevenLabs voice override for dev TTS |
+| `ELEVENLABS_TTS_MODEL` | `eleven_flash_v2_5` | ElevenLabs low-latency model for dev TTS |
 | `ANTHROPIC_API_KEY` | empty | Reserved, currently unused by the runtime |
 | `RESEND_API_KEY` | empty | Optional email delivery provider key |
 | `APP_URL` | `http://localhost:3000` | Frontend base URL for invite links and emails |
