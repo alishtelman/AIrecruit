@@ -49,6 +49,8 @@ class SendMessageResponse(BaseModel):
     question_count: int
     max_questions: int
     current_question: str | None  # null when max_questions reached — call /finish
+    is_followup: bool = False  # True when the next question is a follow-up/verification
+    question_type: str = "main"  # main | followup | verification | deep_technical | edge_cases
 
 
 class ReportSummary(BaseModel):

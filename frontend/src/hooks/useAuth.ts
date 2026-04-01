@@ -6,7 +6,17 @@ import { removeToken } from "@/lib/auth";
 import { authApi } from "@/lib/api";
 import type { User } from "@/lib/types";
 
-export function useAuth(redirectTo = "/candidate/login") {
+type UseAuthOptions = {
+  redirectTo?: string;
+  allowedRoles?: User["role"][];
+  unauthorizedRedirectTo?: string;
+};
+
+export function useAuth(options: string | UseAuthOptions = "/candidate/login") {
+  const config = typeof options === "string" ? { redirectTo: options } : options;
+  const redirectTo = config.redirectTo ?? "/candidate/login";
+  const allowedRoles = config.allowedRoles;
+  const unauthorizedRedirectTo = config.unauthorizedRedirectTo ?? "/";
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -16,7 +26,12 @@ export function useAuth(redirectTo = "/candidate/login") {
     authApi
       .me()
       .then((nextUser) => {
-        if (!cancelled) setUser(nextUser);
+        if (cancelled) return;
+        if (allowedRoles && !allowedRoles.includes(nextUser.role)) {
+          router.replace(unauthorizedRedirectTo);
+          return;
+        }
+        setUser(nextUser);
       })
       .catch(() => {
         removeToken();
@@ -28,7 +43,7 @@ export function useAuth(redirectTo = "/candidate/login") {
     return () => {
       cancelled = true;
     };
-  }, [router, redirectTo]);
+  }, [allowedRoles, redirectTo, router, unauthorizedRedirectTo]);
 
   async function logout() {
     try {

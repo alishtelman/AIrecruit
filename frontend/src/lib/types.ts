@@ -236,6 +236,8 @@ export interface SendMessageResponse {
   question_count: number;
   max_questions: number;
   current_question: string | null;
+  is_followup: boolean;
+  question_type: string;
 }
 
 export interface InterviewMessage {
@@ -481,6 +483,36 @@ export interface AnalyticsSalary {
 
 export type HiringRecommendation = "strong_yes" | "yes" | "maybe" | "no";
 
+export interface ReportSummaryBlock {
+  score: number | null;
+  hiring_recommendation: HiringRecommendation;
+  top_strengths: string[];
+  top_weaknesses: string[];
+}
+
+export interface InterviewSummaryModel {
+  topic_outcomes: Array<{
+    slot: number;
+    label: string;
+    signal: string;
+    outcome: string;
+    verification_target: string | null;
+  }>;
+  role: string;
+  core_topics: number;
+  total_turns: number;
+  extra_turns: number;
+  covered_competencies: number;
+  coverage_label: string;
+  signal_quality: string;
+  validated_topics: number;
+  partial_topics: number;
+  unverified_claim_topics: number;
+  honest_gaps: number;
+  generic_or_evasive_topics: number;
+  strong_topics: number;
+}
+
 export interface CompetencyScore {
   competency: string;
   category: string;
@@ -542,4 +574,6 @@ export interface AssessmentReport {
   decision_policy_version: string | null;
   cheat_risk_score: number | null;
   cheat_flags: string[] | null;
+  summary: ReportSummaryBlock | null;
+  summary_model: InterviewSummaryModel | null;
 }

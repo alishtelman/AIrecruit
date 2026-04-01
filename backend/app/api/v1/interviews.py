@@ -128,6 +128,11 @@ async def start(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI service rate limit reached. Please wait a few minutes and try again.",
         )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        )
 
 
 @router.post(
@@ -167,6 +172,11 @@ async def send_message(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI service rate limit reached. Please wait a few minutes and try again.",
         )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        )
 
 
 @router.post(
@@ -195,6 +205,11 @@ async def finish(
         )
     except GroqAuthenticationError:
         raise _ai_auth_http_error()
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        )
     except MaxQuestionsNotReachedError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

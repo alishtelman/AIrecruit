@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { useParams, useRouter } from "next/navigation";
 import { authApi, employeeApi } from "@/lib/api";
 import type { EmployeeInviteInfo } from "@/lib/types";
@@ -11,6 +12,7 @@ function formatDate(value: string | null): string | null {
 }
 
 export default function EmployeeInvitePage() {
+  const t = useTranslations("employeeInvite");
   const { token } = useParams<{ token: string }>();
   const router = useRouter();
   const [info, setInfo] = useState<EmployeeInviteInfo | null>(null);
@@ -25,9 +27,9 @@ export default function EmployeeInvitePage() {
     employeeApi
       .getInvite(token)
       .then(setInfo)
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Invite not found or expired"))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : t("errors.notFoundOrExpired")))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [token, t]);
 
   useEffect(() => {
     authApi.me().then(() => setHasSession(true)).catch(() => setHasSession(false));
@@ -46,7 +48,7 @@ export default function EmployeeInvitePage() {
       const { interview_id } = await employeeApi.startAssessment(token, language);
       router.push(`/candidate/interview/${interview_id}`);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to start assessment");
+      setError(e instanceof Error ? e.message : t("errors.startFailed"));
       setStarting(false);
     }
   }
@@ -54,7 +56,7 @@ export default function EmployeeInvitePage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-[#08111e] flex items-center justify-center">
-        <div className="text-slate-400">Loading invite…</div>
+        <div className="text-slate-400">{t("loading")}</div>
       </div>
     );
   }
@@ -63,8 +65,7 @@ export default function EmployeeInvitePage() {
     return (
       <div className="min-h-screen bg-[#08111e] flex items-center justify-center px-4">
         <div className="w-full max-w-md rounded-[28px] border border-rose-500/20 bg-slate-950/80 p-8 text-center">
-          <div className="text-4xl">⚠️</div>
-          <h1 className="mt-4 text-xl font-semibold text-white">Invite unavailable</h1>
+          <h1 className="mt-4 text-xl font-semibold text-white">{t("unavailable.title")}</h1>
           <p className="mt-2 text-sm text-slate-400">{error}</p>
         </div>
       </div>
@@ -87,13 +88,13 @@ export default function EmployeeInvitePage() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="text-xs uppercase tracking-[0.2em] text-emerald-300">
-                {isCandidateCampaign ? "Candidate Assessment" : "Internal Assessment"}
+                {isCandidateCampaign ? t("kinds.candidate") : t("kinds.internal")}
               </div>
               <h1 className="mt-3 text-3xl font-semibold text-white">{brandName}</h1>
               <p className="mt-3 max-w-xl text-sm leading-6 text-slate-400">
                 {isCandidateCampaign
-                  ? `${info.company_name} invited you to complete a private AI screening flow for ${info.role_label}.`
-                  : `${info.company_name} invited you to complete a private AI assessment as part of an internal review flow.`}
+                  ? t("description.candidate", { company: info.company_name, role: info.role_label })
+                  : t("description.internal", { company: info.company_name })}
               </p>
             </div>
             <div
@@ -109,29 +110,27 @@ export default function EmployeeInvitePage() {
                   : undefined
               }
             >
-              {!info.branding_logo_url ? (isCandidateCampaign ? "🚀" : "🎯") : null}
+              {!info.branding_logo_url ? (isCandidateCampaign ? "CA" : "IA") : null}
             </div>
           </div>
 
           <div className="mt-8 grid gap-4 rounded-[28px] border border-slate-800 bg-slate-900/60 p-5 md:grid-cols-2">
-            <Detail label={isCandidateCampaign ? "Candidate" : "Invitee"} value={info.employee_name} />
-            <Detail label="Email" value={info.employee_email} />
-            <Detail label="Target role" value={info.role_label} />
-            <Detail label="Status" value={info.status.replace("_", " ")} />
-            <Detail label="Template" value={info.template_name || "Adaptive default"} />
-            <Detail label="Company" value={info.company_name} />
-            {deadlineLabel ? <Detail label="Deadline" value={deadlineLabel} /> : null}
-            {expiresLabel ? <Detail label="Invite expires" value={expiresLabel} /> : null}
+            <Detail label={isCandidateCampaign ? t("details.candidate") : t("details.invitee")} value={info.employee_name} />
+            <Detail label={t("details.email")} value={info.employee_email} />
+            <Detail label={t("details.targetRole")} value={info.role_label} />
+            <Detail label={t("details.status")} value={t(`status.${info.status}`)} />
+            <Detail label={t("details.template")} value={info.template_name || t("details.adaptiveDefault")} />
+            <Detail label={t("details.company")} value={info.company_name} />
+            {deadlineLabel ? <Detail label={t("details.deadline")} value={deadlineLabel} /> : null}
+            {expiresLabel ? <Detail label={t("details.expires")} value={expiresLabel} /> : null}
           </div>
 
           <div className="mt-6 rounded-[28px] border border-slate-800 bg-slate-900/40 p-5 text-sm leading-6 text-slate-300">
             <p>
-              The flow contains <span className="font-semibold text-white">8 structured questions</span> and usually
-              takes 15–20 minutes.
+              {t("flow.questionsPrefix")} <span className="font-semibold text-white">{t("flow.questionsCount")}</span> {t("flow.questionsSuffix")}
             </p>
             <p className="mt-3">
-              Your answers will be reviewed by AI and the results will remain visible only to{" "}
-              <span className="font-semibold text-white">{info.company_name}</span>.
+              {t("flow.visibilityPrefix")} <span className="font-semibold text-white">{info.company_name}</span>{t("flow.visibilitySuffix")}
             </p>
           </div>
 
@@ -144,28 +143,28 @@ export default function EmployeeInvitePage() {
           {isCompleted ? (
             <StateCard
               tone="green"
-              title="Assessment completed"
-              body={`This invite has already been completed. ${info.company_name} can already access the private report.`}
+              title={t("state.completedTitle")}
+              body={t("state.completedBody", { company: info.company_name })}
             />
           ) : isExpired ? (
             <StateCard
               tone="rose"
-              title="Invite expired"
-              body="This invite can no longer be started. Contact the company if you need a new campaign link."
+              title={t("state.expiredTitle")}
+              body={t("state.expiredBody")}
             />
           ) : (
             <>
               <div className="mt-6">
-                <div className="mb-2 text-sm text-slate-400">Interview language</div>
+                <div className="mb-2 text-sm text-slate-400">{t("language.title")}</div>
                 <div className="flex gap-2">
                   <LanguageButton
                     active={language === "ru"}
-                    label="🇷🇺 Русский"
+                    label={t("language.ru")}
                     onClick={() => setLanguage("ru")}
                   />
                   <LanguageButton
                     active={language === "en"}
-                    label="🇬🇧 English"
+                    label={t("language.en")}
                     onClick={() => setLanguage("en")}
                   />
                 </div>
@@ -176,14 +175,14 @@ export default function EmployeeInvitePage() {
                 disabled={starting}
                 className="mt-6 w-full rounded-2xl bg-emerald-500 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-emerald-400 disabled:opacity-50"
               >
-                {starting ? "Starting…" : hasSession ? "Start assessment" : "Sign in and start"}
+                {starting ? t("actions.starting") : hasSession ? t("actions.start") : t("actions.signInAndStart")}
               </button>
 
               {!hasSession && (
                 <p className="mt-3 text-center text-xs text-slate-500">
-                  You need a candidate account to continue.{" "}
+                  {t("actions.needAccount")}{" "}
                   <a href={`/candidate/register?redirect=/employee/invite/${token}`} className="text-emerald-300 hover:underline">
-                    Register here
+                    {t("actions.register")}
                   </a>
                 </p>
               )}
@@ -192,23 +191,23 @@ export default function EmployeeInvitePage() {
         </section>
 
         <aside className="rounded-[32px] border border-slate-800 bg-slate-950/70 p-8">
-          <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Before you begin</div>
+          <div className="text-xs uppercase tracking-[0.2em] text-slate-500">{t("checklist.title")}</div>
           <div className="mt-5 space-y-5">
             <ChecklistItem
-              title="Use the invited email"
-              body="The assessment is locked to the email on this page. A different candidate account will be rejected."
+              title={t("checklist.emailTitle")}
+              body={t("checklist.emailBody")}
             />
             <ChecklistItem
-              title="Keep enough time"
-              body="Once started, the flow becomes an in-progress private campaign linked to your account."
+              title={t("checklist.timeTitle")}
+              body={t("checklist.timeBody")}
             />
             <ChecklistItem
-              title="Private by design"
-              body="This report will not be exposed in the public candidate marketplace."
+              title={t("checklist.privateTitle")}
+              body={t("checklist.privateBody")}
             />
             <ChecklistItem
-              title="Template-aware"
-              body={info.template_name ? `This campaign uses the "${info.template_name}" template.` : "This campaign uses the adaptive default interview."}
+              title={t("checklist.templateTitle")}
+              body={info.template_name ? t("checklist.templateCustom", { name: info.template_name }) : t("checklist.templateDefault")}
             />
           </div>
         </aside>

@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "NEXT_DIST_DIR=.next-build next build",
+    "build": "rm -rf .next-dev/types && NEXT_DIST_DIR=.next-build next build",
     "start": "NEXT_DIST_DIR=.next-build next start",
     "lint": "next lint"
   },
@@ -12,6 +12,7 @@
     "clsx": "^2.1.1",
     "face-api.js": "^0.22.2",
     "next": "14.2.35",
+    "next-intl": "^4.8.3",
     "react": "^18",
     "react-dom": "^18",
     "tailwind-merge": "^2.5.2"

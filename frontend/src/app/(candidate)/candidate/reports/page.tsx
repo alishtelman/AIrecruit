@@ -1,31 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { Link, useRouter } from "@/i18n/navigation";
 import { interviewApi } from "@/lib/api";
 import type { InterviewListItem, InterviewStatus } from "@/lib/types";
 
-const ROLE_LABELS: Record<string, string> = {
-  backend_engineer: "Backend Engineer",
-  frontend_engineer: "Frontend Engineer",
-  qa_engineer: "QA Engineer",
-  devops_engineer: "DevOps Engineer",
-  data_scientist: "Data Scientist",
-  product_manager: "Product Manager",
-  mobile_engineer: "Mobile Engineer",
-  designer: "UX/UI Designer",
-};
-
-const STATUS_CONFIG: Record<InterviewStatus, { label: string; className: string }> = {
-  created:          { label: "Created",          className: "text-slate-400" },
-  in_progress:      { label: "In Progress",      className: "text-yellow-400" },
-  completed:        { label: "Processing…",      className: "text-blue-400" },
-  report_generated: { label: "Report Ready",     className: "text-green-400" },
-  failed:           { label: "Failed",           className: "text-red-400" },
-};
-
 export default function ReportsPage() {
+  const t = useTranslations("candidateReports");
+  const startT = useTranslations("interviewStart");
   const router = useRouter();
   const [interviews, setInterviews] = useState<InterviewListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,31 +21,51 @@ export default function ReportsPage() {
         if (err.message?.includes("401") || err.message?.includes("403")) {
           router.push("/candidate/login");
         } else {
-          setError(err.message ?? "Failed to load interviews");
+          setError(err.message ?? t("loadFailed"));
         }
       })
       .finally(() => setLoading(false));
-  }, [router]);
+  }, [router, t]);
+
+  const statusConfig: Record<InterviewStatus, { label: string; className: string }> = {
+    created: { label: t("statuses.created"), className: "text-slate-400" },
+    in_progress: { label: t("statuses.in_progress"), className: "text-yellow-400" },
+    completed: { label: t("statuses.completed"), className: "text-blue-400" },
+    report_generated: { label: t("statuses.report_generated"), className: "text-green-400" },
+    failed: { label: t("statuses.failed"), className: "text-red-400" },
+  };
 
   return (
     <div className="min-h-screen bg-slate-900 px-4 py-10">
       <div className="max-w-2xl mx-auto">
         <Link href="/candidate/dashboard" className="text-slate-400 hover:text-white text-sm mb-6 inline-block transition-colors">
-          ← Back to dashboard
+          ← {t("back")}
         </Link>
 
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold text-white">My Interviews</h1>
+          <h1 className="text-2xl font-bold text-white">{t("title")}</h1>
           <Link
             href="/candidate/interview/start"
             className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
           >
-            + New Interview
+            {t("newInterview")}
           </Link>
         </div>
 
         {loading && (
-          <div className="text-center py-16 text-slate-400">Loading…</div>
+          <div className="space-y-3">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="bg-slate-800 border border-slate-700 rounded-xl p-5 flex items-center justify-between gap-4 animate-pulse">
+                <div className="space-y-2">
+                  <div className="h-4 w-36 bg-slate-700 rounded" />
+                  <div className="h-3 w-20 bg-slate-700 rounded" />
+                  <div className="h-3 w-24 bg-slate-700 rounded" />
+                </div>
+                <div className="h-3 w-20 bg-slate-700 rounded" />
+                <div className="h-9 w-24 bg-slate-700 rounded-lg" />
+              </div>
+            ))}
+          </div>
         )}
 
         {error && (
@@ -73,16 +76,16 @@ export default function ReportsPage() {
 
         {!loading && !error && interviews.length === 0 && (
           <div className="bg-slate-800 border border-slate-700 rounded-xl p-12 text-center">
-            <div className="text-4xl mb-4">📊</div>
-            <h2 className="text-white font-semibold text-lg mb-2">No interviews yet</h2>
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-700 bg-slate-900 text-xs font-semibold tracking-[0.2em] text-slate-400">AR</div>
+            <h2 className="text-white font-semibold text-lg mb-2">{t("emptyTitle")}</h2>
             <p className="text-slate-400 text-sm max-w-sm mx-auto mb-6">
-              Complete an AI interview to receive your assessment report.
+              {t("emptyDescription")}
             </p>
             <Link
               href="/candidate/interview/start"
               className="inline-block bg-blue-600 hover:bg-blue-500 text-white font-semibold px-6 py-2.5 rounded-lg transition-colors"
             >
-              Start Interview
+              {t("startInterview")}
             </Link>
           </div>
         )}
@@ -90,8 +93,8 @@ export default function ReportsPage() {
         {!loading && interviews.length > 0 && (
           <div className="space-y-3">
             {interviews.map((item) => {
-              const status = STATUS_CONFIG[item.status] ?? STATUS_CONFIG.created;
-              const role = ROLE_LABELS[item.target_role] ?? item.target_role;
+              const status = statusConfig[item.status] ?? statusConfig.created;
+              const role = startT(`roles.${item.target_role}.label`);
               const date = item.started_at
                 ? new Date(item.started_at).toLocaleDateString()
                 : "—";
@@ -108,7 +111,7 @@ export default function ReportsPage() {
                   </div>
 
                   <div className="text-sm text-slate-500 shrink-0">
-                    {item.question_count}/{item.max_questions} questions
+                    {t("questions", {current: item.question_count, total: item.max_questions})}
                   </div>
 
                   <div className="shrink-0 flex flex-col gap-2 items-end">
@@ -118,13 +121,13 @@ export default function ReportsPage() {
                           href={`/candidate/reports/${item.report_id}`}
                           className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
                         >
-                          View Report
+                          {t("viewReport")}
                         </Link>
                         <Link
                           href={`/candidate/interview/start?role=${item.target_role}`}
                           className="bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors"
                         >
-                          Retake
+                          {t("retake")}
                         </Link>
                       </>
                     ) : item.status === "in_progress" ? (
@@ -132,7 +135,7 @@ export default function ReportsPage() {
                         href={`/candidate/interview/${item.interview_id}`}
                         className="bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
                       >
-                        Continue
+                        {t("continue")}
                       </Link>
                     ) : (
                       <span className="text-slate-600 text-sm">—</span>
