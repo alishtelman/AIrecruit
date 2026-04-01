@@ -44,6 +44,30 @@ class ReportSummaryBlock(BaseModel):
     top_weaknesses: list[str]
 
 
+class InterviewSummaryModel(BaseModel):
+    class TopicOutcome(BaseModel):
+        slot: int
+        label: str
+        signal: str
+        outcome: str
+        verification_target: str | None = None
+
+    role: str
+    core_topics: int
+    total_turns: int
+    extra_turns: int
+    covered_competencies: int
+    coverage_label: str
+    signal_quality: str
+    validated_topics: int = 0
+    partial_topics: int = 0
+    unverified_claim_topics: int = 0
+    honest_gaps: int
+    generic_or_evasive_topics: int
+    strong_topics: int
+    topic_outcomes: list[TopicOutcome] = []
+
+
 class AssessmentReportResponse(BaseModel):
     id: uuid.UUID
     interview_id: uuid.UUID
@@ -75,8 +99,26 @@ class AssessmentReportResponse(BaseModel):
     cheat_risk_score: float | None = None
     cheat_flags: list[str] | None = None
     summary: ReportSummaryBlock | None = None
+    summary_model: InterviewSummaryModel | None = None
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _pull_summary_model(cls, data):
+        full_report_json = None
+        if isinstance(data, dict):
+            full_report_json = data.get("full_report_json")
+        else:
+            full_report_json = getattr(data, "full_report_json", None)
+
+        if isinstance(full_report_json, dict):
+            summary_model = full_report_json.get("summary_model")
+            if isinstance(data, dict):
+                data["summary_model"] = summary_model
+            else:
+                setattr(data, "summary_model", summary_model)
+        return data
 
     @model_validator(mode="after")
     def _build_summary(self) -> "AssessmentReportResponse":

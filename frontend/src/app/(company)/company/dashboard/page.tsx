@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
-import { LocaleSwitcher } from "@/components/locale-switcher";
+import { CompanyWorkspaceHeader } from "@/components/company-workspace-header";
 import { companyApi } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import type {
@@ -44,6 +44,7 @@ const ROLE_VALUES = [
 ] as const;
 
 type DashboardTab = "candidates" | "analytics";
+type DashboardSort = NonNullable<CompanyCandidateSearchParams["sort"]>;
 
 type FilterDraft = {
   q: string;
@@ -55,7 +56,7 @@ type FilterDraft = {
   salaryMax: string;
   hireOutcome: string;
   shortlistId: string;
-  sort: CompanyCandidateSearchParams["sort"];
+  sort: DashboardSort;
 };
 
 const DEFAULT_FILTERS: FilterDraft = {
@@ -115,6 +116,15 @@ function formatSalaryBand(
     return null;
   }
   return `${Math.round(band.range_min).toLocaleString()}–${Math.round(band.range_max).toLocaleString()} ${currency}`;
+}
+
+function normalizeDashboardError(message: string | undefined, fallback: string) {
+  if (!message) return fallback;
+  const normalized = message.trim().toLowerCase();
+  if (normalized === "company access required") {
+    return fallback;
+  }
+  return message;
 }
 
 function MetricCard({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "good" | "warn" }) {
@@ -229,8 +239,11 @@ function ComparePanel({ candidates, onRemove }: { candidates: CandidateListItem[
 export default function CompanyDashboardPage() {
   const t = useTranslations("companyDashboard");
   const startT = useTranslations("interviewStart");
-  const common = useTranslations("common");
-  const { user, loading: authLoading, logout } = useAuth("/company/login");
+  const { user, loading: authLoading, logout } = useAuth({
+    redirectTo: "/company/login",
+    allowedRoles: ["company_admin", "company_member"],
+    unauthorizedRedirectTo: "/candidate/dashboard",
+  });
   const [tab, setTab] = useState<DashboardTab>("candidates");
   const [draftFilters, setDraftFilters] = useState<FilterDraft>(DEFAULT_FILTERS);
   const [filters, setFilters] = useState<CompanyCandidateSearchParams>({ sort: "score_desc" });
@@ -263,7 +276,7 @@ export default function CompanyDashboardPage() {
     companyApi
       .listShortlists()
       .then(setShortlists)
-      .catch((err) => setShortlistsError(err.message ?? t("errors.loadShortlists")))
+      .catch((err) => setShortlistsError(normalizeDashboardError(err.message, t("errors.loadShortlists"))))
       .finally(() => setShortlistsLoading(false));
   }, [authLoading, t]);
 
@@ -277,9 +290,9 @@ export default function CompanyDashboardPage() {
         setCandidates(items);
         setSelectedCandidateIds((current) => current.filter((id) => items.some((item) => item.candidate_id === id)));
       })
-      .catch((err) => setCandidatesError(err.message ?? t("errors.loadCandidates")))
+      .catch((err) => setCandidatesError(normalizeDashboardError(err.message, t("errors.loadCandidates"))))
       .finally(() => setLoadingCandidates(false));
-  }, [authLoading, filters]);
+  }, [authLoading, filters, t]);
 
   useEffect(() => {
     if (authLoading || tab !== "analytics") return;
@@ -298,9 +311,9 @@ export default function CompanyDashboardPage() {
         setAnalyticsFunnel(funnel);
         setAnalyticsSalary(salary);
       })
-      .catch((err) => setAnalyticsError(err.message ?? t("errors.loadAnalytics")))
+      .catch((err) => setAnalyticsError(normalizeDashboardError(err.message, t("errors.loadAnalytics"))))
       .finally(() => setAnalyticsLoading(false));
-  }, [authLoading, tab, filters.role, filters.shortlist_id]);
+  }, [authLoading, tab, filters.role, filters.shortlist_id, t]);
 
   async function refreshCandidateWorkspace() {
     const [candidateItems, shortlistItems] = await Promise.all([
@@ -338,7 +351,7 @@ export default function CompanyDashboardPage() {
       setShortlists((current) => [created, ...current]);
       setNewShortlistName("");
     } catch (err: unknown) {
-      setShortlistsError(err instanceof Error ? err.message : t("errors.createShortlist"));
+      setShortlistsError(err instanceof Error ? normalizeDashboardError(err.message, t("errors.createShortlist")) : t("errors.createShortlist"));
     } finally {
       setCreatingShortlist(false);
     }
@@ -360,7 +373,7 @@ export default function CompanyDashboardPage() {
       }
       setShortlists((current) => current.filter((shortlist) => shortlist.shortlist_id !== shortlistId));
     } catch (err: unknown) {
-      setShortlistsError(err instanceof Error ? err.message : t("errors.deleteShortlist"));
+      setShortlistsError(err instanceof Error ? normalizeDashboardError(err.message, t("errors.deleteShortlist")) : t("errors.deleteShortlist"));
     }
   }
 
@@ -377,7 +390,7 @@ export default function CompanyDashboardPage() {
       }
       await refreshCandidateWorkspace();
     } catch (err: unknown) {
-      setCandidatesError(err instanceof Error ? err.message : t("errors.updateShortlist"));
+      setCandidatesError(err instanceof Error ? normalizeDashboardError(err.message, t("errors.updateShortlist")) : t("errors.updateShortlist"));
     }
   }
 
@@ -402,35 +415,30 @@ export default function CompanyDashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 px-4 py-8">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between mb-8">
-          <div>
-            <h1 className="text-2xl font-bold text-white">{t("title")}</h1>
-            <p className="text-slate-400 text-sm mt-1">{t("subtitle")}</p>
+    <div className="ai-shell min-h-screen px-4 py-10">
+      <div className="ai-section max-w-7xl mx-auto">
+        <CompanyWorkspaceHeader onLogout={logout} />
+
+        <div className="mb-8">
+          <section className="ai-panel-strong rounded-[2rem] p-7">
+            <div className="ai-kicker mb-5">{t("nav.workspace")}</div>
+            <h1 className="text-3xl font-semibold tracking-[-0.03em] text-white">{t("title")}</h1>
+            <p className="mt-2 max-w-3xl text-slate-400">{t("subtitle")}</p>
             {companyRole === "viewer" && (
-              <p className="text-amber-300 text-sm mt-2">{t("viewerMode")}</p>
+              <p className="mt-2 text-sm text-amber-300">{t("viewerMode")}</p>
             )}
-          </div>
-          <div className="flex items-center gap-3 flex-wrap">
-            <LocaleSwitcher />
-            <Link href="/company/templates" className="text-slate-400 hover:text-white text-sm transition-colors">{t("nav.templates")}</Link>
-            <Link href="/company/employees" className="text-slate-400 hover:text-white text-sm transition-colors">{t("nav.employees")}</Link>
-            <Link href="/company/team" className="text-slate-400 hover:text-white text-sm transition-colors">{t("nav.team")}</Link>
-            <Link href="/company/settings" className="text-slate-400 hover:text-white text-sm transition-colors">{t("nav.settings")}</Link>
-            <button onClick={logout} className="text-slate-400 hover:text-white text-sm transition-colors">{common("actions.signOut")}</button>
-          </div>
+          </section>
         </div>
 
-        <div className="flex items-center gap-2 mb-6">
+        <div className="mb-6 flex items-center gap-2">
           {(["candidates", "analytics"] as DashboardTab[]).map((value) => (
             <button
               key={value}
               onClick={() => setTab(value)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              className={`rounded-xl px-4 py-2.5 text-sm font-medium transition-colors ${
                 tab === value
-                  ? "bg-blue-600 text-white"
-                  : "bg-slate-800 text-slate-400 hover:text-white"
+                  ? "ai-button-primary text-white"
+                  : "ai-panel border border-white/6 text-slate-400 hover:text-white"
               }`}
             >
               {pageTitle[value]}
@@ -440,8 +448,8 @@ export default function CompanyDashboardPage() {
 
         {tab === "candidates" && (
           <>
-            <div className="grid gap-6 xl:grid-cols-[1.7fr,1fr] mb-6">
-              <form onSubmit={applyFilters} className="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+            <div className="mb-6 grid gap-6 xl:grid-cols-[1.7fr,1fr]">
+              <form onSubmit={applyFilters} className="ai-panel rounded-[1.8rem] p-6 space-y-4">
                 <div className="flex items-center justify-between">
                   <h2 className="text-white font-semibold">{t("search.title")}</h2>
                   <button type="button" onClick={resetFilters} className="text-slate-400 hover:text-white text-sm transition-colors">
@@ -454,24 +462,23 @@ export default function CompanyDashboardPage() {
                     placeholder={t("search.nameOrEmail")}
                     value={draftFilters.q}
                     onChange={(e) => setDraftFilters({ ...draftFilters, q: e.target.value })}
-                    className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="ai-input rounded-xl px-4 py-2.5 text-sm"
                   />
-                  <select
+                  <DashboardSelect
                     value={draftFilters.role}
                     onChange={(e) => setDraftFilters({ ...draftFilters, role: e.target.value })}
-                    className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">{t("search.allRoles")}</option>
                     {ROLE_VALUES.map((value) => (
                       <option key={value} value={value}>{roleLabel(value)}</option>
                     ))}
-                  </select>
+                  </DashboardSelect>
                   <input
                     type="text"
                     placeholder={t("search.skills")}
                     value={draftFilters.skills}
                     onChange={(e) => setDraftFilters({ ...draftFilters, skills: e.target.value })}
-                    className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="ai-input rounded-xl px-4 py-2.5 text-sm"
                   />
                   <input
                     type="number"
@@ -481,37 +488,35 @@ export default function CompanyDashboardPage() {
                     placeholder={t("search.minScore")}
                     value={draftFilters.minScore}
                     onChange={(e) => setDraftFilters({ ...draftFilters, minScore: e.target.value })}
-                    className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="ai-input rounded-xl px-4 py-2.5 text-sm"
                   />
-                  <select
+                  <DashboardSelect
                     value={draftFilters.recommendation}
                     onChange={(e) => setDraftFilters({ ...draftFilters, recommendation: e.target.value })}
-                    className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">{t("search.allRecommendations")}</option>
                     <option value="strong_yes">{t("recommendations.strong_yes")}</option>
                     <option value="yes">{t("recommendations.yes")}</option>
                     <option value="maybe">{t("recommendations.maybe")}</option>
                     <option value="no">{t("recommendations.no")}</option>
-                  </select>
-                  <select
+                  </DashboardSelect>
+                  <DashboardSelect
                     value={draftFilters.hireOutcome}
                     onChange={(e) => setDraftFilters({ ...draftFilters, hireOutcome: e.target.value })}
-                    className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">{t("search.allDecisions")}</option>
                     <option value="hired">{t("outcomes.hired")}</option>
                     <option value="interviewing">{t("outcomes.interviewing")}</option>
                     <option value="rejected">{t("outcomes.rejected")}</option>
                     <option value="no_show">{t("outcomes.no_show")}</option>
-                  </select>
+                  </DashboardSelect>
                   <input
                     type="number"
                     min="0"
                     placeholder={t("search.salaryMin")}
                     value={draftFilters.salaryMin}
                     onChange={(e) => setDraftFilters({ ...draftFilters, salaryMin: e.target.value })}
-                    className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="ai-input rounded-xl px-4 py-2.5 text-sm"
                   />
                   <input
                     type="number"
@@ -519,12 +524,11 @@ export default function CompanyDashboardPage() {
                     placeholder={t("search.salaryMax")}
                     value={draftFilters.salaryMax}
                     onChange={(e) => setDraftFilters({ ...draftFilters, salaryMax: e.target.value })}
-                    className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="ai-input rounded-xl px-4 py-2.5 text-sm"
                   />
-                  <select
+                  <DashboardSelect
                     value={draftFilters.shortlistId}
                     onChange={(e) => setDraftFilters({ ...draftFilters, shortlistId: e.target.value })}
-                    className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">{t("search.allShortlists")}</option>
                     {shortlists.map((shortlist) => (
@@ -532,18 +536,17 @@ export default function CompanyDashboardPage() {
                         {shortlist.name}
                       </option>
                     ))}
-                  </select>
-                  <select
+                  </DashboardSelect>
+                  <DashboardSelect
                     value={draftFilters.sort}
-                    onChange={(e) => setDraftFilters({ ...draftFilters, sort: e.target.value as FilterDraft["sort"] })}
-                    className="bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    onChange={(e) => setDraftFilters({ ...draftFilters, sort: e.target.value as DashboardSort })}
                   >
                     <option value="score_desc">{t("search.sortScoreDesc")}</option>
                     <option value="score_asc">{t("search.sortScoreAsc")}</option>
                     <option value="latest">{t("search.sortLatest")}</option>
                     <option value="salary_asc">{t("search.sortSalaryAsc")}</option>
                     <option value="salary_desc">{t("search.sortSalaryDesc")}</option>
-                  </select>
+                  </DashboardSelect>
                 </div>
                 <div className="flex items-center justify-between">
                   <p className="text-slate-500 text-sm">
@@ -551,14 +554,14 @@ export default function CompanyDashboardPage() {
                   </p>
                   <button
                     type="submit"
-                    className="bg-blue-600 hover:bg-blue-500 text-white font-medium text-sm px-4 py-2 rounded-lg transition-colors"
+                    className="ai-button-primary rounded-xl px-4 py-2.5 text-sm font-medium text-white"
                   >
                     {t("search.apply")}
                   </button>
                 </div>
               </form>
 
-              <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+              <div className="ai-panel rounded-[1.8rem] p-6 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-white font-semibold">{t("shortlists.title")}</h2>
@@ -572,12 +575,12 @@ export default function CompanyDashboardPage() {
                     onChange={(e) => setNewShortlistName(e.target.value)}
                     placeholder={t("shortlists.placeholder")}
                     disabled={!canManagePipeline}
-                    className="flex-1 bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="ai-input flex-1 rounded-xl px-4 py-2.5 text-sm"
                   />
                   <button
                     type="submit"
                     disabled={creatingShortlist || !canManagePipeline}
-                    className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+                    className="ai-button-primary rounded-xl px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
                   >
                     {creatingShortlist ? t("shortlists.creating") : t("shortlists.create")}
                   </button>
@@ -590,7 +593,7 @@ export default function CompanyDashboardPage() {
                 ) : (
                   <div className="space-y-2">
                     {shortlists.map((shortlist) => (
-                      <div key={shortlist.shortlist_id} className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-900 px-3 py-2">
+                      <div key={shortlist.shortlist_id} className="flex items-center justify-between rounded-xl border border-white/6 bg-slate-950/35 px-4 py-3">
                         <div>
                           <p className="text-white text-sm font-medium">{shortlist.name}</p>
                           <p className="text-slate-500 text-xs">{t("shortlists.candidateCount", { count: shortlist.candidate_count })}</p>
@@ -623,7 +626,7 @@ export default function CompanyDashboardPage() {
             {loadingCandidates ? (
               <div className="text-center py-16 text-slate-400">{t("candidates.loading")}</div>
             ) : candidates.length === 0 ? (
-              <div className="bg-slate-800 border border-slate-700 rounded-xl p-12 text-center">
+              <div className="ai-panel rounded-[1.8rem] p-12 text-center">
                 <h2 className="text-white font-semibold text-lg mb-2">{t("candidates.emptyTitle")}</h2>
                 <p className="text-slate-400 text-sm max-w-lg mx-auto">
                   {t("candidates.emptyDescription")}
@@ -635,7 +638,7 @@ export default function CompanyDashboardPage() {
                   const rec = REC_STYLES[candidate.hiring_recommendation] ?? REC_STYLES.maybe;
                   const selected = selectedCandidateIds.includes(candidate.candidate_id);
                   return (
-                    <div key={candidate.candidate_id} className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+                    <div key={candidate.candidate_id} className="ai-panel rounded-[1.8rem] p-5">
                       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-3 flex-wrap mb-2">
@@ -698,7 +701,7 @@ export default function CompanyDashboardPage() {
                               {selected ? t("candidates.selectedForCompare") : t("candidates.selectToCompare")}
                             </button>
                           </div>
-                          <div className="rounded-lg border border-slate-700 bg-slate-900 p-3">
+                          <div className="rounded-xl border border-white/6 bg-slate-950/35 p-3">
                             <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">{t("candidates.shortlistActions")}</p>
                             {shortlists.length === 0 ? (
                               <p className="text-slate-500 text-sm">{t("candidates.createShortlistPrompt")}</p>
@@ -754,22 +757,22 @@ export default function CompanyDashboardPage() {
                 </div>
 
                 <div className="grid gap-6 xl:grid-cols-2">
-                  <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+                  <div className="ai-panel rounded-[1.8rem] p-5">
                     <h2 className="text-white font-semibold mb-4">{t("analytics.roleBreakdown")}</h2>
                     <BreakdownList items={analyticsOverview.role_breakdown} />
                   </div>
-                  <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+                  <div className="ai-panel rounded-[1.8rem] p-5">
                     <h2 className="text-white font-semibold mb-4">{t("analytics.recommendationBreakdown")}</h2>
                     <BreakdownList items={analyticsOverview.recommendation_breakdown} />
                   </div>
                 </div>
 
                 <div className="grid gap-6 xl:grid-cols-2">
-                  <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+                  <div className="ai-panel rounded-[1.8rem] p-5">
                     <h2 className="text-white font-semibold mb-4">{t("analytics.cheatRiskDistribution")}</h2>
                     <BreakdownList items={analyticsOverview.cheat_risk_breakdown} />
                   </div>
-                  <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+                  <div className="ai-panel rounded-[1.8rem] p-5">
                     <h2 className="text-white font-semibold mb-4">{t("analytics.redFlagSummary")}</h2>
                     <div className="grid grid-cols-2 gap-3">
                       <MetricCard label={t("analytics.metrics.candidatesWithFlags")} value={analyticsOverview.red_flag_summary.candidates_with_flags.toString()} tone="warn" />
@@ -778,7 +781,7 @@ export default function CompanyDashboardPage() {
                   </div>
                 </div>
 
-                <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+                <div className="ai-panel rounded-[1.8rem] p-5">
                   <h2 className="text-white font-semibold mb-4">{t("analytics.funnelTitle")}</h2>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
@@ -810,7 +813,7 @@ export default function CompanyDashboardPage() {
                   </div>
                 </div>
 
-                <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+                <div className="ai-panel rounded-[1.8rem] p-5">
                   <div className="flex items-center justify-between mb-4">
                     <div>
                       <h2 className="text-white font-semibold">{t("analytics.salaryInsights")}</h2>
@@ -911,6 +914,33 @@ export default function CompanyDashboardPage() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function DashboardSelect({
+  value,
+  onChange,
+  children,
+}: {
+  value: string;
+  onChange: React.ChangeEventHandler<HTMLSelectElement>;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="relative">
+      <select
+        value={value}
+        onChange={onChange}
+        className="ai-select w-full appearance-none rounded-xl px-4 py-2.5 pr-12 text-sm"
+      >
+        {children}
+      </select>
+      <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-slate-400">
+        <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <path d="M6 8l4 4 4-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </span>
     </div>
   );
 }

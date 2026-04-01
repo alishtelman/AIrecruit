@@ -24,7 +24,12 @@ from tests.conftest import auth_headers
 
 TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL",
-    "postgresql+asyncpg://recruiting:recruiting@localhost:5433/recruiting",
+    "postgresql+asyncpg://recruiting:recruiting@postgres:5432/recruiting",
+)
+
+INTERVIEW_TEST_ANSWER = (
+    "Я решил задачу по шагам и потому что это снижало риски, "
+    "сначала проверял крайние случаи и только потом двигался дальше."
 )
 
 
@@ -62,7 +67,7 @@ async def _complete_interview(client: AsyncClient, token: str, role: str = "back
         msg = await client.post(
             f"/api/v1/interviews/{interview_id}/message",
             headers=auth_headers(token),
-            json={"message": f"My answer {i + 1} for {role}"},
+            json={"message": INTERVIEW_TEST_ANSWER},
         )
         assert msg.status_code == 200, msg.text
 

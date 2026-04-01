@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useParams } from "next/navigation";
 import { useRouter } from "@/i18n/navigation";
+import { CompanyWorkspaceHeader } from "@/components/company-workspace-header";
 import { useAuth } from "@/hooks/useAuth";
 import { companyApi } from "@/lib/api";
 import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis } from "@/lib/types";
@@ -39,7 +40,11 @@ export default function CompanyReportPage() {
   const dashboardT = useTranslations("companyDashboard");
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { loading: authLoading } = useAuth("/company/login");
+  const { loading: authLoading, logout } = useAuth({
+    redirectTo: "/company/login",
+    allowedRoles: ["company_admin", "company_member"],
+    unauthorizedRedirectTo: "/candidate/dashboard",
+  });
   const [report, setReport] = useState<AssessmentReport | null>(null);
   const [error, setError] = useState("");
   const [expandedQ, setExpandedQ] = useState<number | null>(null);
@@ -47,7 +52,7 @@ export default function CompanyReportPage() {
   useEffect(() => {
     if (!id || authLoading) return;
     companyApi.getReport(id).then(setReport).catch(() => setError(t("loadFailed")));
-  }, [id, authLoading]);
+  }, [id, authLoading, t]);
 
   if (authLoading || (!report && !error)) {
     return <div className="min-h-screen bg-slate-900 flex items-center justify-center"><div className="text-slate-400">{t("loadFailed")}</div></div>;
@@ -67,19 +72,25 @@ export default function CompanyReportPage() {
   const rec = RECOMMENDATION_CONFIG[report.hiring_recommendation];
 
   return (
-    <div className="min-h-screen bg-slate-900 px-4 py-10">
-      <div className="max-w-3xl mx-auto">
-        <button onClick={() => router.back()} className="text-slate-400 hover:text-white text-sm mb-6 inline-block transition-colors">
-          ← {t("backToDashboard")}
-        </button>
-
-        <h1 className="text-2xl font-bold text-white mb-2">{t("title")}</h1>
-
-        {report.interview_summary && <p className="text-slate-400 mb-6">{report.interview_summary}</p>}
-
-        <div className={`inline-flex items-center gap-2 border rounded-full px-4 py-1.5 text-sm font-semibold mb-6 ${rec.bg} ${rec.color}`}>
-          {t("recommendation")}: {dashboardT(`recommendations.${report.hiring_recommendation}`)}
+    <div className="ai-shell min-h-screen px-4 py-10">
+      <div className="ai-section max-w-4xl mx-auto">
+        <CompanyWorkspaceHeader onLogout={logout} />
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <button onClick={() => router.back()} className="text-slate-400 hover:text-white text-sm inline-block transition-colors">
+            ← {t("backToDashboard")}
+          </button>
         </div>
+
+        <div className="ai-panel-strong mb-6 rounded-[2rem] p-7">
+          <h1 className="mb-2 text-3xl font-semibold tracking-[-0.03em] text-white">{t("title")}</h1>
+          {report.interview_summary && <p className="max-w-3xl text-slate-400">{report.interview_summary}</p>}
+
+          <div className={`mt-5 inline-flex items-center gap-2 border rounded-full px-4 py-1.5 text-sm font-semibold ${rec.bg} ${rec.color}`}>
+            {t("recommendation")}: {dashboardT(`recommendations.${report.hiring_recommendation}`)}
+          </div>
+        </div>
+
+        {report.summary_model && <InterviewSummaryPanel summaryModel={report.summary_model} />}
 
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
           <ScoreCard label={t("overallScore")} score={report.overall_score} highlight />
@@ -170,6 +181,43 @@ export default function CompanyReportPage() {
   );
 }
 
+function InterviewSummaryPanel({ summaryModel }: { summaryModel: AssessmentReport["summary_model"] }) {
+  const t = useTranslations("report");
+
+  if (!summaryModel) return null;
+
+  const items = [
+    { label: t("summaryModel.coreTopics"), value: summaryModel.core_topics },
+    { label: t("summaryModel.extraTurns"), value: summaryModel.extra_turns },
+    { label: t("summaryModel.coveredCompetencies"), value: summaryModel.covered_competencies },
+    { label: t("summaryModel.strongTopics"), value: summaryModel.strong_topics },
+    { label: t("summaryModel.honestGaps"), value: summaryModel.honest_gaps },
+    { label: t("summaryModel.genericTopics"), value: summaryModel.generic_or_evasive_topics },
+  ];
+
+  return (
+    <div className="mb-6 rounded-2xl border border-slate-700 bg-slate-800/80 p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs uppercase tracking-[0.24em] text-slate-500">{t("summaryModel.eyebrow")}</div>
+          <div className="text-sm font-semibold text-white">{t("summaryModel.title")}</div>
+        </div>
+        <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-300">
+          {t(`summaryModel.signal.${summaryModel.signal_quality}`)}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {items.map((item) => (
+          <div key={item.label} className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-3">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{item.label}</div>
+            <div className="mt-1 text-xl font-semibold text-white">{item.value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ScoreCard({ label, score, highlight = false }: { label: string; score: number | null; highlight?: boolean }) {
   const value = score ?? 0;
   return (
@@ -193,7 +241,7 @@ function CompetencyHeatmap({ scores }: { scores: CompetencyScore[] }) {
     <div className="space-y-4">
       {Object.entries(groups).map(([category, items]) => (
         <div key={category}>
-          <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">{CATEGORY_LABELS[category] ? t(`labels.${category}`) : category}</div>
+          <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">{CATEGORY_COLORS[category] ? t(`labels.${category}`) : category}</div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {items.map((cs, i) => {
               const cellClass = cs.score >= 7 ? "bg-green-500/30 border-green-500/50 text-green-300" : cs.score >= 5 ? "bg-yellow-500/30 border-yellow-500/50 text-yellow-300" : "bg-red-500/30 border-red-500/50 text-red-300";

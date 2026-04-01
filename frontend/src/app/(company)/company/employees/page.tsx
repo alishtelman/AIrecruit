@@ -1,5 +1,6 @@
 "use client";
 
+import { CompanyWorkspaceHeader } from "@/components/company-workspace-header";
 import { Link } from "@/i18n/navigation";
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -52,7 +53,11 @@ const BLANK_FORM: AssessmentFormState = {
 export default function EmployeesPage() {
   const t = useTranslations("companyEmployees");
   const roleT = useTranslations("interviewStart.roles");
-  const { user, loading: authLoading } = useAuth("/company/login");
+  const { user, loading: authLoading, logout } = useAuth({
+    redirectTo: "/company/login",
+    allowedRoles: ["company_admin", "company_member"],
+    unauthorizedRedirectTo: "/candidate/dashboard",
+  });
   const [assessments, setAssessments] = useState<CompanyAssessment[]>([]);
   const [templates, setTemplates] = useState<InterviewTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -145,32 +150,35 @@ export default function EmployeesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 px-4 py-8">
-      <div className="mx-auto max-w-6xl space-y-8">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <Link href="/company/dashboard" className="text-sm text-slate-400 transition-colors hover:text-white">
+    <div className="ai-shell min-h-screen px-4 py-10">
+      <div className="ai-section mx-auto max-w-6xl space-y-8">
+        <CompanyWorkspaceHeader onLogout={logout} />
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <Link href="/company/dashboard" className="text-sm text-slate-400 transition-colors hover:text-white">
               ← {t("back")}
-            </Link>
-            <h1 className="mt-3 text-3xl font-semibold text-white">{t("title")}</h1>
-            <p className="mt-2 max-w-2xl text-sm text-slate-400">
-              {t("subtitle")}
-            </p>
-            {!canManageCampaigns && (
-              <p className="mt-2 text-sm text-amber-300">{t("readonly")}</p>
-            )}
-          </div>
-          <button
-            onClick={() => {
-              setShowForm(!showForm);
-              setCreatedInvite(null);
-              setFormError("");
-            }}
-            disabled={!canManageCampaigns}
-            className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
-          >
-            {showForm ? t("closeForm") : t("new")}
-          </button>
+          </Link>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[1.55fr_1fr]">
+          <section className="ai-panel-strong rounded-[2rem] p-7">
+            <div className="ai-kicker mb-5">{t("title")}</div>
+            <h1 className="text-3xl font-semibold tracking-[-0.03em] text-white">{t("title")}</h1>
+            <p className="mt-2 max-w-2xl text-sm text-slate-400">{t("subtitle")}</p>
+            {!canManageCampaigns && <p className="mt-3 text-sm text-amber-300">{t("readonly")}</p>}
+          </section>
+          <aside className="ai-panel rounded-[1.8rem] p-6">
+            <button
+              onClick={() => {
+                setShowForm(!showForm);
+                setCreatedInvite(null);
+                setFormError("");
+              }}
+              disabled={!canManageCampaigns}
+              className="ai-button-primary w-full rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:opacity-50"
+            >
+              {showForm ? t("closeForm") : t("new")}
+            </button>
+          </aside>
         </div>
 
         <div className="grid gap-4 md:grid-cols-4">
@@ -216,23 +224,19 @@ export default function EmployeesPage() {
         )}
 
         {showForm && (
-          <form onSubmit={handleCreate} className="grid gap-6 rounded-3xl border border-slate-800 bg-slate-900/80 p-6 lg:grid-cols-[1.3fr_0.9fr]">
+          <form onSubmit={handleCreate} className="grid gap-6 rounded-[1.8rem] border border-white/6 bg-slate-900/70 p-6 lg:grid-cols-[1.3fr_0.9fr]">
             <div className="space-y-5">
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <label className="mb-1.5 block text-sm text-slate-300">{t("form.inviteType")}</label>
-                  <select
-                    value={form.assessment_type}
-                    onChange={(e) => setForm({ ...form, assessment_type: e.target.value as AssessmentType })}
-                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
+                  <SelectField value={form.assessment_type} onChange={(e) => setForm({ ...form, assessment_type: e.target.value as AssessmentType })}>
                     <option value="employee_internal">{t("labels.employeeInternal")}</option>
                     <option value="candidate_external">{t("labels.candidateExternal")}</option>
-                  </select>
+                  </SelectField>
                 </div>
                 <div>
                   <label className="mb-1.5 block text-sm text-slate-300">{t("form.targetRole")}</label>
-                  <select
+                  <SelectField
                     value={form.target_role}
                     onChange={(e) => {
                       const nextRole = e.target.value as TargetRole;
@@ -240,14 +244,13 @@ export default function EmployeesPage() {
                         selectedTemplate && selectedTemplate.target_role !== nextRole ? "" : form.template_id;
                       setForm({ ...form, target_role: nextRole, template_id: nextTemplateId });
                     }}
-                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     {ROLES.map((role) => (
                       <option key={role} value={role}>
                         {roleT(role)}
                       </option>
                     ))}
-                  </select>
+                  </SelectField>
                 </div>
               </div>
 
@@ -271,7 +274,7 @@ export default function EmployeesPage() {
 
               <div>
                 <label className="mb-1.5 block text-sm text-slate-300">{t("form.optionalTemplate")}</label>
-                <select
+                <SelectField
                   value={form.template_id}
                   onChange={(e) => {
                     const templateId = e.target.value;
@@ -282,7 +285,6 @@ export default function EmployeesPage() {
                       target_role: (template?.target_role as TargetRole | undefined) ?? form.target_role,
                     });
                   }}
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="">{t("form.defaultAdaptive")}</option>
                   {templates
@@ -292,7 +294,7 @@ export default function EmployeesPage() {
                         {template.name} · {roleT(template.target_role)}
                       </option>
                     ))}
-                </select>
+                </SelectField>
                 {selectedTemplate && (
                   <p className="mt-2 text-xs text-slate-500">
                     {t("form.templateLocked", {
@@ -342,13 +344,13 @@ export default function EmployeesPage() {
               <button
                 type="submit"
                 disabled={saving}
-                className="w-full rounded-2xl bg-blue-600 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
+                className="ai-button-primary w-full rounded-2xl py-3 text-sm font-semibold text-white disabled:opacity-50"
               >
                 {saving ? t("form.creating") : t("form.submit")}
               </button>
             </div>
 
-            <div className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
+            <div className="rounded-[1.6rem] border border-white/6 bg-slate-950/60 p-5">
               <div className="text-sm font-semibold text-white">{t("guide.title")}</div>
               <ul className="mt-4 space-y-3 text-sm text-slate-400">
                 <li>{t("guide.private")}</li>
@@ -362,7 +364,7 @@ export default function EmployeesPage() {
         )}
 
         {assessments.length === 0 && !showForm ? (
-          <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-16 text-center">
+          <div className="ai-panel rounded-[1.8rem] p-16 text-center">
             <h2 className="mt-4 text-xl font-semibold text-white">{t("empty.title")}</h2>
             <p className="mx-auto mt-2 max-w-lg text-sm text-slate-400">
               {t("empty.description")}
@@ -374,7 +376,7 @@ export default function EmployeesPage() {
               const invitePath = `/employee/invite/${assessment.invite_token}`;
               const canDelete = assessment.status !== "completed" && assessment.status !== "in_progress";
               return (
-                <div key={assessment.id} className="rounded-3xl border border-slate-800 bg-slate-900/80 p-6">
+                <div key={assessment.id} className="ai-panel rounded-[1.8rem] p-6">
                   <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -508,8 +510,35 @@ function Field({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        className="ai-input w-full rounded-xl px-4 py-2.5 text-sm placeholder:text-slate-500"
       />
+    </div>
+  );
+}
+
+function SelectField({
+  value,
+  onChange,
+  children,
+}: {
+  value: string;
+  onChange: React.ChangeEventHandler<HTMLSelectElement>;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="relative">
+      <select
+        value={value}
+        onChange={onChange}
+        className="ai-select w-full appearance-none rounded-xl px-4 py-2.5 pr-12 text-sm"
+      >
+        {children}
+      </select>
+      <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-slate-400">
+        <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <path d="M6 8l4 4 4-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </span>
     </div>
   );
 }

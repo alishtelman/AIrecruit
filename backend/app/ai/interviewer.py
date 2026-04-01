@@ -52,7 +52,7 @@ _LEADING_FILLERS = (
 @dataclass
 class InterviewContext:
     target_role: str
-    question_number: int          # 1-based, counts MAIN questions only
+    question_number: int          # 1-based core question index
     max_questions: int = MAX_QUESTIONS
     message_history: list[dict] = field(default_factory=list)
     # Each dict: {"role": "assistant"|"candidate", "content": str}
@@ -64,8 +64,12 @@ class InterviewContext:
     follow_up_count: int = 0          # how many follow-ups done on current topic (0-2)
     last_answer_words: int = 0        # word count of last candidate answer
     shallow_reason: str = ""          # "too_short" | "no_depth_indicators" | "short_and_generic"
+    answer_class: str = "partial"     # strong | partial | generic | no_experience_honest | evasive
     current_topic: str = ""           # topic label for current main question
     topic_depth_score: float = 0.0    # running depth score for current topic (0-10)
+    resume_anchor: str | None = None
+    verification_target: str | None = None
+    diversification_hint: str | None = None
     # v3-depth: question type and technology tracking
     question_type: str = "main"       # main | followup | verification | deep_technical | edge_cases
     mentioned_technologies: list[str] = field(default_factory=list)
@@ -102,6 +106,95 @@ _EXAMPLE_HINTS = frozenset([
     "i worked on", "я работал", "я работала",
 ])
 
+_NO_EXPERIENCE_PHRASES = (
+    "не знаю",
+    "не помню",
+    "не делал",
+    "не делала",
+    "не работал",
+    "не работала",
+    "не приходилось",
+    "нет опыта",
+    "никак",
+    "не могу",
+    "не создавал",
+    "не создавала",
+    "не занимался",
+    "не занималась",
+    "не использовал",
+    "не использовала",
+    "нет",
+    "i don't know",
+    "i dont know",
+    "never worked with",
+    "no experience",
+    "not sure",
+    "don't remember",
+    "dont remember",
+)
+
+_EVASIVE_PHRASES = (
+    "обычно",
+    "нормально",
+    "по-разному",
+    "смотря",
+    "как получится",
+    "все четко",
+    "пойдет",
+    "it depends",
+    "usually",
+    "normally",
+    "kind of",
+    "sort of",
+)
+
+
+def classify_answer(answer: str) -> tuple[str, str]:
+    """Return (answer_class, shallow_reason).
+
+    answer_class:
+    - strong
+    - partial
+    - generic
+    - no_experience_honest
+    - evasive
+    """
+    normalized = _WHITESPACE_RE.sub(" ", answer.strip().lower())
+    words = normalized.split()
+    word_count = len(words)
+
+    if any(phrase == normalized or normalized.startswith(f"{phrase} ") for phrase in _NO_EXPERIENCE_PHRASES):
+        return "no_experience_honest", "too_short" if word_count < 10 else "no_depth_indicators"
+
+    if any(phrase == normalized or normalized.startswith(f"{phrase} ") for phrase in _EVASIVE_PHRASES):
+        return "evasive", "short_and_generic"
+
+    has_depth = any(w in normalized for w in _DEPTH_WORDS)
+    has_numbers = bool(re.search(r"\d+", normalized))
+    has_example = any(hint in normalized for hint in _EXAMPLE_HINTS)
+
+    if word_count < 10:
+        return "generic", "too_short"
+
+    if not has_depth and not has_numbers and not has_example:
+        return "generic", "no_depth_indicators"
+
+    if word_count < 30 and not has_numbers and not has_example:
+        return "partial", "short_and_generic"
+
+    mentioned_techs = extract_mentioned_technologies(answer)
+
+    if (has_depth and has_example) or (has_depth and has_numbers):
+        return "strong", ""
+
+    if has_depth and word_count >= 22 and (mentioned_techs or has_example or has_numbers):
+        return "strong", ""
+
+    if has_depth and word_count >= 30:
+        return "strong", ""
+
+    return "partial", ""
+
 
 def detect_shallow_answer(answer: str) -> tuple[bool, str]:
     """Return (is_shallow, reason).
@@ -116,25 +209,8 @@ def detect_shallow_answer(answer: str) -> tuple[bool, str]:
        no numbers +
        no example hint       → short_and_generic
     """
-    words = answer.strip().split()
-    word_count = len(words)
-    lower = answer.lower()
-
-    if word_count < 10:
-        return True, "too_short"
-
-    has_depth = any(w in lower for w in _DEPTH_WORDS)
-    has_numbers = bool(re.search(r"\d+", answer))
-
-    if not has_depth and not has_numbers:
-        return True, "no_depth_indicators"
-
-    if word_count < 30 and not has_numbers:
-        has_example = any(hint in lower for hint in _EXAMPLE_HINTS)
-        if not has_example:
-            return True, "short_and_generic"
-
-    return False, ""
+    answer_class, reason = classify_answer(answer)
+    return answer_class in {"generic", "partial", "evasive", "no_experience_honest"}, reason
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +405,32 @@ _TECH_VERIFY_EN: dict[str, list[str]] = {
     ],
 }
 
+_COMPETENCY_MAIN_RU: dict[str, str] = {
+    "System Design & Architecture": "Опишите архитектуру самой сложной backend-системы, за которую вы отвечали. Какие trade-offs были ключевыми?",
+    "Database Design & Optimization": "Как вы проектировали схему и оптимизировали PostgreSQL или другую БД под реальную нагрузку?",
+    "API Design & Protocols": "Как вы проектировали API в production: versioning, contracts, ошибки и обратную совместимость?",
+    "Programming Fundamentals": "Расскажите о сложном участке backend-кода, где пришлось выбирать структуру данных или алгоритм под ограничения системы.",
+    "DevOps & Infrastructure": "Как вы выкатывали backend-сервисы в production и что считали главным риском в инфраструктуре?",
+    "Security & Error Handling": "Как вы строили защиту backend-сервисов: auth, validation, error handling и безопасную деградацию?",
+    "Debugging & Problem Decomposition": "Расскажите про production-инцидент или сложный баг: как вы сузили проблему и нашли корневую причину?",
+    "Technical Communication": "Как вы объясняли сложное техническое решение команде или бизнесу так, чтобы его реально приняли?",
+    "Collaboration & Code Review": "Как вы проводите code review и что для вас признак сильного инженерного обсуждения в команде?",
+    "Ownership & Growth Mindset": "Расскажите о ситуации, где вы взяли на себя ответственность за проблемный участок и что улучшили после этого.",
+}
+
+_COMPETENCY_MAIN_EN: dict[str, str] = {
+    "System Design & Architecture": "Walk me through the architecture of the most complex backend system you owned. What were the key trade-offs?",
+    "Database Design & Optimization": "How did you design schema and optimize PostgreSQL or another database under real production load?",
+    "API Design & Protocols": "How did you design production APIs: versioning, contracts, error handling, and backward compatibility?",
+    "Programming Fundamentals": "Tell me about a backend code path where data structures or algorithm choice really mattered under system constraints.",
+    "DevOps & Infrastructure": "How did you ship backend services to production and what infrastructure risks mattered most?",
+    "Security & Error Handling": "How did you design backend security: auth, validation, error handling, and safe degradation?",
+    "Debugging & Problem Decomposition": "Tell me about a production incident or hard bug: how did you narrow it down and find the root cause?",
+    "Technical Communication": "How did you explain a complex technical decision so the team or business actually aligned on it?",
+    "Collaboration & Code Review": "How do you run code review and what does strong engineering discussion look like in your team?",
+    "Ownership & Growth Mindset": "Tell me about a situation where you took ownership of a problematic area and improved it.",
+}
+
 # Depth escalation questions — asked after a strong answer to push further
 _DEPTH_ESCALATION_RU = [
     "Какие edge cases ты обрабатывал и что сломалось в первых версиях?",
@@ -451,21 +553,22 @@ def _normalize_question_output(raw: str, ctx: InterviewContext) -> str:
 
 def _resume_anchored_first_question(ctx: InterviewContext) -> str:
     """Deterministic first question anchored to resume context."""
-    anchor = None
+    anchor = ctx.resume_anchor
     if ctx.resume_text:
-        for raw_line in ctx.resume_text.splitlines():
-            line = _WHITESPACE_RE.sub(" ", raw_line).strip(" \t-•|")
-            if len(line) < 12:
-                continue
-            lowered = line.lower()
-            if (
-                "@" in line
-                or lowered.startswith(("email", "телефон", "phone", "github", "linkedin"))
-                or lowered.startswith(("skills", "навыки", "summary", "education", "образование"))
-            ):
-                continue
-            anchor = line[:72]
-            break
+        if not anchor:
+            for raw_line in ctx.resume_text.splitlines():
+                line = _WHITESPACE_RE.sub(" ", raw_line).strip(" \t-•|")
+                if len(line) < 12:
+                    continue
+                lowered = line.lower()
+                if (
+                    "@" in line
+                    or lowered.startswith(("email", "телефон", "phone", "github", "linkedin"))
+                    or lowered.startswith(("skills", "навыки", "summary", "education", "образование"))
+                ):
+                    continue
+                anchor = line[:72]
+                break
 
     if ctx.language == "en":
         if anchor:
@@ -487,6 +590,65 @@ def _resume_anchored_first_question(ctx: InterviewContext) -> str:
         "Опираясь на ваше резюме, расскажите про самый свежий релевантный проект: "
         "вашу роль, одно ключевое техническое решение и измеримый результат?"
     )
+
+
+def _resume_anchored_main_question(ctx: InterviewContext) -> str | None:
+    if not ctx.resume_anchor:
+        return None
+
+    if ctx.language == "en":
+        if ctx.verification_target:
+            return _trim_question(
+                f"You listed '{ctx.resume_anchor}' in your resume. What was your role there and where exactly did you use {ctx.verification_target}?"
+            )
+        return _trim_question(
+            f"You listed '{ctx.resume_anchor}' in your resume. What was the hardest technical decision there and why did you make it?"
+        )
+
+    if ctx.verification_target:
+        return _trim_question(
+            f"В резюме у вас указан опыт «{ctx.resume_anchor}». Какую роль вы там играли и где именно использовали {ctx.verification_target}?"
+        )
+    return _trim_question(
+        f"В резюме у вас указан опыт «{ctx.resume_anchor}». Какое самое сложное техническое решение вы там принимали и почему?"
+    )
+
+
+def _resume_claim_probe_question(ctx: InterviewContext) -> str | None:
+    tech = ctx.verification_target or ctx.pending_verification
+    if not tech:
+        return None
+
+    verification = get_verification_question(tech, ctx.language)
+    if ctx.language == "en":
+        if verification:
+            return _trim_question(
+                f"Your resume suggests experience with {tech}. Let's verify it through one concrete point: {verification}"
+            )
+        return _trim_question(
+            f"Your resume suggests experience with {tech}. What exactly did you do with it in a real project?"
+        )
+
+    if verification:
+        return _trim_question(
+            f"В резюме заявлен опыт с {tech}. Давайте проверим это на конкретике: {verification}"
+        )
+    return _trim_question(
+        f"В резюме заявлен опыт с {tech}. Что именно вы с ним делали в реальном проекте?"
+    )
+
+
+def _competency_anchored_main_question(ctx: InterviewContext) -> str | None:
+    competencies = [item for item in (ctx.competency_targets or []) if item]
+    if not competencies:
+        return None
+    primary = competencies[0]
+    bank = _COMPETENCY_MAIN_EN if ctx.language == "en" else _COMPETENCY_MAIN_RU
+    base = bank.get(primary)
+    if not base:
+        return None
+
+    return _trim_question(base)
 
 
 # ---------------------------------------------------------------------------
@@ -584,6 +746,8 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
                     "НЕ переходи на другую тему. НЕ начинай с оценки. НЕ повторяй вопрос дословно.\n"
                     "Зацепись за что-то конкретное из последнего ответа.\n\n"
                     "Стратегии:\n"
+                    "- Если кандидат честно говорит что не делал/не помнит → не дави, а мягко смени рамку: "
+                    "'Окей, если лично не делал, как бы ты подошёл к такой задаче?'\n"
                     "- Короткий ответ → 'Расскажи подробнее — как именно это работало?'\n"
                     "- Нет примера → 'Можешь привести конкретный случай из практики?'\n"
                     "- Нет метрик → 'Какой был масштаб и какой конкретный результат?'\n"
@@ -598,6 +762,8 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
                     "Do NOT switch topics. Do NOT start with praise. Do NOT repeat verbatim.\n"
                     "Latch onto something specific in the last answer.\n\n"
                     "Strategies:\n"
+                    "- If the candidate honestly says they haven't done this / don't remember, do not push harder. Reframe: "
+                    "'If you haven't done it directly, how would you approach it?'\n"
                     "- Short answer → 'Walk me through that — how exactly did it work?'\n"
                     "- No example → 'Can you give a concrete example from your work?'\n"
                     "- No metrics → 'What was the scale and what was the measurable result?'\n"
@@ -629,6 +795,28 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
                 )
                 if verify_q:
                     prompt += f"Suggested question (adapt to context): {verify_q}\n"
+
+        elif ctx.question_type == "claim_verification":
+            tech = ctx.verification_target or ctx.pending_verification or ""
+            probe_q = _resume_claim_probe_question(ctx)
+            if is_ru:
+                prompt += (
+                    f"\n## Режим: Проверка заявленного опыта — «{tech}»\n"
+                    "Эта технология уже присутствует в резюме кандидата, но текущий ответ не даёт убедительной конкретики.\n\n"
+                    "Задача: задать ОДИН короткий вопрос, который проверяет реальный личный опыт, "
+                    "а не просто строчку в CV. Не дави и не обвиняй.\n\n"
+                )
+                if probe_q:
+                    prompt += f"Направление: {probe_q}\n"
+            else:
+                prompt += (
+                    f"\n## Mode: Resume claim verification — '{tech}'\n"
+                    "This technology is already present in the candidate's resume, but the current answer lacks convincing specifics.\n\n"
+                    "Task: ask ONE short question that checks for real hands-on experience, "
+                    "not just a resume keyword. Do not be accusatory.\n\n"
+                )
+                if probe_q:
+                    prompt += f"Direction: {probe_q}\n"
 
         # ── DEEP TECHNICAL (strong answer, push deeper) ────────────────────
         elif ctx.question_type == "deep_technical":
@@ -755,6 +943,24 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
     if ctx.resume_text:
         prompt += f"\n## Резюме кандидата\n{ctx.resume_text[:4000]}\n"
 
+    if ctx.resume_anchor:
+        prompt += (
+            "\n## Резюме-опора для этой темы\n"
+            f"Если уместно, опирайся на этот фрагмент опыта: {ctx.resume_anchor}\n"
+        )
+
+    if ctx.diversification_hint:
+        prompt += (
+            "\n## Диверсификация следующей темы\n"
+            f"{ctx.diversification_hint}\n"
+        )
+
+    if ctx.verification_target and ctx.question_type == "main":
+        prompt += (
+            "\n## Что желательно верифицировать\n"
+            f"Если это естественно для темы, проверь реальный опыт с технологией: {ctx.verification_target}\n"
+        )
+
     # Language
     if ctx.language == "en":
         prompt += "\n## Language\nConduct this interview entirely in English.\n"
@@ -772,6 +978,18 @@ class LLMInterviewer:
         # First question: always deterministic (faster, no LLM needed)
         if ctx.question_number == 1 and not ctx.is_followup_mode:
             return _resume_anchored_first_question(ctx)
+        if ctx.question_type == "main" and ctx.question_number == 2 and ctx.resume_anchor:
+            anchored = _resume_anchored_main_question(ctx)
+            if anchored:
+                return anchored
+        if ctx.question_type == "main":
+            anchored_main = _competency_anchored_main_question(ctx)
+            if anchored_main:
+                return anchored_main
+        if ctx.question_type == "claim_verification":
+            probe = _resume_claim_probe_question(ctx)
+            if probe:
+                return probe
 
         system = _build_system_prompt(ctx)
 
@@ -799,8 +1017,11 @@ class LLMInterviewer:
             normalized = _normalize_question_output(raw, ctx)
             return normalized
         except Exception:
-            logger.exception("Interviewer LLM failed, using deterministic fallback question")
-            return await MockInterviewer().get_next_question(ctx)
+            if settings.allow_mock_ai:
+                logger.exception("Interviewer LLM failed, using deterministic fallback question")
+                return await MockInterviewer().get_next_question(ctx)
+            logger.exception("Interviewer LLM failed")
+            raise RuntimeError("AI interviewer request failed")
 
 
 # ---------------------------------------------------------------------------
@@ -898,6 +1119,9 @@ class MockInterviewer:
         match ctx.question_type:
             case "followup":
                 return get_fallback_followup(ctx.shallow_reason or "no_depth_indicators", ctx.language)
+            case "claim_verification":
+                q = _resume_claim_probe_question(ctx)
+                return q or get_fallback_followup("no_depth_indicators", ctx.language)
             case "verification":
                 tech = ctx.pending_verification or ""
                 q = get_verification_question(tech, ctx.language)
@@ -905,11 +1129,23 @@ class MockInterviewer:
             case "deep_technical" | "edge_cases":
                 return get_depth_escalation_question(ctx.language)
             case _:
+                if ctx.question_number <= 2 and ctx.resume_anchor:
+                    anchored = _resume_anchored_main_question(ctx)
+                    if anchored:
+                        return anchored
+                anchored_main = _competency_anchored_main_question(ctx)
+                if anchored_main:
+                    return anchored_main
                 questions = _QUESTIONS.get(ctx.target_role, _QUESTIONS[_DEFAULT_ROLE])
                 idx = ctx.question_number - 1
                 if 0 <= idx < len(questions):
                     return questions[idx]
                 return "Хотите добавить что-то ещё о своём опыте?"
+
+
+class DisabledInterviewer:
+    async def get_next_question(self, ctx: InterviewContext) -> str:
+        raise RuntimeError("AI interviewer is not configured")
 
 
 # ---------------------------------------------------------------------------
@@ -918,5 +1154,7 @@ class MockInterviewer:
 
 if settings.GROQ_API_KEY:
     interviewer = LLMInterviewer(client=AsyncGroq(api_key=settings.GROQ_API_KEY))
-else:
+elif settings.allow_mock_ai:
     interviewer = MockInterviewer()  # type: ignore[assignment]
+else:
+    interviewer = DisabledInterviewer()  # type: ignore[assignment]

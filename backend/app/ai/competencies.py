@@ -301,3 +301,38 @@ def build_question_plan(role: str, max_questions: int) -> list[list[str]]:
         plan[min_slot].append(comp.name)
 
     return plan
+
+
+def build_interview_plan(role: str, max_questions: int, resume_profile: dict | None = None) -> list[dict]:
+    """Return a richer plan for each core interview topic.
+
+    Each item includes competency targets plus optional resume anchor and
+    verification target derived from the uploaded resume.
+    """
+    base_plan = build_question_plan(role, max_questions)
+    anchors = list((resume_profile or {}).get("project_highlights", []))
+    verification_targets = list((resume_profile or {}).get("verification_targets", []))
+
+    topic_plan: list[dict] = []
+    anchor_idx = 0
+    verification_idx = 0
+
+    for idx, competencies in enumerate(base_plan):
+        entry: dict = {
+            "slot": idx + 1,
+            "competencies": competencies,
+            "resume_anchor": None,
+            "verification_target": None,
+        }
+
+        if anchor_idx < len(anchors) and (idx == 0 or idx < max_questions - 1):
+            entry["resume_anchor"] = anchors[anchor_idx]
+            anchor_idx += 1
+
+        if verification_idx < len(verification_targets):
+            entry["verification_target"] = verification_targets[verification_idx]
+            verification_idx += 1
+
+        topic_plan.append(entry)
+
+    return topic_plan

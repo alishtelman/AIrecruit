@@ -98,7 +98,12 @@ async def _complete_employee_assessment(client: AsyncClient, token: str, invite_
         msg_resp = await client.post(
             f"/api/v1/interviews/{interview_id}/message",
             headers=auth_headers(token),
-            json={"message": f"Employee assessment answer {i + 1}"},
+            json={
+                "message": (
+                    "I solved the task step by step because that reduced risk, "
+                    "validated edge cases first, and then moved to implementation."
+                )
+            },
         )
         assert msg_resp.status_code == 200, msg_resp.text
 

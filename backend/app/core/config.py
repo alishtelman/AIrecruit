@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     SESSION_COOKIE_SECURE: bool = False
     ANTHROPIC_API_KEY: str = ""
     GROQ_API_KEY: str = ""
+    ALLOW_MOCK_AI: bool = True
     ELEVENLABS_API_KEY: str = ""
     TTS_PROVIDER: str = "groq"
     TTS_FALLBACK_PROVIDER: str = "groq"
@@ -36,6 +37,10 @@ class Settings(BaseSettings):
     @property
     def is_local_or_test(self) -> bool:
         return self.APP_ENV.lower() in {"development", "dev", "local", "test"}
+
+    @property
+    def allow_mock_ai(self) -> bool:
+        return self.ALLOW_MOCK_AI and self.is_local_or_test
 
     def validate_security_settings(self) -> None:
         insecure_defaults = {

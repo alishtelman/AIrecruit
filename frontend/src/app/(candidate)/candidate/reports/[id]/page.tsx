@@ -143,6 +143,43 @@ function getCategoryLabel(t: ReturnType<typeof useTranslations>, category: strin
   return category;
 }
 
+function InterviewSummaryPanel({ summaryModel }: { summaryModel: AssessmentReport["summary_model"] }) {
+  const t = useTranslations("report");
+
+  if (!summaryModel) return null;
+
+  const items = [
+    { label: t("summaryModel.coreTopics"), value: summaryModel.core_topics },
+    { label: t("summaryModel.extraTurns"), value: summaryModel.extra_turns },
+    { label: t("summaryModel.coveredCompetencies"), value: summaryModel.covered_competencies },
+    { label: t("summaryModel.strongTopics"), value: summaryModel.strong_topics },
+    { label: t("summaryModel.honestGaps"), value: summaryModel.honest_gaps },
+    { label: t("summaryModel.genericTopics"), value: summaryModel.generic_or_evasive_topics },
+  ];
+
+  return (
+    <div className="mb-6 rounded-2xl border border-slate-700 bg-slate-800/80 p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-xs uppercase tracking-[0.24em] text-slate-500">{t("summaryModel.eyebrow")}</div>
+          <div className="text-sm font-semibold text-white">{t("summaryModel.title")}</div>
+        </div>
+        <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-300">
+          {t(`summaryModel.signal.${summaryModel.signal_quality}`)}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {items.map((item) => (
+          <div key={item.label} className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-3">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{item.label}</div>
+            <div className="mt-1 text-xl font-semibold text-white">{item.value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function ReportPage() {
   const t = useTranslations("report");
   const locale = useLocale();
@@ -159,7 +196,7 @@ export default function ReportPage() {
       .getById(id)
       .then(setReport)
       .catch(() => setError(t("loadFailed")));
-  }, [id, authLoading]);
+  }, [id, authLoading, t]);
 
   if (authLoading || (!report && !error)) {
     return (
@@ -232,6 +269,8 @@ export default function ReportPage() {
         {report.interview_summary && (
           <p className="text-slate-400 mb-6">{localizeFreeformText(report.interview_summary, locale)}</p>
         )}
+
+        {report.summary_model && <InterviewSummaryPanel summaryModel={report.summary_model} />}
 
         {/* Recommendation badge */}
         <div className={`inline-flex items-center gap-2 border rounded-full px-4 py-1.5 text-sm font-semibold mb-6 ${rec.bg} ${rec.color}`}>

@@ -2,8 +2,10 @@
 import io
 
 import pytest
+from docx import Document
 from httpx import AsyncClient
 
+from app.services.interview_service import _answer_relevance, _is_cross_topic_reuse
 from tests.conftest import auth_headers
 
 
@@ -15,6 +17,30 @@ async def _upload_resume(client: AsyncClient, token: str) -> str:
         "/api/v1/candidate/resume/upload",
         headers=auth_headers(token),
         files={"file": ("resume.pdf", io.BytesIO(pdf_content), "application/pdf")},
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["resume_id"]
+
+
+async def _upload_docx_resume(client: AsyncClient, token: str, paragraphs: list[str]) -> str:
+    document = Document()
+    for paragraph in paragraphs:
+        document.add_paragraph(paragraph)
+
+    buffer = io.BytesIO()
+    document.save(buffer)
+    buffer.seek(0)
+
+    resp = await client.post(
+        "/api/v1/candidate/resume/upload",
+        headers=auth_headers(token),
+        files={
+            "file": (
+                "resume.docx",
+                buffer,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
     )
     assert resp.status_code == 200, resp.text
     return resp.json()["resume_id"]
@@ -80,11 +106,15 @@ async def test_full_interview_flow(client: AsyncClient, candidate_token: str):
     # Answer all 8 questions (Q1 was asked at start, each answer triggers the next)
     # Messages 1-7 answer Q1-Q7 and receive Q2-Q8
     # Message 8 answers Q8 and receives current_question=None
+    answer = (
+        "Я решил задачу по шагам и потому что это снижало риски, "
+        "сначала проверял крайние случаи и только потом двигался дальше."
+    )
     for i in range(8):
         resp = await client.post(
             f"/api/v1/interviews/{interview_id}/message",
             headers=auth_headers(candidate_token),
-            json={"message": f"My answer to question {i+1}"},
+            json={"message": answer},
         )
         assert resp.status_code == 200, resp.text
         msg_data = resp.json()
@@ -123,7 +153,269 @@ async def test_full_interview_flow(client: AsyncClient, candidate_token: str):
     )
     assert resp.status_code == 200
     report = resp.json()
-    assert report["hiring_recommendation"] in ("yes", "strong_yes")
+    assert report["hiring_recommendation"] in ("maybe", "yes", "strong_yes")
+    assert report["summary_model"]["core_topics"] == 8
+    assert report["summary_model"]["total_turns"] >= 8
+
+
+@pytest.mark.asyncio
+async def test_honest_no_experience_causes_single_reframe_then_moves_on(
+    client: AsyncClient, candidate_token: str
+):
+    await _upload_resume(client, candidate_token)
+
+    start_resp = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "backend_engineer"},
+    )
+    interview_id = start_resp.json()["interview_id"]
+
+    first = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={"message": "не делал"},
+    )
+    assert first.status_code == 200, first.text
+    first_data = first.json()
+    assert first_data["question_count"] == 1
+    assert first_data["is_followup"] is True
+
+    second = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={
+            "message": (
+                "Я бы подошёл через декомпозицию задачи, оценил риски и потому что "
+                "сначала важно понять ограничения, начал бы с простого решения."
+            )
+        },
+    )
+    assert second.status_code == 200, second.text
+    second_data = second.json()
+    assert second_data["question_count"] == 2
+    assert second_data["is_followup"] is False
+
+
+@pytest.mark.asyncio
+async def test_resume_claim_verification_branch_triggers_for_weak_answer(
+    client: AsyncClient, candidate_token: str
+):
+    await _upload_docx_resume(
+        client,
+        candidate_token,
+        [
+            "Backend engineer with Python, Kafka, PostgreSQL and Docker experience.",
+            "Built event-driven services with Kafka and optimized PostgreSQL queries.",
+        ],
+    )
+
+    start_resp = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "backend_engineer", "language": "ru"},
+    )
+    assert start_resp.status_code == 201, start_resp.text
+    interview_id = start_resp.json()["interview_id"]
+
+    weak_answer = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={"message": "не помню"},
+    )
+    assert weak_answer.status_code == 200, weak_answer.text
+    weak_data = weak_answer.json()
+    assert weak_data["question_type"] == "claim_verification"
+    assert weak_data["is_followup"] is True
+    assert weak_data["question_count"] == 1
+    assert any(
+        tech in (weak_data["current_question"] or "").lower()
+        for tech in ("kafka", "postgresql", "docker")
+    )
+
+
+def test_answer_relevance_detects_off_topic_verification_answer():
+    relevance = _answer_relevance(
+        question="Ты упомянул PostgreSQL — как использовал EXPLAIN ANALYZE и индексы?",
+        answer="Мы строили event-driven сервисы на Kafka и использовали outbox pattern.",
+        new_techs={"kafka"},
+        current_claim_target="postgresql",
+    )
+    assert relevance == "low"
+
+
+def test_cross_topic_reuse_detects_same_answer_on_new_topic():
+    reused = _is_cross_topic_reuse(
+        "Я проектировал event-driven сервисы с Kafka, Redis и outbox pattern для highload задач.",
+        [
+            {
+                "content": "Я проектировал event-driven сервисы с Kafka, Redis и outbox pattern для highload задач.",
+                "topic_index": 0,
+            }
+        ],
+        1,
+    )
+    assert reused is True
+
+
+def test_answer_relevance_keeps_transferred_experience_when_topic_is_still_related():
+    relevance = _answer_relevance(
+        question="Опишите ваш опыт с асинхронными или событийно-ориентированными архитектурами.",
+        answer="Мы строили event-driven сервисы на Kafka, использовали outbox pattern и idempotent consumers.",
+        new_techs={"kafka"},
+        current_claim_target="kafka",
+    )
+    assert relevance == "high"
+
+
+@pytest.mark.asyncio
+async def test_low_relevance_after_claim_verification_closes_topic(
+    client: AsyncClient, candidate_token: str
+):
+    await _upload_docx_resume(
+        client,
+        candidate_token,
+        [
+            "Backend engineer with PostgreSQL, Kafka, Redis and Docker experience.",
+            "Optimized PostgreSQL queries and built event-driven services with Kafka.",
+        ],
+    )
+
+    start_resp = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "backend_engineer", "language": "ru"},
+    )
+    assert start_resp.status_code == 201, start_resp.text
+    interview_id = start_resp.json()["interview_id"]
+
+    first = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={"message": "Я использовал PostgreSQL, настраивал индексы и смотрел планы запросов через EXPLAIN ANALYZE."},
+    )
+    assert first.status_code == 200, first.text
+    first_data = first.json()
+    assert first_data["question_type"] in {"verification", "claim_verification", "deep_technical"}
+
+    second = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={"message": "Мы строили event-driven сервисы на Kafka и использовали outbox pattern."},
+    )
+    assert second.status_code == 200, second.text
+    second_data = second.json()
+    assert second_data["question_count"] == 2
+    assert second_data["is_followup"] is False
+
+
+@pytest.mark.asyncio
+async def test_reused_cross_topic_answer_moves_to_next_topic(
+    client: AsyncClient, candidate_token: str
+):
+    await _upload_docx_resume(
+        client,
+        candidate_token,
+        [
+            "Backend engineer with PostgreSQL, Kafka, Redis and Docker experience.",
+            "Designed event-driven services and optimized PostgreSQL workloads.",
+        ],
+    )
+
+    start_resp = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "backend_engineer", "language": "ru"},
+    )
+    assert start_resp.status_code == 201, start_resp.text
+    interview_id = start_resp.json()["interview_id"]
+
+    first_answer = (
+        "Я проектировал event-driven сервисы, использовал Kafka и PostgreSQL, "
+        "смотрел планы запросов и оптимизировал индексы под production-нагрузку."
+    )
+    first = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={"message": first_answer},
+    )
+    assert first.status_code == 200, first.text
+
+    second = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={"message": "В PostgreSQL я анализировал query plan, проверял индексы и искал узкие места."},
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["question_count"] == 2
+
+    third = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={"message": first_answer},
+    )
+    assert third.status_code == 200, third.text
+    third_data = third.json()
+    assert third_data["question_count"] == 3
+    assert third_data["is_followup"] is False
+
+
+@pytest.mark.asyncio
+async def test_weak_answers_do_not_produce_strong_yes_recommendation(
+    client: AsyncClient, candidate_token: str
+):
+    await _upload_docx_resume(
+        client,
+        candidate_token,
+        [
+            "Backend engineer with Python, Kafka, PostgreSQL and Docker experience.",
+            "Worked with event-driven services and production jobs.",
+        ],
+    )
+
+    start = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "backend_engineer", "language": "ru"},
+    )
+    assert start.status_code == 201, start.text
+    interview_id = start.json()["interview_id"]
+
+    weak_answers = ["все четко", "не помню", "нет опыта", "никак", "не знаю", "нет", "обычно", "не могу", "не делал", "не помню"]
+    idx = 0
+    while True:
+        answer = weak_answers[idx] if idx < len(weak_answers) else weak_answers[-1]
+        idx += 1
+        msg = await client.post(
+            f"/api/v1/interviews/{interview_id}/message",
+            headers=auth_headers(candidate_token),
+            json={"message": answer},
+        )
+        assert msg.status_code == 200, msg.text
+        if msg.json()["current_question"] is None:
+            break
+        assert idx < 32
+
+    finish = await client.post(
+        f"/api/v1/interviews/{interview_id}/finish",
+        headers=auth_headers(candidate_token),
+    )
+    assert finish.status_code == 200, finish.text
+    report_id = finish.json()["report_id"]
+
+    report = await client.get(
+        f"/api/v1/reports/{report_id}",
+        headers=auth_headers(candidate_token),
+    )
+    assert report.status_code == 200, report.text
+    data = report.json()
+    assert data["hiring_recommendation"] in ("no", "maybe")
+    assert data["overall_score"] <= 6.0
+    assert data["summary_model"]["topic_outcomes"]
+    assert any(
+        item["outcome"] in {"honest_gap", "unverified_claim", "evasive"}
+        for item in data["summary_model"]["topic_outcomes"]
+    )
 
 
 @pytest.mark.asyncio

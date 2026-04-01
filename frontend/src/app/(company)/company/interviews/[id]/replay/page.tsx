@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Link, useRouter } from "@/i18n/navigation";
+import { CompanyWorkspaceHeader } from "@/components/company-workspace-header";
 import { companyApi } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import type { InterviewReplay, ReplayTurn } from "@/lib/types";
@@ -134,7 +135,11 @@ export default function InterviewReplayPage() {
   const startT = useTranslations("interviewStart");
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { loading: authLoading } = useAuth("/company/login");
+  const { loading: authLoading, logout } = useAuth({
+    redirectTo: "/company/login",
+    allowedRoles: ["company_admin", "company_member"],
+    unauthorizedRedirectTo: "/candidate/dashboard",
+  });
   const [replay, setReplay] = useState<InterviewReplay | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -146,7 +151,7 @@ export default function InterviewReplayPage() {
       .then(setReplay)
       .catch((err) => setError(err.message ?? t("errors.load")))
       .finally(() => setLoading(false));
-  }, [id, authLoading]);
+  }, [id, authLoading, t]);
 
   if (authLoading || loading) {
     return (
@@ -168,26 +173,29 @@ export default function InterviewReplayPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 px-4 py-8">
-      <div className="max-w-3xl mx-auto">
-        <button
-          onClick={() => router.back()}
-          className="text-slate-400 hover:text-white text-sm mb-6 inline-block transition-colors"
-        >
-          ← {t("back")}
-        </button>
+    <div className="ai-shell min-h-screen px-4 py-10">
+      <div className="ai-section max-w-4xl mx-auto">
+        <CompanyWorkspaceHeader onLogout={logout} />
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <button
+            onClick={() => router.back()}
+            className="text-slate-400 hover:text-white text-sm inline-block transition-colors"
+          >
+            ← {t("back")}
+          </button>
+        </div>
 
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-white">{t("title")}</h1>
-          <p className="text-slate-400 mt-1">
+        <div className="ai-panel-strong mb-6 rounded-[2rem] p-7">
+          <h1 className="text-3xl font-semibold tracking-[-0.03em] text-white">{t("title")}</h1>
+          <p className="mt-1 text-slate-400">
             {replay.candidate_name} · {startT(`roles.${replay.target_role}`)}
           </p>
           {replay.completed_at && (
-            <p className="text-slate-500 text-sm mt-0.5">
+            <p className="mt-1 text-sm text-slate-500">
               {t("completed", {date: new Date(replay.completed_at).toLocaleDateString()})}
             </p>
           )}
-          <p className="text-slate-500 text-xs mt-1">{t("questionCount", {count: replay.turns.length})}</p>
+          <p className="mt-2 text-xs text-slate-500">{t("questionCount", {count: replay.turns.length})}</p>
         </div>
 
         <div className="space-y-3">

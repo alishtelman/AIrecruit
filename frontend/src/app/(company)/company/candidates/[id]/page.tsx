@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Link } from "@/i18n/navigation";
 import { useTranslations } from "next-intl";
 import { useParams } from "next/navigation";
+import { CompanyWorkspaceHeader } from "@/components/company-workspace-header";
 import { companyApi } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import type { CandidateActivity, CandidateDetail, CandidateNote, CompanyShortlist, HiringRecommendation, ReportWithRole, CompetencyScore, RedFlag } from "@/lib/types";
@@ -79,11 +80,11 @@ function CompetencyRow({ cs }: { cs: CompetencyScore }) {
   );
 }
 
-const OUTCOME_LABELS: Record<string, { cls: string }> = {
-  hired:       { cls: "bg-green-500/15 text-green-400 border-green-500/30" },
-  rejected:    { cls: "bg-red-500/15 text-red-400 border-red-500/30" },
-  interviewing:{ cls: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
-  no_show:     { cls: "bg-slate-500/15 text-slate-400 border-slate-600" },
+const OUTCOME_LABELS: Record<string, { cls: string; labelKey: string }> = {
+  hired:       { cls: "bg-green-500/15 text-green-400 border-green-500/30", labelKey: "hired" },
+  rejected:    { cls: "bg-red-500/15 text-red-400 border-red-500/30", labelKey: "rejected" },
+  interviewing:{ cls: "bg-blue-500/15 text-blue-400 border-blue-500/30", labelKey: "interviewing" },
+  no_show:     { cls: "bg-slate-500/15 text-slate-400 border-slate-600", labelKey: "no_show" },
 };
 
 function ReportCard({ report }: { report: ReportWithRole }) {
@@ -233,7 +234,11 @@ export default function CandidateDetailPage() {
   const t = useTranslations("companyCandidate");
   const roleT = useTranslations("interviewStart.roles");
   const { id } = useParams<{ id: string }>();
-  const { user, loading: authLoading } = useAuth("/company/login");
+  const { user, loading: authLoading, logout } = useAuth({
+    redirectTo: "/company/login",
+    allowedRoles: ["company_admin", "company_member"],
+    unauthorizedRedirectTo: "/candidate/dashboard",
+  });
   const [candidate, setCandidate] = useState<CandidateDetail | null>(null);
   const [shortlists, setShortlists] = useState<CompanyShortlist[]>([]);
   const [notes, setNotes] = useState<CandidateNote[]>([]);
@@ -343,14 +348,17 @@ export default function CandidateDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 px-4 py-8">
-      <div className="max-w-3xl mx-auto">
-        <Link
-          href="/company/dashboard"
-          className="text-slate-400 hover:text-white text-sm flex items-center gap-1 mb-6 transition-colors"
-        >
-          ← {t("back")}
-        </Link>
+    <div className="ai-shell min-h-screen px-4 py-10">
+      <div className="ai-section max-w-5xl mx-auto">
+        <CompanyWorkspaceHeader onLogout={logout} />
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <Link
+            href="/company/dashboard"
+            className="text-slate-400 hover:text-white text-sm flex items-center gap-1 transition-colors"
+          >
+            ← {t("back")}
+          </Link>
+        </div>
 
         {loading && <div className="text-center py-16 text-slate-400">{t("loading")}</div>}
 
@@ -362,19 +370,19 @@ export default function CandidateDetailPage() {
 
         {!loading && candidate && (
           <>
-            <div className="mb-6">
-              <h1 className="text-2xl font-bold text-white">{candidate.full_name}</h1>
-              <p className="text-slate-400 mt-1">{candidate.email}</p>
-              <p className="text-slate-500 text-sm mt-0.5">
+            <div className="ai-panel-strong mb-6 rounded-[2rem] p-7">
+              <h1 className="text-3xl font-semibold tracking-[-0.03em] text-white">{candidate.full_name}</h1>
+              <p className="mt-1 text-slate-400">{candidate.email}</p>
+              <p className="mt-1 text-sm text-slate-500">
                 {t("completedInterviews", { count: candidate.reports.length })}
               </p>
               {companyRole === "viewer" && (
-                <p className="text-amber-300 text-sm mt-2">{t("viewerMode")}</p>
+                <p className="mt-2 text-sm text-amber-300">{t("viewerMode")}</p>
               )}
 
               {/* Salary expectation */}
               {(candidate.salary_min || candidate.salary_max) && (
-                <p className="text-slate-300 text-sm mt-2">
+                <p className="mt-2 text-sm text-slate-300">
                   {t("salaryExpectation")}{" "}
                   {candidate.salary_min && candidate.salary_max
                     ? `${candidate.salary_min.toLocaleString()}–${candidate.salary_max.toLocaleString()}`
@@ -383,7 +391,8 @@ export default function CandidateDetailPage() {
                 </p>
               )}
 
-              <div className="mt-4 p-4 bg-slate-800 border border-slate-700 rounded-xl space-y-3">
+              <div className="mt-5 grid gap-4 xl:grid-cols-2">
+              <div className="ai-panel rounded-[1.8rem] p-5 space-y-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">{t("shortlists.title")}</p>
@@ -428,8 +437,7 @@ export default function CandidateDetailPage() {
                 )}
               </div>
 
-              {/* Hire outcome */}
-              <div className="mt-4 p-4 bg-slate-800 border border-slate-700 rounded-xl space-y-3">
+              <div className="ai-panel rounded-[1.8rem] p-5 space-y-3">
                 <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">{t("decision.title")}</p>
                 <div className="flex flex-wrap gap-2">
                   {(["hired", "interviewing", "rejected", "no_show"] as const).map((o) => {
@@ -443,7 +451,7 @@ export default function CandidateDetailPage() {
                           outcome === o ? cfg.cls : "border-slate-600 text-slate-500 hover:border-slate-500"
                         }`}
                       >
-                        {cfg.label}
+                        {t(`outcomes.${cfg.labelKey}`)}
                       </button>
                     );
                   })}
@@ -454,18 +462,19 @@ export default function CandidateDetailPage() {
                   value={outcomeNotes}
                   onChange={(e) => setOutcomeNotes(e.target.value)}
                   disabled={!canManagePipeline}
-                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  className="ai-input w-full rounded-xl px-4 py-2.5 text-sm placeholder:text-slate-500"
                 />
                 <button
                   onClick={handleSaveOutcome}
                   disabled={!outcome || savingOutcome || !canManagePipeline}
-                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+                  className="ai-button-primary rounded-xl px-4 py-2 text-sm text-white disabled:opacity-50"
                 >
                   {outcomeSaved ? t("decision.saved") : savingOutcome ? t("decision.saving") : t("decision.save")}
                 </button>
               </div>
+              </div>
 
-              <div className="mt-4 p-4 bg-slate-800 border border-slate-700 rounded-xl space-y-3">
+              <div className="ai-panel mt-4 rounded-[1.8rem] p-5 space-y-3">
                 <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">{t("notes.title")}</p>
                 {noteError && <p className="text-red-400 text-sm">{noteError}</p>}
                 <div className="space-y-2">
@@ -475,12 +484,12 @@ export default function CandidateDetailPage() {
                     disabled={!canManagePipeline}
                     rows={3}
                     placeholder={t("notes.placeholder")}
-                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 resize-y"
+                    className="ai-input w-full rounded-xl px-4 py-3 text-sm placeholder:text-slate-500 focus:border-blue-500 resize-y"
                   />
                   <button
                     onClick={handleAddNote}
                     disabled={savingNote || !noteBody.trim() || !canManagePipeline}
-                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
                   >
                     {savingNote ? t("notes.saving") : t("notes.add")}
                   </button>
@@ -501,7 +510,7 @@ export default function CandidateDetailPage() {
                 )}
               </div>
 
-              <div className="mt-4 p-4 bg-slate-800 border border-slate-700 rounded-xl space-y-3">
+              <div className="ai-panel mt-4 rounded-[1.8rem] p-5 space-y-3">
                 <p className="text-slate-400 text-xs uppercase tracking-wide font-semibold">{t("activity.title")}</p>
                 {activity.length === 0 ? (
                   <p className="text-slate-500 text-sm">{t("activity.empty")}</p>

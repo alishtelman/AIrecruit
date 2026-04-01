@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
+import { CompanyWorkspaceHeader } from "@/components/company-workspace-header";
 import { Link } from "@/i18n/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { companyApi } from "@/lib/api";
@@ -29,7 +30,11 @@ const BLANK_FORM = {
 export default function TemplatesPage() {
   const t = useTranslations("companyTemplates");
   const startT = useTranslations("interviewStart");
-  const { user, loading: authLoading } = useAuth("/company/login");
+  const { user, loading: authLoading, logout } = useAuth({
+    redirectTo: "/company/login",
+    allowedRoles: ["company_admin", "company_member"],
+    unauthorizedRedirectTo: "/candidate/dashboard",
+  });
   const [templates, setTemplates] = useState<InterviewTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -46,7 +51,7 @@ export default function TemplatesPage() {
       .then(setTemplates)
       .catch((err) => setError(err.message ?? t("errors.load")))
       .finally(() => setLoading(false));
-  }, [authLoading]);
+  }, [authLoading, t]);
 
   function setQuestion(idx: number, val: string) {
     const qs = [...form.questions];
@@ -116,24 +121,34 @@ export default function TemplatesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 px-4 py-8">
-      <div className="max-w-3xl mx-auto">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-              <Link href="/company/dashboard" className="text-slate-400 hover:text-white text-sm transition-colors">
+    <div className="ai-shell min-h-screen px-4 py-10">
+      <div className="ai-section max-w-5xl mx-auto">
+        <CompanyWorkspaceHeader onLogout={logout} />
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <Link href="/company/dashboard" className="text-slate-400 hover:text-white text-sm transition-colors">
               ← {t("back")}
-            </Link>
-            <h1 className="text-2xl font-bold text-white mt-3">{t("title")}</h1>
-            <p className="text-slate-400 text-sm mt-1">{t("subtitle")}</p>
-            {!canManageTemplates && <p className="text-amber-300 text-sm mt-2">{t("readonly")}</p>}
-          </div>
+          </Link>
+        </div>
+
+        <div className="mb-6 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
+          <section className="ai-panel-strong rounded-[2rem] p-7">
+            <div className="ai-kicker mb-5">{t("title")}</div>
+            <h1 className="text-3xl font-semibold tracking-[-0.03em] text-white">{t("title")}</h1>
+            <p className="mt-2 max-w-2xl text-slate-400">{t("subtitle")}</p>
+            {!canManageTemplates && <p className="mt-3 text-sm text-amber-300">{t("readonly")}</p>}
+          </section>
+
+          <aside className="ai-panel rounded-[1.8rem] p-6">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-300">{t("new")}</h2>
+            <p className="mb-4 text-sm text-slate-400">{t("empty.description")}</p>
           <button
             onClick={() => setShowForm(!showForm)}
             disabled={!canManageTemplates}
-            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold px-4 py-2 rounded-lg transition-colors text-sm"
+            className="ai-button-primary w-full rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
           >
             {showForm ? t("cancel") : t("new")}
           </button>
+          </aside>
         </div>
 
         {error && (
@@ -144,10 +159,7 @@ export default function TemplatesPage() {
 
         {/* Create form */}
         {showForm && (
-          <form
-            onSubmit={handleCreate}
-            className="bg-slate-800 border border-slate-700 rounded-xl p-6 mb-6 space-y-4"
-          >
+          <form onSubmit={handleCreate} className="ai-panel rounded-[1.8rem] p-6 mb-6 space-y-4">
             <h2 className="text-white font-semibold">{t("form.title")}</h2>
             {formError && (
               <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-4 py-3">
@@ -161,20 +173,16 @@ export default function TemplatesPage() {
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder={t("form.namePlaceholder")}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"
+                className="ai-input w-full rounded-xl px-4 py-2.5 text-sm placeholder:text-slate-500"
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-1.5">{t("form.targetRole")}</label>
-              <select
-                value={form.target_role}
-                onChange={(e) => setForm({ ...form, target_role: e.target.value as TargetRole })}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
+              <SelectField value={form.target_role} onChange={(e) => setForm({ ...form, target_role: e.target.value as TargetRole })}>
                 {ROLES.map((r) => (
-                  <option key={r.value} value={r.value}>{startT(`roles.${r.value}.label`)}</option>
+                  <option key={r} value={r}>{startT(`roles.${r}`)}</option>
                 ))}
-              </select>
+              </SelectField>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-1.5">{t("form.description")}</label>
@@ -182,7 +190,7 @@ export default function TemplatesPage() {
                 value={form.description}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
                 placeholder={t("form.descriptionPlaceholder")}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"
+                className="ai-input w-full rounded-xl px-4 py-2.5 text-sm placeholder:text-slate-500"
               />
             </div>
             <div>
@@ -194,7 +202,7 @@ export default function TemplatesPage() {
                       value={q}
                       onChange={(e) => setQuestion(idx, e.target.value)}
                       placeholder={t("form.questionPlaceholder", {number: idx + 1})}
-                      className="flex-1 bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"
+                      className="ai-input flex-1 rounded-xl px-4 py-2.5 text-sm placeholder:text-slate-500"
                     />
                     <button
                       type="button"
@@ -220,7 +228,7 @@ export default function TemplatesPage() {
                 type="checkbox"
                 checked={form.is_public}
                 onChange={(e) => setForm({ ...form, is_public: e.target.checked })}
-                className="rounded"
+                className="rounded border-white/10 bg-slate-950/30"
               />
               <span className="text-sm text-slate-300">
                 {t("form.makePublic")}
@@ -229,7 +237,7 @@ export default function TemplatesPage() {
             <button
               type="submit"
               disabled={saving}
-              className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-semibold py-2.5 rounded-lg transition-colors"
+              className="ai-button-primary w-full rounded-xl py-2.5 text-white font-semibold disabled:opacity-40"
             >
               {saving ? t("form.creating") : t("form.submit")}
             </button>
@@ -238,8 +246,7 @@ export default function TemplatesPage() {
 
         {/* Template list */}
         {templates.length === 0 && !showForm ? (
-          <div className="bg-slate-800 border border-slate-700 rounded-xl p-12 text-center">
-            <div className="text-4xl mb-4">TPL</div>
+          <div className="ai-panel rounded-[1.8rem] p-12 text-center">
             <h2 className="text-white font-semibold text-lg mb-2">{t("empty.title")}</h2>
             <p className="text-slate-400 text-sm max-w-sm mx-auto">
               {t("empty.description")}
@@ -250,7 +257,7 @@ export default function TemplatesPage() {
             {templates.map((tmpl) => (
               <div
                 key={tmpl.template_id}
-                className="bg-slate-800 border border-slate-700 rounded-xl p-5"
+                className="ai-panel rounded-[1.8rem] p-5"
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
@@ -282,6 +289,33 @@ export default function TemplatesPage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function SelectField({
+  value,
+  onChange,
+  children,
+}: {
+  value: string;
+  onChange: React.ChangeEventHandler<HTMLSelectElement>;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="relative">
+      <select
+        value={value}
+        onChange={onChange}
+        className="ai-select w-full appearance-none rounded-xl px-4 py-2.5 pr-12 text-sm"
+      >
+        {children}
+      </select>
+      <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-slate-400">
+        <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <path d="M6 8l4 4 4-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </span>
     </div>
   );
 }

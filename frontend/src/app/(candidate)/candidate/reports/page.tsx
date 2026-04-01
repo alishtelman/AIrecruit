@@ -25,7 +25,7 @@ export default function ReportsPage() {
         }
       })
       .finally(() => setLoading(false));
-  }, [router]);
+  }, [router, t]);
 
   const statusConfig: Record<InterviewStatus, { label: string; className: string }> = {
     created: { label: t("statuses.created"), className: "text-slate-400" },

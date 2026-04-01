@@ -490,6 +490,29 @@ export interface ReportSummaryBlock {
   top_weaknesses: string[];
 }
 
+export interface InterviewSummaryModel {
+  topic_outcomes: Array<{
+    slot: number;
+    label: string;
+    signal: string;
+    outcome: string;
+    verification_target: string | null;
+  }>;
+  role: string;
+  core_topics: number;
+  total_turns: number;
+  extra_turns: number;
+  covered_competencies: number;
+  coverage_label: string;
+  signal_quality: string;
+  validated_topics: number;
+  partial_topics: number;
+  unverified_claim_topics: number;
+  honest_gaps: number;
+  generic_or_evasive_topics: number;
+  strong_topics: number;
+}
+
 export interface CompetencyScore {
   competency: string;
   category: string;
@@ -552,4 +575,5 @@ export interface AssessmentReport {
   cheat_risk_score: number | null;
   cheat_flags: string[] | null;
   summary: ReportSummaryBlock | null;
+  summary_model: InterviewSummaryModel | null;
 }

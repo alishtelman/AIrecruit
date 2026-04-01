@@ -11,7 +11,10 @@ export default function CompanyLoginPage() {
   const [form, setForm] = useState({ email: "", password: "" });
 
   useEffect(() => {
-    authApi.me().then(() => router.replace("/company/dashboard")).catch(() => null);
+    authApi
+      .me()
+      .then((user) => router.replace(user.role === "candidate" ? "/candidate/dashboard" : "/company/dashboard"))
+      .catch(() => null);
   }, [router]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -22,7 +25,8 @@ export default function CompanyLoginPage() {
     setLoading(true);
     try {
       await authApi.login(form);
-      router.push("/company/dashboard");
+      const user = await authApi.me();
+      router.push(user.role === "candidate" ? "/candidate/dashboard" : "/company/dashboard");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t("failed"));
     } finally {

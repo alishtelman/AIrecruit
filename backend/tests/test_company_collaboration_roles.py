@@ -7,6 +7,11 @@ from httpx import AsyncClient
 
 from tests.conftest import auth_headers
 
+INTERVIEW_TEST_ANSWER = (
+    "Я решил задачу по шагам и потому что это снижало риски, "
+    "сначала проверял крайние случаи и только потом двигался дальше."
+)
+
 
 async def _upload_resume(client: AsyncClient, token: str) -> None:
     pdf_content = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF"
@@ -32,7 +37,7 @@ async def _complete_interview(client: AsyncClient, token: str, role: str = "back
         msg = await client.post(
             f"/api/v1/interviews/{interview_id}/message",
             headers=auth_headers(token),
-            json={"message": f"My answer {i + 1}"},
+            json={"message": INTERVIEW_TEST_ANSWER},
         )
         assert msg.status_code == 200, msg.text
 

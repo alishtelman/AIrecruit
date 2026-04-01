@@ -7,19 +7,21 @@ It is the authoritative source of truth — no need to re-count messages.
 """
 import uuid
 from datetime import datetime
+import re
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.assessor import AssessmentResult, assessor
-from app.ai.competencies import build_question_plan
+from app.ai.competencies import build_interview_plan
 from app.ai.interviewer import (
     MAX_QUESTIONS,
     InterviewContext,
-    detect_shallow_answer,
+    classify_answer,
     extract_mentioned_technologies,
     interviewer,
 )
+from app.ai.resume_profile import preprocess_resume
 from app.models.candidate import Candidate
 from app.models.interview import Interview, InterviewMessage
 from app.models.report import AssessmentReport
@@ -139,6 +141,242 @@ def _save_skills(
         ))
 
 
+_ANSWER_CLASS_PRIORITY = {
+    "evasive": 0,
+    "generic": 1,
+    "no_experience_honest": 2,
+    "partial": 3,
+    "strong": 4,
+}
+
+_TOKEN_RE = re.compile(r"[a-zA-Zа-яА-Я0-9_+#.-]+")
+_QUESTION_STOPWORDS = {
+    "как", "что", "где", "когда", "почему", "какие", "какой", "какую",
+    "вы", "ты", "это", "этот", "эта", "именно", "your", "what", "how",
+    "where", "when", "why", "which", "with", "from", "that", "this",
+    "the", "and", "или", "для", "про", "was", "were", "there", "used",
+}
+
+
+def _merge_topic_signal(existing: str | None, incoming: str) -> str:
+    if not existing:
+        return incoming
+    return incoming if _ANSWER_CLASS_PRIORITY.get(incoming, 0) >= _ANSWER_CLASS_PRIORITY.get(existing, 0) else existing
+
+
+def _normalize_answer_fingerprint(text: str) -> str:
+    tokens = [token.lower() for token in _TOKEN_RE.findall(text)]
+    return " ".join(tokens[:40])
+
+
+def _normalize_answer_history(previous_answers: list[dict] | list[str]) -> list[dict]:
+    normalized: list[dict] = []
+    for item in previous_answers:
+        if isinstance(item, dict):
+            normalized.append(
+                {
+                    "content": str(item.get("content", "")),
+                    "topic_index": int(item.get("topic_index", -1) or -1),
+                }
+            )
+        else:
+            normalized.append({"content": str(item), "topic_index": -1})
+    return normalized
+
+
+def _append_answer_history(previous_answers: list[dict] | list[str], answer: str, topic_index: int) -> list[dict]:
+    normalized = _normalize_answer_history(previous_answers)
+    normalized.append({"content": answer, "topic_index": topic_index})
+    return normalized[-10:]
+
+
+def _is_cross_topic_reuse(answer: str, previous_answers: list[dict] | list[str], current_topic_index: int) -> bool:
+    current = _normalize_answer_fingerprint(answer)
+    if not current or len(current.split()) < 6:
+        return False
+    current_tokens = set(current.split())
+    for previous in _normalize_answer_history(previous_answers)[-6:]:
+        if int(previous.get("topic_index", -1)) == current_topic_index:
+            continue
+        prev = _normalize_answer_fingerprint(str(previous.get("content", "")))
+        if not prev:
+            continue
+        if current == prev:
+            return True
+        prev_tokens = set(prev.split())
+        if not prev_tokens:
+            continue
+        overlap = len(current_tokens & prev_tokens) / max(1, len(current_tokens | prev_tokens))
+        if overlap >= 0.72:
+            return True
+    return False
+
+
+def _question_keywords(question: str | None) -> set[str]:
+    if not question:
+        return set()
+    return {
+        token.lower()
+        for token in _TOKEN_RE.findall(question)
+        if len(token) > 2 and token.lower() not in _QUESTION_STOPWORDS
+    }
+
+
+def _answer_relevance(
+    *,
+    question: str | None,
+    answer: str,
+    new_techs: set[str],
+    current_claim_target: str | None,
+) -> str:
+    answer_tokens = {
+        token.lower()
+        for token in _TOKEN_RE.findall(answer)
+        if len(token) > 2 and token.lower() not in _QUESTION_STOPWORDS
+    }
+    if not answer_tokens:
+        return "low"
+
+    question_tokens = _question_keywords(question)
+    claim_target = (current_claim_target or "").lower().strip()
+    if claim_target and claim_target in new_techs:
+        return "high"
+    if claim_target and claim_target in answer_tokens:
+        return "high"
+    if claim_target and claim_target not in answer_tokens and claim_target not in new_techs:
+        overlap = len(answer_tokens & question_tokens)
+        return "medium" if overlap >= 2 else "low"
+
+    overlap = len(answer_tokens & question_tokens)
+    if overlap >= 3:
+        return "high"
+    if overlap >= 1 or new_techs:
+        return "medium"
+    return "low"
+
+
+def _force_topic_closure(
+    *,
+    answer_class: str,
+    answer_relevance: str,
+    cross_topic_reuse: bool,
+    last_question_type: str,
+) -> tuple[bool, str | None]:
+    if cross_topic_reuse:
+        return True, "reused_answer"
+    if (
+        last_question_type in {"verification", "claim_verification", "deep_technical"}
+        and answer_relevance == "low"
+        and answer_class in {"generic", "evasive", "no_experience_honest", "partial"}
+    ):
+        return True, "low_relevance_after_probe"
+    return False, None
+
+
+def _is_topic_saturated(
+    *,
+    current_signal: str | None,
+    answer_class: str,
+    answer_relevance: str,
+    topic_turns: int,
+    last_question_type: str,
+) -> tuple[bool, str | None]:
+    if current_signal == "strong" and answer_relevance in {"medium", "high"}:
+        return True, "topic_mastered"
+    if (
+        last_question_type in {"verification", "claim_verification", "deep_technical"}
+        and answer_class in {"strong", "partial"}
+        and answer_relevance == "high"
+    ):
+        return True, "topic_saturated"
+    if topic_turns >= 1 and answer_class == "partial" and answer_relevance in {"medium", "high"}:
+        return True, "enough_partial_signal"
+    return False, None
+
+
+def _build_diversification_hint(
+    *,
+    next_target: dict | None,
+    current_target: dict | None,
+    closed_reason: str | None,
+    language: str,
+) -> str | None:
+    if not next_target:
+        return None
+    next_competencies = [str(item) for item in next_target.get("competencies", []) if item]
+    next_label = next_competencies[0] if next_competencies else ""
+    current_verification = str((current_target or {}).get("verification_target") or "").strip()
+    next_verification = str(next_target.get("verification_target") or "").strip()
+
+    parts: list[str] = []
+    if language == "en":
+        if next_label:
+            parts.append(f"Shift the angle to {next_label}.")
+        if current_verification:
+            parts.append(f"Do not stay on {current_verification}.")
+        if next_verification and next_verification != current_verification:
+            parts.append(f"If relevant, ground the question in {next_verification}.")
+        if closed_reason in {"topic_mastered", "topic_saturated", "enough_partial_signal"}:
+            parts.append("Treat the previous topic as sufficiently covered and move to a different dimension.")
+        elif closed_reason in {"reused_answer", "low_relevance_after_probe"}:
+            parts.append("Ask from a clearly different angle so the candidate cannot reuse the previous answer.")
+    else:
+        if next_label:
+            parts.append(f"Смени угол и сфокусируйся на теме «{next_label}».")
+        if current_verification:
+            parts.append(f"Не продолжай спрашивать про {current_verification}.")
+        if next_verification and next_verification != current_verification:
+            parts.append(f"Если уместно, заземли вопрос в опыте с {next_verification}.")
+        if closed_reason in {"topic_mastered", "topic_saturated", "enough_partial_signal"}:
+            parts.append("Считай предыдущую тему достаточно раскрытой и переходи к другому измерению опыта.")
+        elif closed_reason in {"reused_answer", "low_relevance_after_probe"}:
+            parts.append("Задай вопрос с явно другого угла, чтобы кандидат не мог повторить прежний ответ.")
+    return " ".join(parts) if parts else None
+
+
+def _rank_verification_target(
+    *,
+    current_claim_target: str | None,
+    new_techs: set[str],
+    current_question: str | None,
+    verified_skills: set[str],
+    probed_claim_targets: set[str],
+) -> str | None:
+    """Choose the most relevant technology to verify next.
+
+    Priority:
+    1. Current topic's planned claim target if it was actually mentioned or the question is about it
+    2. Technologies explicitly mentioned in the current answer
+    3. Current claim target as a fallback
+    """
+    question_lower = (current_question or "").lower()
+    normalized_claim = (current_claim_target or "").lower().strip() or None
+
+    if (
+        normalized_claim
+        and normalized_claim not in verified_skills
+        and normalized_claim not in probed_claim_targets
+        and (normalized_claim in new_techs or normalized_claim in question_lower)
+    ):
+        return normalized_claim
+
+    candidates = [
+        tech for tech in sorted(new_techs)
+        if tech not in verified_skills and tech not in probed_claim_targets
+    ]
+    if candidates:
+        return candidates[0]
+
+    if (
+        normalized_claim
+        and normalized_claim not in verified_skills
+        and normalized_claim not in probed_claim_targets
+    ):
+        return normalized_claim
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Public service functions
 # ---------------------------------------------------------------------------
@@ -169,8 +407,8 @@ async def start_interview(
 
     max_q = len(template.questions) if template else MAX_QUESTIONS
 
-    # Build competency question plan
-    question_plan = build_question_plan(target_role, max_q)
+    resume_profile = preprocess_resume(active_resume.raw_text, target_role)
+    topic_plan = build_interview_plan(target_role, max_q, resume_profile)
 
     # Create interview — store resume_id snapshot at start time
     interview = Interview(
@@ -190,7 +428,13 @@ async def start_interview(
 
     # Store competency plan as system message for persistence
     import json
-    plan_content = json.dumps({"competency_plan": question_plan}, ensure_ascii=False)
+    plan_content = json.dumps(
+        {
+            "topic_plan": topic_plan,
+            "resume_profile": resume_profile,
+        },
+        ensure_ascii=False,
+    )
     db.add(InterviewMessage(
         id=uuid.uuid4(),
         interview_id=interview.id,
@@ -206,8 +450,10 @@ async def start_interview(
         message_history=[],
         resume_text=active_resume.raw_text,
         template_questions=template.questions if template else None,
-        competency_targets=question_plan[0] if question_plan else None,
+        competency_targets=topic_plan[0]["competencies"] if topic_plan else None,
         language=language,
+        resume_anchor=topic_plan[0].get("resume_anchor") if topic_plan else None,
+        verification_target=topic_plan[0].get("verification_target") if topic_plan else None,
     )
     first_question = await interviewer.get_next_question(ctx)
 
@@ -218,8 +464,29 @@ async def start_interview(
         content=first_question,
     ))
 
-    # Explicitly set question_count = 1
+    # question_count tracks core interview questions only
     interview.question_count = 1
+    interview.interview_state = {
+        "turn_count": 1,
+        "question_count": 1,
+        "current_topic_index": 0,
+        "topic_turns": 0,
+        "resume_profile": resume_profile,
+        "topic_plan": topic_plan,
+        "topic_signals": [],
+        "answer_classes": [],
+        "mentioned_technologies": [],
+        "verified_skills": [],
+        "probed_claim_targets": [],
+        "contradiction_flags": [],
+        "pending_verification": None,
+        "last_question_type": "main",
+        "previous_candidate_answers": [],
+        "topic_reuse_flags": [],
+        "topic_relevance_failures": [],
+        "topic_closed_reasons": [],
+        "topic_mastered_flags": [],
+    }
     interview.status = "in_progress"
     await db.commit()
     await db.refresh(interview)
@@ -280,17 +547,16 @@ async def add_candidate_message(
             )
             template_questions = template.questions if template else None
 
-        # Load competency plan from system message
-        competency_targets = None
+        # Load persisted interview plan from system message
+        topic_plan: list[dict] = []
+        resume_profile: dict = {}
         import json
         for msg in messages:
             if msg.role == "system":
                 try:
                     plan_data = json.loads(msg.content)
-                    plan = plan_data.get("competency_plan", [])
-                    q_idx = interview.question_count  # next question (0-based)
-                    if q_idx < len(plan):
-                        competency_targets = plan[q_idx]
+                    topic_plan = plan_data.get("topic_plan", [])
+                    resume_profile = plan_data.get("resume_profile", {})
                     break
                 except (json.JSONDecodeError, KeyError):
                     pass
@@ -299,59 +565,185 @@ async def add_candidate_message(
 
         # ── Load persistent interview state ────────────────────────────────
         state: dict = interview.interview_state or {}
+        turn_count: int = int(state.get("turn_count", interview.question_count))
+        current_topic_index: int = int(state.get("current_topic_index", max(interview.question_count - 1, 0)))
+        topic_turns: int = int(state.get("topic_turns", interview.followup_depth or 0))
+        topic_signals: list[str] = list(state.get("topic_signals", []))
+        answer_classes: list[str] = list(state.get("answer_classes", []))
         mentioned_technologies: set[str] = set(state.get("mentioned_technologies", []))
         verified_skills: set[str] = set(state.get("verified_skills", []))
+        probed_claim_targets: set[str] = set(state.get("probed_claim_targets", []))
         contradiction_flags: list[str] = list(state.get("contradiction_flags", []))
         pending_verification: str | None = state.get("pending_verification")
-        follow_up_depth: int = interview.followup_depth or 0
+        previous_candidate_answers: list[dict] | list[str] = list(state.get("previous_candidate_answers", []))
+        topic_reuse_flags: list[bool] = list(state.get("topic_reuse_flags", []))
+        topic_relevance_failures: list[int] = list(state.get("topic_relevance_failures", []))
+        topic_closed_reasons: list[str] = list(state.get("topic_closed_reasons", []))
+        topic_mastered_flags: list[bool] = list(state.get("topic_mastered_flags", []))
+        last_question_type: str = str(state.get("last_question_type", "main"))
 
         # ── Analyse current answer ──────────────────────────────────────────
-        is_shallow, shallow_reason = detect_shallow_answer(message)
+        answer_class, shallow_reason = classify_answer(message)
+        answer_classes.append(answer_class)
         last_answer_words = len(message.strip().split())
         new_techs = extract_mentioned_technologies(message)
         mentioned_technologies.update(new_techs)
         # Techs mentioned but not yet verified
         unverified_techs = new_techs - verified_skills
 
+        current_target = topic_plan[current_topic_index] if current_topic_index < len(topic_plan) else {}
+        claim_target = current_target.get("verification_target")
+        current_question_text = history[-1]["content"] if history else None
+        answer_relevance = _answer_relevance(
+            question=current_question_text,
+            answer=message,
+            new_techs=new_techs,
+            current_claim_target=claim_target,
+        )
+        cross_topic_reuse = _is_cross_topic_reuse(message, previous_candidate_answers, current_topic_index)
+
+        while len(topic_reuse_flags) <= current_topic_index:
+            topic_reuse_flags.append(False)
+        while len(topic_relevance_failures) <= current_topic_index:
+            topic_relevance_failures.append(0)
+        while len(topic_closed_reasons) <= current_topic_index:
+            topic_closed_reasons.append("")
+        while len(topic_mastered_flags) <= current_topic_index:
+            topic_mastered_flags.append(False)
+
+        if cross_topic_reuse and answer_relevance == "low":
+            topic_reuse_flags[current_topic_index] = True
+            answer_class = "evasive"
+            shallow_reason = "reused_answer"
+            answer_relevance = "low"
+        elif cross_topic_reuse and answer_relevance in {"medium", "high"}:
+            topic_reuse_flags[current_topic_index] = True
+            if answer_class == "strong":
+                answer_class = "partial"
+            shallow_reason = "reused_but_relevant"
+        elif answer_class in {"strong", "partial"} and answer_relevance == "low":
+            answer_class = "generic"
+            shallow_reason = "low_relevance"
+        elif answer_class == "strong" and answer_relevance == "medium":
+            answer_class = "partial"
+        if answer_relevance == "low":
+            topic_relevance_failures[current_topic_index] += 1
+
         # ── Contradiction detection ─────────────────────────────────────────
         # If we asked a verification question and got a shallow answer → flag it
-        if pending_verification and is_shallow:
+        if pending_verification and answer_class in {"generic", "evasive", "no_experience_honest"}:
             contradiction_flags.append(f"possible exaggeration: {pending_verification}")
+            pending_verification = None
+        elif pending_verification and answer_class in {"strong", "partial"} and answer_relevance != "low":
+            verified_skills.add(pending_verification)
             pending_verification = None
 
         # ── Question type state machine ─────────────────────────────────────
-        # Priority: contradiction-probe > shallow follow-up > verification > depth > next topic
+        # One core topic can have at most one extra probing turn.
         question_type = "main"
         next_pending_verification: str | None = None
-        will_advance = True  # whether question_count should increment
+        will_advance = True
+        force_topic_closure, forced_closure_reason = _force_topic_closure(
+            answer_class=answer_class,
+            answer_relevance=answer_relevance,
+            cross_topic_reuse=cross_topic_reuse,
+            last_question_type=last_question_type,
+        )
+        current_signal = topic_signals[current_topic_index] if current_topic_index < len(topic_signals) else ""
+        topic_saturated, saturation_reason = _is_topic_saturated(
+            current_signal=current_signal,
+            answer_class=answer_class,
+            answer_relevance=answer_relevance,
+            topic_turns=topic_turns,
+            last_question_type=last_question_type,
+        )
 
-        can_do_more = follow_up_depth < 2 and interview.question_count < interview.max_questions
+        can_probe_current_topic = topic_turns < 1 and interview.question_count < interview.max_questions
 
-        if is_shallow and can_do_more:
-            # Shallow answer → follow-up
+        can_probe_claim = (
+            bool(claim_target)
+            and claim_target not in probed_claim_targets
+            and claim_target not in verified_skills
+            and can_probe_current_topic
+        )
+
+        ranked_claim_target = _rank_verification_target(
+            current_claim_target=claim_target,
+            new_techs=new_techs,
+            current_question=current_question_text,
+            verified_skills=verified_skills,
+            probed_claim_targets=probed_claim_targets,
+        )
+
+        if force_topic_closure:
+            question_type = "main"
+            will_advance = True
+        elif topic_saturated:
+            question_type = "main"
+            will_advance = True
+
+        elif can_probe_claim and ranked_claim_target and answer_class in {"generic", "evasive", "no_experience_honest"}:
+            question_type = "claim_verification"
+            next_pending_verification = ranked_claim_target
+            probed_claim_targets.add(ranked_claim_target)
+            will_advance = False
+
+        elif answer_class == "no_experience_honest" and can_probe_current_topic:
             question_type = "followup"
             will_advance = False
 
-        elif unverified_techs and can_do_more and not is_shallow:
-            # Non-shallow answer mentioned a new technology → verify it
-            tech_to_verify = sorted(unverified_techs)[0]  # deterministic
-            question_type = "verification"
-            next_pending_verification = tech_to_verify
-            verified_skills.add(tech_to_verify)
+        elif answer_class in {"generic", "evasive"} and can_probe_current_topic:
+            question_type = "followup"
             will_advance = False
 
-        elif follow_up_depth < 1 and not is_shallow and interview.question_count < interview.max_questions:
-            # Strong answer, no tech to verify → depth escalation (once per topic)
+        elif can_probe_current_topic and answer_class in {"strong", "partial"}:
+            tech_to_verify = _rank_verification_target(
+                current_claim_target=claim_target,
+                new_techs=unverified_techs,
+                current_question=current_question_text,
+                verified_skills=verified_skills,
+                probed_claim_targets=probed_claim_targets,
+            )
+            if tech_to_verify:
+                question_type = "verification"
+                next_pending_verification = tech_to_verify
+                probed_claim_targets.add(tech_to_verify)
+                will_advance = False
+            elif answer_class == "strong":
+                question_type = "deep_technical"
+                will_advance = False
+
+        elif answer_class == "strong" and can_probe_current_topic:
             question_type = "deep_technical"
             will_advance = False
 
         else:
-            # Enough follow-up or max depth → next main question
             question_type = "main"
             will_advance = True
 
+        competency_targets = None
+        resume_anchor = None
+        verification_target = None
+        diversification_hint = None
+        if topic_plan:
+            current_idx = max(current_topic_index, 0)
+            next_idx = interview.question_count
+            target_idx = next_idx if will_advance else current_idx
+            if target_idx < len(topic_plan):
+                target = topic_plan[target_idx]
+                competency_targets = target.get("competencies")
+                resume_anchor = target.get("resume_anchor")
+                verification_target = target.get("verification_target")
+                if will_advance:
+                    diversification_hint = _build_diversification_hint(
+                        next_target=target,
+                        current_target=current_target,
+                        closed_reason=forced_closure_reason or saturation_reason,
+                        language=interview.language,
+                    )
+
         # ── Build InterviewContext ──────────────────────────────────────────
-        q_number = interview.question_count if not will_advance else interview.question_count + 1
+        q_number = interview.question_count + 1 if will_advance else max(interview.question_count, 1)
 
         ctx = InterviewContext(
             target_role=interview.target_role,
@@ -362,30 +754,72 @@ async def add_candidate_message(
             template_questions=template_questions,
             competency_targets=competency_targets,
             language=interview.language,
-            follow_up_count=follow_up_depth,
+            follow_up_count=topic_turns,
             last_answer_words=last_answer_words,
             shallow_reason=shallow_reason,
+            answer_class=answer_class,
             question_type=question_type,
             mentioned_technologies=sorted(mentioned_technologies),
             verified_skills=sorted(verified_skills),
             contradiction_flags=contradiction_flags,
             pending_verification=next_pending_verification,
+            resume_anchor=resume_anchor,
+            verification_target=verification_target,
+            diversification_hint=diversification_hint,
         )
         next_q = await interviewer.get_next_question(ctx)
 
         # ── Update DB state ─────────────────────────────────────────────────
+        while len(topic_signals) <= current_topic_index:
+            topic_signals.append("")
+        topic_signals[current_topic_index] = _merge_topic_signal(
+            topic_signals[current_topic_index],
+            answer_class,
+        )
+
+        previous_candidate_answers = _append_answer_history(
+            previous_candidate_answers,
+            message,
+            current_topic_index,
+        )
+
         if will_advance:
+            topic_closed_reasons[current_topic_index] = forced_closure_reason or saturation_reason or "advanced"
+            topic_mastered_flags[current_topic_index] = bool(saturation_reason in {"topic_mastered", "topic_saturated"})
             interview.question_count += 1
             interview.followup_depth = 0
+            topic_turns = 0
+            current_topic_index = max(interview.question_count - 1, 0)
         else:
-            interview.followup_depth = follow_up_depth + 1
+            interview.followup_depth = topic_turns + 1
+            topic_turns += 1
+
+        turn_count += 1
 
         interview.interview_state = {
+            "turn_count": turn_count,
+            "question_count": interview.question_count,
+            "current_topic_index": current_topic_index,
+            "topic_turns": topic_turns,
+            "resume_profile": resume_profile,
+            "topic_plan": topic_plan,
+            "topic_signals": topic_signals,
+            "answer_classes": answer_classes,
             "mentioned_technologies": sorted(mentioned_technologies),
             "verified_skills": sorted(verified_skills),
+            "probed_claim_targets": sorted(probed_claim_targets),
             "contradiction_flags": contradiction_flags,
             "pending_verification": next_pending_verification,
             "last_question_type": question_type,
+            "last_answer_class": answer_class,
+            "last_shallow_reason": shallow_reason,
+            "last_answer_relevance": answer_relevance,
+            "last_cross_topic_reuse": cross_topic_reuse,
+            "previous_candidate_answers": previous_candidate_answers,
+            "topic_reuse_flags": topic_reuse_flags,
+            "topic_relevance_failures": topic_relevance_failures,
+            "topic_closed_reasons": topic_closed_reasons,
+            "topic_mastered_flags": topic_mastered_flags,
         }
 
         db.add(InterviewMessage(
@@ -441,6 +875,7 @@ async def finish_interview(
             message_timestamps=_to_timestamps(messages),
             behavioral_signals=interview.behavioral_signals,
             language=interview.language,
+            interview_meta=interview.interview_state or {},
         )
 
         report = AssessmentReport(
