@@ -1969,7 +1969,18 @@ class LLMAssessor:
             data: dict = json.loads(tool_call.function.arguments)
         except Exception:
             logger.exception("Pass 2 (competency scoring) failed, falling back to legacy assessment")
-            return await self._legacy_assess(target_role, transcript, report_language)
+            try:
+                return await self._legacy_assess(target_role, transcript, report_language)
+            except Exception:
+                logger.exception("Legacy assessment failed, falling back to deterministic mock assessment")
+                return await MockAssessor().assess(
+                    target_role=target_role,
+                    message_history=message_history or [],
+                    message_timestamps=None,
+                    behavioral_signals=None,
+                    language=report_language,
+                    interview_meta=None,
+                )
 
         comp_scores = data.get("competency_scores", [])
         aggregates = _compute_aggregates(comp_scores, target_role)

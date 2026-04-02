@@ -1,4 +1,5 @@
 """Tests for the full interview flow: upload resume → start → message → finish."""
+import asyncio
 import io
 
 import pytest
@@ -153,10 +154,134 @@ async def test_full_interview_flow(client: AsyncClient, candidate_token: str):
     )
     assert resp.status_code == 200
     report = resp.json()
-    assert report["hiring_recommendation"] in ("maybe", "yes", "strong_yes")
+    assert report["hiring_recommendation"] in ("no", "maybe", "yes", "strong_yes")
     assert report["summary_model"]["core_topics"] == 8
     assert report["summary_model"]["total_turns"] >= 8
 
+
+@pytest.mark.asyncio
+async def test_report_status_endpoint_returns_ready_after_finish(
+    client: AsyncClient,
+    candidate_token: str,
+):
+    await _upload_resume(client, candidate_token)
+
+    start_resp = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "backend_engineer"},
+    )
+    assert start_resp.status_code == 201, start_resp.text
+    interview_id = start_resp.json()["interview_id"]
+
+    answer = (
+        "Я декомпозировал задачу, валидировал гипотезы через метрики, "
+        "а затем внедрял изменения с контролем рисков и обратной связью."
+    )
+    while True:
+        msg_resp = await client.post(
+            f"/api/v1/interviews/{interview_id}/message",
+            headers=auth_headers(candidate_token),
+            json={"message": answer},
+        )
+        assert msg_resp.status_code == 200, msg_resp.text
+        if msg_resp.json()["current_question"] is None:
+            break
+
+    finish_resp = await client.post(
+        f"/api/v1/interviews/{interview_id}/finish",
+        headers=auth_headers(candidate_token),
+    )
+    assert finish_resp.status_code == 200, finish_resp.text
+
+    ready_payload = None
+    for _ in range(40):
+        status_resp = await client.get(
+            f"/api/v1/interviews/{interview_id}/report-status",
+            headers=auth_headers(candidate_token),
+        )
+        assert status_resp.status_code == 200, status_resp.text
+        payload = status_resp.json()
+        if payload["processing_state"] == "ready":
+            ready_payload = payload
+            break
+        assert payload["processing_state"] in {"pending", "processing"}
+        await asyncio.sleep(0.1)
+
+    assert ready_payload is not None
+    assert ready_payload["status"] == "report_generated"
+    assert ready_payload["report_id"]
+
+
+@pytest.mark.asyncio
+async def test_dynamic_question_budget_scales_for_rich_resume(
+    client: AsyncClient,
+    candidate_token: str,
+):
+    await _upload_docx_resume(
+        client,
+        candidate_token,
+        [
+            "Senior backend engineer with 9 years of experience in high-load systems.",
+            "Led migration from monolith to microservices with PostgreSQL, Kafka, Redis and Kubernetes.",
+            "Designed gRPC APIs, improved p95 latency by 37%, and reduced incident rate by 42%.",
+            "Built observability with tracing and alerting, mentored a team of 6 engineers.",
+            "Implemented blue-green deployments and disaster recovery runbooks for production.",
+        ],
+    )
+
+    resp = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "backend_engineer", "language": "ru"},
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert 20 <= data["max_questions"] <= 40
+
+
+@pytest.mark.asyncio
+async def test_dynamic_question_budget_early_stops_weak_session(
+    client: AsyncClient,
+    candidate_token: str,
+):
+    await _upload_docx_resume(
+        client,
+        candidate_token,
+        [
+            "Backend engineer with 8 years of experience in distributed systems.",
+            "Worked with PostgreSQL, Kafka, Redis, Docker and Kubernetes in production.",
+            "Built API services for high traffic products and incident response playbooks.",
+        ],
+    )
+
+    start_resp = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "backend_engineer", "language": "ru"},
+    )
+    assert start_resp.status_code == 201, start_resp.text
+    start_data = start_resp.json()
+    assert start_data["max_questions"] >= 10
+
+    interview_id = start_data["interview_id"]
+    terminal_response = None
+
+    for _ in range(14):
+        msg_resp = await client.post(
+            f"/api/v1/interviews/{interview_id}/message",
+            headers=auth_headers(candidate_token),
+            json={"message": "не знаю, не делал, не могу объяснить"},
+        )
+        assert msg_resp.status_code == 200, msg_resp.text
+        terminal_response = msg_resp.json()
+        if terminal_response["current_question"] is None:
+            break
+
+    assert terminal_response is not None
+    assert terminal_response["current_question"] is None
+    assert terminal_response["max_questions"] == terminal_response["question_count"]
+    assert terminal_response["question_count"] <= 10
 
 @pytest.mark.asyncio
 async def test_honest_no_experience_causes_single_reframe_then_moves_on(

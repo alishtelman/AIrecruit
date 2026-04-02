@@ -1,4 +1,5 @@
 """Tests for company-owned employee assessments and their access controls."""
+import asyncio
 import io
 import uuid
 from datetime import datetime, timedelta
@@ -112,7 +113,23 @@ async def _complete_employee_assessment(client: AsyncClient, token: str, invite_
         headers=auth_headers(token),
     )
     assert finish_resp.status_code == 200, finish_resp.text
-    return interview_id, finish_resp.json()["report_id"]
+    finish_data = finish_resp.json()
+    report_id = finish_data.get("report_id")
+    if not report_id:
+        for _ in range(40):
+            status_resp = await client.get(
+                f"/api/v1/interviews/{interview_id}/report-status",
+                headers=auth_headers(token),
+            )
+            assert status_resp.status_code == 200, status_resp.text
+            status_data = status_resp.json()
+            if status_data["processing_state"] == "ready" and status_data["report_id"]:
+                report_id = status_data["report_id"]
+                break
+            assert status_data["processing_state"] in {"pending", "processing"}
+            await asyncio.sleep(0.1)
+    assert report_id
+    return interview_id, report_id
 
 
 @pytest.mark.asyncio
@@ -210,6 +227,64 @@ async def test_private_employee_assessment_stays_private(client: AsyncClient, co
     assert candidates_resp.status_code == 200
     emails = {row["email"] for row in candidates_resp.json()}
     assert employee_email not in emails
+
+
+@pytest.mark.asyncio
+async def test_company_report_proctoring_timeline_returns_company_scoped_events(
+    client: AsyncClient,
+    company_token: str,
+):
+    employee_email = f"timeline_{uuid.uuid4().hex[:8]}@example.com"
+    assessment = await _create_assessment(client, company_token, employee_email, "Timeline Candidate")
+    candidate_token = await _register_candidate(client, employee_email, "Timeline Candidate")
+    await _upload_resume(client, candidate_token)
+
+    interview_id, report_id = await _complete_employee_assessment(
+        client,
+        candidate_token,
+        assessment["invite_token"],
+    )
+
+    submit_signals = await client.post(
+        f"/api/v1/interviews/{interview_id}/signals",
+        headers=auth_headers(candidate_token),
+        json={
+            "response_times": [{"q": 1, "seconds": 4.2}],
+            "paste_count": 1,
+            "tab_switches": 2,
+            "face_away_pct": 0.41,
+            "policy_mode": "strict_flagging",
+            "events": [
+                {
+                    "event_type": "tab_switch",
+                    "severity": "medium",
+                    "occurred_at": datetime.utcnow().isoformat(),
+                    "source": "client",
+                    "details": {"source": "visibilitychange"},
+                },
+                {
+                    "event_type": "face_away_high",
+                    "severity": "high",
+                    "occurred_at": datetime.utcnow().isoformat(),
+                    "source": "client",
+                    "details": {"face_away_pct": 0.41},
+                },
+            ],
+        },
+    )
+    assert submit_signals.status_code == 204, submit_signals.text
+
+    timeline = await client.get(
+        f"/api/v1/company/reports/{report_id}/proctoring-timeline",
+        headers=auth_headers(company_token),
+    )
+    assert timeline.status_code == 200, timeline.text
+    data = timeline.json()
+    assert data["report_id"] == report_id
+    assert data["policy_mode"] == "strict_flagging"
+    assert data["risk_level"] in {"medium", "high"}
+    assert data["total_events"] >= 2
+    assert any(event["event_type"] == "tab_switch" for event in data["events"])
 
 
 @pytest.mark.asyncio

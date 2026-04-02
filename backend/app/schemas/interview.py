@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, field_validator
 
@@ -62,8 +62,16 @@ class ReportSummary(BaseModel):
 class FinishInterviewResponse(BaseModel):
     interview_id: uuid.UUID
     status: str
-    report_id: uuid.UUID
-    summary: ReportSummary
+    report_id: uuid.UUID | None = None
+    summary: ReportSummary | None = None
+
+
+class InterviewReportStatusResponse(BaseModel):
+    interview_id: uuid.UUID
+    status: str
+    processing_state: Literal["pending", "processing", "ready", "failed"]
+    report_id: uuid.UUID | None = None
+    summary: ReportSummary | None = None
 
 
 class InterviewMessageResponse(BaseModel):
@@ -93,6 +101,8 @@ class BehavioralSignalsRequest(BaseModel):
     paste_count: int = 0
     tab_switches: int = 0
     face_away_pct: float | None = None
+    events: list[dict[str, Any]] = []
+    policy_mode: Literal["observe_only", "strict_flagging"] | None = None
 
 
 class ReplayTurn(BaseModel):
@@ -111,6 +121,24 @@ class InterviewReplayResponse(BaseModel):
     target_role: str
     completed_at: datetime | None
     turns: list[ReplayTurn]
+
+
+class ProctoringTimelineEventResponse(BaseModel):
+    event_type: str
+    severity: Literal["info", "medium", "high"] = "info"
+    occurred_at: str | None = None
+    source: str = "client"
+    details: dict[str, Any] = {}
+
+
+class ProctoringTimelineResponse(BaseModel):
+    interview_id: uuid.UUID
+    report_id: uuid.UUID | None = None
+    policy_mode: Literal["observe_only", "strict_flagging"] = "observe_only"
+    risk_level: Literal["low", "medium", "high"] = "low"
+    total_events: int = 0
+    high_severity_count: int = 0
+    events: list[ProctoringTimelineEventResponse] = []
 
 
 class InterviewListItemResponse(BaseModel):

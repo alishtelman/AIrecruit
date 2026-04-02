@@ -25,6 +25,7 @@ import type {
   HireOutcomeResponse,
   InterviewDetail,
   InterviewListItem,
+  InterviewReportStatusResponse,
   InterviewReplay,
   InterviewTemplate,
   LoginRequest,
@@ -382,10 +383,23 @@ export const interviewApi = {
       method: "POST",
     }),
 
+  getReportStatus: (id: string) =>
+    request<InterviewReportStatusResponse>(`/api/v1/interviews/${id}/report-status`),
+
   getDetail: (id: string) =>
     request<InterviewDetail>(`/api/v1/interviews/${id}`),
 
-  submitSignals: (id: string, signals: { response_times: { q: number; seconds: number }[]; paste_count: number; tab_switches: number; face_away_pct: number | null }) =>
+  submitSignals: (
+    id: string,
+    signals: {
+      response_times: { q: number; seconds: number }[];
+      paste_count: number;
+      tab_switches: number;
+      face_away_pct: number | null;
+      events?: { event_type: string; severity?: "info" | "medium" | "high"; occurred_at?: string; source?: string; details?: Record<string, unknown> }[];
+      policy_mode?: "observe_only" | "strict_flagging";
+    },
+  ) =>
     request<void>(`/api/v1/interviews/${id}/signals`, {
       method: "POST",
       body: JSON.stringify(signals),

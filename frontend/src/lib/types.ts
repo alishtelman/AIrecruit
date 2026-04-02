@@ -198,6 +198,7 @@ export type InterviewStatus =
   | "created"
   | "in_progress"
   | "completed"
+  | "report_processing"
   | "report_generated"
   | "failed";
 
@@ -287,8 +288,16 @@ export interface ReportSummary {
 export interface FinishInterviewResponse {
   interview_id: string;
   status: InterviewStatus;
-  report_id: string;
-  summary: ReportSummary;
+  report_id: string | null;
+  summary: ReportSummary | null;
+}
+
+export interface InterviewReportStatusResponse {
+  interview_id: string;
+  status: InterviewStatus;
+  processing_state: "pending" | "processing" | "ready" | "failed";
+  report_id: string | null;
+  summary: ReportSummary | null;
 }
 
 // ── Company ───────────────────────────────────────────────────────────────────

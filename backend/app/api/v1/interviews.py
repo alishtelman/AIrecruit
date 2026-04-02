@@ -29,6 +29,7 @@ from app.schemas.interview import (
     FinishInterviewResponse,
     InterviewDetailResponse,
     InterviewListItemResponse,
+    InterviewReportStatusResponse,
     SendMessageRequest,
     SendMessageResponse,
     StartInterviewRequest,
@@ -45,6 +46,7 @@ from app.services.interview_service import (
     add_candidate_message,
     finish_interview,
     get_interview_detail,
+    get_interview_report_status,
     list_interviews,
     save_behavioral_signals,
     save_interview_recording,
@@ -268,5 +270,21 @@ async def get_detail(
 ):
     try:
         return await get_interview_detail(db, candidate, interview_id)
+    except InterviewNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
+
+
+@router.get(
+    "/{interview_id}/report-status",
+    response_model=InterviewReportStatusResponse,
+    summary="Get asynchronous report generation status for an interview",
+)
+async def get_report_status(
+    interview_id: uuid.UUID,
+    candidate: Candidate = Depends(_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await get_interview_report_status(db, candidate, interview_id)
     except InterviewNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")

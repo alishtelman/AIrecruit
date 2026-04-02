@@ -15,6 +15,18 @@ import type { InterviewDetail, InterviewMessage } from "@/lib/types";
 
 const REPORT_POLL_INTERVAL_MS = 1500;
 const REPORT_POLL_TIMEOUT_MS = 120000;
+const PROCTORING_POLICY_MODE =
+  process.env.NEXT_PUBLIC_PROCTORING_POLICY_MODE === "strict_flagging"
+    ? "strict_flagging"
+    : "observe_only";
+
+type ProctoringEvent = {
+  event_type: string;
+  severity?: "info" | "medium" | "high";
+  occurred_at?: string;
+  source?: string;
+  details?: Record<string, unknown>;
+};
 
 export default function InterviewPage() {
   const t = useTranslations("interview");
@@ -48,13 +60,15 @@ export default function InterviewPage() {
   const questionStartTimeRef = useRef<number>(Date.now());
   const responseTimes = useRef<{ q: number; seconds: number }[]>([]);
   const currentQNumRef = useRef(1);
+  const proctoringEventsRef = useRef<ProctoringEvent[]>([]);
+  const faceAwayLoggedRef = useRef(false);
 
   // Resume panel
   const [resumeText, setResumeText] = useState<string | null>(null);
   const [resumeOpen, setResumeOpen] = useState(false);
   const reportGenerationFailedMessage = t("reportGenerationFailed");
 
-  // Recording is mandatory for interview flow.
+  // Recording is optional for interview flow (best-effort proctoring).
   const [recordingConsent, setRecordingConsent] = useState(false);
 
   // Language is loaded from interview, default "ru" until loaded
@@ -77,6 +91,17 @@ export default function InterviewPage() {
       setInput((prev) => (prev ? `${prev} ${text}` : text));
     },
   });
+
+  function trackProctoringEvent(event: ProctoringEvent) {
+    const normalized: ProctoringEvent = {
+      event_type: event.event_type,
+      severity: event.severity ?? "info",
+      occurred_at: event.occurred_at ?? new Date().toISOString(),
+      source: event.source ?? "client",
+      details: event.details ?? {},
+    };
+    proctoringEventsRef.current = [...proctoringEventsRef.current, normalized].slice(-200);
+  }
 
   // Load interview on mount
   useEffect(() => {
@@ -125,10 +150,22 @@ export default function InterviewPage() {
   // Track behavioral signals
   useEffect(() => {
     function onVisibilityChange() {
-      if (document.hidden) tabSwitchCountRef.current++;
+      if (document.hidden) {
+        tabSwitchCountRef.current++;
+        trackProctoringEvent({
+          event_type: "tab_switch",
+          severity: PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
+          details: { source: "visibilitychange" },
+        });
+      }
     }
     function onBlur() {
       tabSwitchCountRef.current++;
+      trackProctoringEvent({
+        event_type: "tab_switch",
+        severity: PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
+        details: { source: "window_blur" },
+      });
     }
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("blur", onBlur);
@@ -149,24 +186,66 @@ export default function InterviewPage() {
 
     void startRecording().then((ok) => {
       setRecordingConsent(ok);
+      if (ok) {
+        trackProctoringEvent({
+          event_type: "recording_started",
+          severity: "info",
+        });
+      } else {
+        trackProctoringEvent({
+          event_type: "recording_permission_denied",
+          severity: PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
+        });
+      }
     });
   }, [interview, recordingConsent, startRecording]);
 
   useEffect(() => {
     if (interview && interview.status !== "in_progress") {
       stopRecording();
+      setRecordingConsent(false);
     }
   }, [interview, stopRecording]);
+
+  useEffect(() => {
+    if (!recordingError) return;
+    const lowered = recordingError.toLowerCase();
+    const eventType = lowered.includes("screen")
+      ? "screen_share_stopped"
+      : lowered.includes("camera")
+      ? "camera_stream_lost"
+      : "recording_error";
+    trackProctoringEvent({
+      event_type: eventType,
+      severity: PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
+      details: { message: recordingError },
+    });
+  }, [recordingError]);
+
+  useEffect(() => {
+    if (faceAwayPct === null) return;
+    if (faceAwayPct > 0.35 && !faceAwayLoggedRef.current) {
+      faceAwayLoggedRef.current = true;
+      trackProctoringEvent({
+        event_type: "face_away_high",
+        severity: faceAwayPct >= 0.5 ? "high" : "medium",
+        details: { face_away_pct: faceAwayPct },
+      });
+    }
+    if (faceAwayPct <= 0.2) {
+      faceAwayLoggedRef.current = false;
+    }
+  }, [faceAwayPct]);
 
   async function waitForReport(interviewId: string): Promise<string> {
     const deadline = Date.now() + REPORT_POLL_TIMEOUT_MS;
     while (Date.now() < deadline) {
       try {
-        const detail = await interviewApi.getDetail(interviewId);
-        if (detail.status === "report_generated" && detail.report_id) {
-          return detail.report_id;
+        const status = await interviewApi.getReportStatus(interviewId);
+        if (status.processing_state === "ready" && status.report_id) {
+          return status.report_id;
         }
-        if (detail.status === "failed") {
+        if (status.processing_state === "failed") {
           throw new Error(reportGenerationFailedMessage);
         }
       } catch (err: unknown) {
@@ -180,7 +259,7 @@ export default function InterviewPage() {
   }
 
   async function handleSend() {
-    if (!recordingConsent || !input.trim() || sending || !id) return;
+    if (!input.trim() || sending || !id) return;
     const text = input.trim();
 
     // Record response time for this question
@@ -249,15 +328,27 @@ export default function InterviewPage() {
         try {
           await interviewApi.uploadRecording(id, recordingBlob);
           setRecordingUploadState("uploaded");
+          trackProctoringEvent({
+            event_type: "recording_uploaded",
+            severity: "info",
+          });
           clearRecording();
         } catch (uploadErr: unknown) {
           setRecordingUploadState("failed");
           setError(uploadErr instanceof Error ? uploadErr.message : t("recordingUploadFailed"));
           recordingNotice = "recording_failed";
+          trackProctoringEvent({
+            event_type: "recording_upload_failed",
+            severity: PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
+          });
         }
       } else {
         setRecordingUploadState("skipped");
         recordingNotice = "recording_skipped";
+        trackProctoringEvent({
+          event_type: "recording_skipped",
+          severity: "info",
+        });
       }
       // Submit behavioral signals before finishing
       await interviewApi.submitSignals(id, {
@@ -265,6 +356,8 @@ export default function InterviewPage() {
         paste_count: pasteCountRef.current,
         tab_switches: tabSwitchCountRef.current,
         face_away_pct: faceAwayPct,
+        events: proctoringEventsRef.current,
+        policy_mode: PROCTORING_POLICY_MODE,
       }).catch(() => null);
 
       const res = await interviewApi.finish(id);
@@ -288,6 +381,11 @@ export default function InterviewPage() {
   async function handleConsentAndRecord() {
     const ok = await startRecording();
     setRecordingConsent(ok);
+    trackProctoringEvent({
+      event_type: ok ? "recording_started_manual" : "recording_permission_denied",
+      severity: ok ? "info" : PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
+      details: { source: "manual_retry" },
+    });
   }
 
   if (authLoading || !interview) {
@@ -391,7 +489,7 @@ export default function InterviewPage() {
               )}
             </span>
           )}
-          {!recordingConsent && interview.status === "in_progress" && (
+          {!isRecording && interview.status === "in_progress" && (
             <span className="text-xs px-3 py-1.5 rounded-lg border border-yellow-500/40 bg-yellow-500/10 text-yellow-300">
               {t("recordingRequired")}
             </span>
@@ -485,7 +583,7 @@ export default function InterviewPage() {
         </div>
       )}
 
-      {!recordingConsent && interview.status === "in_progress" && (
+      {!isRecording && interview.status === "in_progress" && (
         <div className="max-w-2xl w-full mx-auto px-4 pb-4">
           <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-5">
             <div className="text-yellow-300 font-semibold mb-1">{t("recordingRequired")}</div>
@@ -549,7 +647,7 @@ export default function InterviewPage() {
       )}
 
       {/* Input */}
-      {!canFinish && interview.status === "in_progress" && recordingConsent && (
+      {!canFinish && interview.status === "in_progress" && (
         <div className="border-t border-slate-800 px-4 py-4 shrink-0">
           <div className="max-w-2xl mx-auto space-y-3">
             <div className="flex items-center justify-between gap-3">
@@ -598,7 +696,14 @@ export default function InterviewPage() {
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onPaste={() => { pasteCountRef.current++; }}
+              onPaste={() => {
+                pasteCountRef.current++;
+                trackProctoringEvent({
+                  event_type: "paste_detected",
+                  severity: PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
+                  details: { count: pasteCountRef.current },
+                });
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();

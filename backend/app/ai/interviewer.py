@@ -70,6 +70,7 @@ class InterviewContext:
     resume_anchor: str | None = None
     verification_target: str | None = None
     diversification_hint: str | None = None
+    candidate_memory: list[str] = field(default_factory=list)
     # v3-depth: question type and technology tracking
     question_type: str = "main"       # main | followup | verification | deep_technical | edge_cases
     mentioned_technologies: list[str] = field(default_factory=list)
@@ -700,6 +701,15 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
         "- НЕ начинай с оценки («Отлично!», «Хороший ответ», «Интересно»).\n"
         "- НЕ повторяй вопрос. НЕ давай советов и комментариев.\n"
     )
+
+    if ctx.candidate_memory:
+        memory_lines = "\n".join(f"- {item}" for item in ctx.candidate_memory[-8:])
+        prompt += (
+            "\n## Память текущей сессии\n"
+            "Учитывай уже озвученные факты кандидата. Не переспрашивай то, что уже подробно раскрыто, "
+            "если нет новой цели верификации или углубления.\n"
+            f"{memory_lines}\n"
+        )
 
     # Non-main question types — override phase-based instructions and return early
     if ctx.question_type != "main":

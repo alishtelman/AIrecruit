@@ -5,15 +5,20 @@ Routers call these functions; no SQLAlchemy queries in routers.
 question_count is an explicit DB column on Interview, incremented here.
 It is the authoritative source of truth — no need to re-count messages.
 """
+import asyncio
+import logging
 import uuid
 from datetime import datetime
 import re
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.assessor import AssessmentResult, assessor
 from app.ai.competencies import build_interview_plan
+from app.core.config import settings
+from app.core.database import AsyncSessionLocal
 from app.ai.interviewer import (
     MAX_QUESTIONS,
     InterviewContext,
@@ -31,7 +36,9 @@ from app.models.template import InterviewTemplate
 from app.schemas.interview import (
     FinishInterviewResponse,
     InterviewDetailResponse,
+    InterviewReportStatusResponse,
     InterviewMessageResponse,
+    ProctoringTimelineResponse,
     InterviewReplayResponse,
     ReplayTurn,
     ReportSummary,
@@ -156,6 +163,365 @@ _QUESTION_STOPWORDS = {
     "where", "when", "why", "which", "with", "from", "that", "this",
     "the", "and", "или", "для", "про", "was", "were", "there", "used",
 }
+
+_ROLE_BASE_QUESTION_BUDGET = {
+    "backend_engineer": 20,
+    "devops_engineer": 20,
+    "data_scientist": 20,
+    "frontend_engineer": 18,
+    "mobile_engineer": 18,
+    "qa_engineer": 17,
+    "product_manager": 16,
+    "designer": 16,
+}
+_ROLE_MAX_QUESTION_CAP = {
+    "backend_engineer": 40,
+    "devops_engineer": 40,
+    "data_scientist": 40,
+    "frontend_engineer": 36,
+    "mobile_engineer": 36,
+    "qa_engineer": 34,
+    "product_manager": 32,
+    "designer": 30,
+}
+_ADAPTIVE_MIN_QUESTIONS_FLOOR = 10
+_ADAPTIVE_EXTENSION_STEP = 4
+_REPORT_GENERATION_TASKS: set[uuid.UUID] = set()
+
+_PROCTORING_POLICY_MODES = {"observe_only", "strict_flagging"}
+_EVENT_SEVERITIES = {"info", "medium", "high"}
+_STRICT_MEDIUM_EVENTS = {
+    "paste_detected",
+    "tab_switch",
+    "screen_share_stopped",
+    "screen_permission_denied",
+    "camera_permission_denied",
+    "microphone_permission_denied",
+    "recording_upload_failed",
+}
+_STRICT_HIGH_EVENTS = {
+    "multiple_faces_detected",
+    "camera_stream_lost",
+}
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_policy_mode(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in _PROCTORING_POLICY_MODES:
+        return normalized
+    configured = (settings.PROCTORING_POLICY_MODE or "").strip().lower()
+    if configured in _PROCTORING_POLICY_MODES:
+        return configured
+    return "observe_only"
+
+
+def _normalize_event_timestamp(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        return None
+
+
+def _normalize_event(
+    raw_event: dict[str, Any],
+    *,
+    index: int,
+    policy_mode: str,
+) -> dict[str, Any]:
+    event_type = str(raw_event.get("event_type") or raw_event.get("type") or "").strip().lower()
+    if not event_type:
+        event_type = f"event_{index + 1}"
+
+    severity = str(raw_event.get("severity") or "info").strip().lower()
+    if severity not in _EVENT_SEVERITIES:
+        severity = "info"
+
+    if policy_mode == "strict_flagging":
+        if event_type in _STRICT_HIGH_EVENTS:
+            severity = "high"
+        elif event_type in _STRICT_MEDIUM_EVENTS and severity == "info":
+            severity = "medium"
+
+    occurred_at = _normalize_event_timestamp(
+        raw_event.get("occurred_at") or raw_event.get("timestamp") or raw_event.get("time")
+    )
+    source = str(raw_event.get("source") or "client").strip().lower() or "client"
+    details_raw = raw_event.get("details")
+    details = details_raw if isinstance(details_raw, dict) else {}
+
+    return {
+        "event_type": event_type,
+        "severity": severity,
+        "occurred_at": occurred_at,
+        "source": source,
+        "details": details,
+    }
+
+
+def _synthesize_events_from_counters(signals: dict[str, Any]) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    tab_switches = _safe_int(signals.get("tab_switches"), 0)
+    paste_count = _safe_int(signals.get("paste_count"), 0)
+    face_away_pct = signals.get("face_away_pct")
+    response_times = signals.get("response_times")
+
+    if tab_switches > 0:
+        events.append(
+            {
+                "event_type": "tab_switch",
+                "severity": "medium" if tab_switches >= 3 else "info",
+                "occurred_at": None,
+                "source": "client",
+                "details": {"count": tab_switches},
+            }
+        )
+
+    if paste_count > 0:
+        events.append(
+            {
+                "event_type": "paste_detected",
+                "severity": "medium" if paste_count >= 2 else "info",
+                "occurred_at": None,
+                "source": "client",
+                "details": {"count": paste_count},
+            }
+        )
+
+    if isinstance(face_away_pct, (int, float)) and face_away_pct >= 0.3:
+        events.append(
+            {
+                "event_type": "face_away_high",
+                "severity": "medium" if face_away_pct < 0.5 else "high",
+                "occurred_at": None,
+                "source": "client",
+                "details": {"face_away_pct": round(float(face_away_pct), 3)},
+            }
+        )
+
+    if isinstance(response_times, list):
+        suspicious_fast = [item for item in response_times if isinstance(item, dict) and float(item.get("seconds") or 0) <= 1.5]
+        if suspicious_fast:
+            events.append(
+                {
+                    "event_type": "very_fast_answers",
+                    "severity": "info",
+                    "occurred_at": None,
+                    "source": "client",
+                    "details": {"count": len(suspicious_fast)},
+                }
+            )
+
+    return events
+
+
+def normalize_behavioral_signals(signals: dict | None) -> dict[str, Any]:
+    payload: dict[str, Any] = dict(signals or {})
+    policy_mode = _normalize_policy_mode(payload.get("policy_mode"))
+    raw_events = payload.get("events")
+    normalized_events: list[dict[str, Any]] = []
+
+    if isinstance(raw_events, list):
+        for idx, item in enumerate(raw_events):
+            if isinstance(item, dict):
+                normalized_events.append(_normalize_event(item, index=idx, policy_mode=policy_mode))
+
+    if not normalized_events:
+        synthesized = _synthesize_events_from_counters(payload)
+        normalized_events = [
+            _normalize_event(item, index=idx, policy_mode=policy_mode)
+            for idx, item in enumerate(synthesized)
+        ]
+
+    payload["policy_mode"] = policy_mode
+    payload["events"] = normalized_events
+    payload["captured_at"] = datetime.utcnow().isoformat()
+    return payload
+
+
+def get_proctoring_timeline_payload(signals: dict | None) -> dict[str, Any]:
+    normalized = normalize_behavioral_signals(signals)
+    events = list(normalized.get("events", []))
+    high_count = sum(1 for event in events if event.get("severity") == "high")
+    medium_count = sum(1 for event in events if event.get("severity") == "medium")
+
+    if high_count > 0:
+        risk_level = "high"
+    elif medium_count >= 2:
+        risk_level = "medium"
+    else:
+        risk_level = "low"
+
+    return {
+        "policy_mode": normalized.get("policy_mode", "observe_only"),
+        "risk_level": risk_level,
+        "total_events": len(events),
+        "high_severity_count": high_count,
+        "events": events,
+    }
+
+
+def _estimate_dynamic_question_budget(
+    *,
+    target_role: str,
+    resume_profile: dict | None,
+) -> tuple[int, int, int]:
+    """Return (initial_max_questions, role_max_cap, min_questions_before_early_stop)."""
+    role_cap = _ROLE_MAX_QUESTION_CAP.get(target_role, 32)
+    profile = resume_profile or {}
+
+    technologies = list(profile.get("technologies", []) or [])
+    project_highlights = list(profile.get("project_highlights", []) or [])
+    experience_years = profile.get("experience_years")
+    seniority_hint = str(profile.get("seniority_hint") or "").strip().lower()
+
+    has_resume_signal = bool(
+        technologies
+        or project_highlights
+        or experience_years is not None
+        or seniority_hint
+    )
+    if not has_resume_signal:
+        # Preserve legacy behavior for sparse/noisy resumes.
+        initial = MAX_QUESTIONS
+        return initial, initial, initial + 1
+
+    budget = _ROLE_BASE_QUESTION_BUDGET.get(target_role, 16)
+
+    years = _safe_int(experience_years, 0)
+    if years >= 10:
+        budget += 8
+    elif years >= 7:
+        budget += 6
+    elif years >= 5:
+        budget += 4
+    elif years >= 3:
+        budget += 2
+
+    if seniority_hint in {"staff", "senior"}:
+        budget += 3
+    elif seniority_hint == "middle":
+        budget += 1
+
+    # Richer resumes usually need wider competency coverage.
+    budget += min(6, len(set(technologies)))
+    budget += min(4, len(project_highlights))
+
+    initial = max(_ADAPTIVE_MIN_QUESTIONS_FLOOR, min(role_cap, budget))
+    return initial, role_cap, min(_ADAPTIVE_MIN_QUESTIONS_FLOOR, initial)
+
+
+def _append_candidate_memory(
+    previous_memory: list[str],
+    *,
+    answer: str,
+    answer_class: str,
+    answer_relevance: str,
+    new_techs: set[str],
+) -> list[str]:
+    memory = [str(item).strip() for item in previous_memory if str(item).strip()]
+
+    # Ignore low-signal noise unless it adds concrete technology context.
+    if answer_class in {"generic", "evasive"} and not new_techs:
+        return memory[-12:]
+    if answer_relevance == "low" and len(answer.strip().split()) < 12 and not new_techs:
+        return memory[-12:]
+
+    fact = " ".join(answer.strip().split())
+    if not fact:
+        return memory[-12:]
+    if len(fact) > 180:
+        fact = f"{fact[:180].rstrip()}..."
+    if new_techs:
+        tech_hint = ", ".join(sorted(new_techs)[:3])
+        fact = f"{fact} [tech: {tech_hint}]"
+
+    fact_fp = _normalize_answer_fingerprint(fact)
+    if not fact_fp:
+        return memory[-12:]
+
+    deduped: list[str] = []
+    seen_fps: set[str] = set()
+    for item in memory + [fact]:
+        fp = _normalize_answer_fingerprint(item)
+        if not fp or fp in seen_fps:
+            continue
+        deduped.append(item)
+        seen_fps.add(fp)
+
+    return deduped[-12:]
+
+
+def _adapt_question_budget(
+    *,
+    current_max_questions: int,
+    current_question_count: int,
+    answer_count: int,
+    strong_answers_count: int,
+    weak_answers_count: int,
+    low_relevance_answers_count: int,
+    consecutive_weak_answers: int,
+    min_questions_before_early_stop: int,
+    role_max_cap: int,
+) -> tuple[int, bool, str | None]:
+    if answer_count <= 0:
+        return current_max_questions, False, None
+
+    weak_ratio = weak_answers_count / answer_count
+    strong_ratio = strong_answers_count / answer_count
+    low_relevance_ratio = low_relevance_answers_count / answer_count
+
+    # Early stop for consistently weak sessions: keep interview short and let report generation proceed.
+    if (
+        answer_count >= min_questions_before_early_stop
+        and weak_ratio >= 0.72
+        and low_relevance_ratio >= 0.45
+        and consecutive_weak_answers >= 3
+        and strong_answers_count <= max(1, answer_count // 6)
+    ):
+        return max(current_question_count, 1), True, "early_stop_low_signal"
+
+    # Near the planned end, extend depth for strong candidates (up to role cap).
+    if (
+        current_question_count >= max(current_max_questions - 1, 1)
+        and current_max_questions < role_max_cap
+        and answer_count >= 6
+        and strong_ratio >= 0.55
+        and low_relevance_ratio <= 0.30
+        and consecutive_weak_answers == 0
+    ):
+        extended = min(role_max_cap, current_max_questions + _ADAPTIVE_EXTENSION_STEP)
+        if extended > current_max_questions:
+            return extended, False, "extended_for_depth"
+
+    # Compress overly long plans when signal is consistently weak.
+    if (
+        answer_count >= 6
+        and current_max_questions > min_questions_before_early_stop
+        and weak_ratio >= 0.80
+        and strong_answers_count == 0
+    ):
+        reduced = max(
+            min_questions_before_early_stop,
+            min(current_max_questions, current_question_count + 2),
+        )
+        if reduced < current_max_questions:
+            return reduced, False, "reduced_for_low_signal"
+
+    return current_max_questions, False, None
 
 
 def _merge_topic_signal(existing: str | None, incoming: str) -> str:
@@ -405,9 +771,16 @@ async def start_interview(
             select(InterviewTemplate).where(InterviewTemplate.id == template_id)
         )
 
-    max_q = len(template.questions) if template else MAX_QUESTIONS
-
     resume_profile = preprocess_resume(active_resume.raw_text, target_role)
+    if template:
+        max_q = len(template.questions)
+        role_max_cap = max_q
+        min_questions_before_early_stop = min(_ADAPTIVE_MIN_QUESTIONS_FLOOR, max_q)
+    else:
+        max_q, role_max_cap, min_questions_before_early_stop = _estimate_dynamic_question_budget(
+            target_role=target_role,
+            resume_profile=resume_profile,
+        )
     topic_plan = build_interview_plan(target_role, max_q, resume_profile)
 
     # Create interview — store resume_id snapshot at start time
@@ -454,6 +827,7 @@ async def start_interview(
         language=language,
         resume_anchor=topic_plan[0].get("resume_anchor") if topic_plan else None,
         verification_target=topic_plan[0].get("verification_target") if topic_plan else None,
+        candidate_memory=[],
     )
     first_question = await interviewer.get_next_question(ctx)
 
@@ -486,6 +860,15 @@ async def start_interview(
         "topic_relevance_failures": [],
         "topic_closed_reasons": [],
         "topic_mastered_flags": [],
+        "candidate_memory": [],
+        "candidate_answers_count": 0,
+        "strong_answers_count": 0,
+        "weak_answers_count": 0,
+        "low_relevance_answers_count": 0,
+        "consecutive_weak_answers": 0,
+        "adaptive_min_questions": min_questions_before_early_stop,
+        "adaptive_role_max_cap": role_max_cap,
+        "adaptive_last_decision": None,
     }
     interview.status = "in_progress"
     await db.commit()
@@ -535,6 +918,7 @@ async def add_candidate_message(
     current_question: str | None = None
     question_type = "main"
     will_advance = True
+    response_is_followup = False
     if interview.question_count < interview.max_questions:
         history = _to_history(messages)
         history.append({"role": "candidate", "content": message})
@@ -581,6 +965,20 @@ async def add_candidate_message(
         topic_closed_reasons: list[str] = list(state.get("topic_closed_reasons", []))
         topic_mastered_flags: list[bool] = list(state.get("topic_mastered_flags", []))
         last_question_type: str = str(state.get("last_question_type", "main"))
+        candidate_memory: list[str] = list(state.get("candidate_memory", []))
+        candidate_answers_count = _safe_int(state.get("candidate_answers_count"), 0)
+        strong_answers_count = _safe_int(state.get("strong_answers_count"), 0)
+        weak_answers_count = _safe_int(state.get("weak_answers_count"), 0)
+        low_relevance_answers_count = _safe_int(state.get("low_relevance_answers_count"), 0)
+        consecutive_weak_answers = _safe_int(state.get("consecutive_weak_answers"), 0)
+        min_questions_before_early_stop = _safe_int(
+            state.get("adaptive_min_questions"),
+            min(_ADAPTIVE_MIN_QUESTIONS_FLOOR, interview.max_questions),
+        )
+        role_max_cap = _safe_int(
+            state.get("adaptive_role_max_cap"),
+            _ROLE_MAX_QUESTION_CAP.get(interview.target_role, interview.max_questions),
+        )
 
         # ── Analyse current answer ──────────────────────────────────────────
         answer_class, shallow_reason = classify_answer(message)
@@ -593,7 +991,10 @@ async def add_candidate_message(
 
         current_target = topic_plan[current_topic_index] if current_topic_index < len(topic_plan) else {}
         claim_target = current_target.get("verification_target")
-        current_question_text = history[-1]["content"] if history else None
+        current_question_text = next(
+            (msg.content for msg in reversed(messages) if msg.role == "assistant"),
+            None,
+        )
         answer_relevance = _answer_relevance(
             question=current_question_text,
             answer=message,
@@ -622,12 +1023,52 @@ async def add_candidate_message(
                 answer_class = "partial"
             shallow_reason = "reused_but_relevant"
         elif answer_class in {"strong", "partial"} and answer_relevance == "low":
-            answer_class = "generic"
-            shallow_reason = "low_relevance"
+            # Keep descriptive answers as "partial" on main questions, otherwise
+            # we over-trigger follow-ups and can stall legacy fixed-length interviews.
+            if last_answer_words < 18 or last_question_type in {"verification", "claim_verification", "deep_technical"}:
+                answer_class = "generic"
+                shallow_reason = "low_relevance"
         elif answer_class == "strong" and answer_relevance == "medium":
             answer_class = "partial"
         if answer_relevance == "low":
             topic_relevance_failures[current_topic_index] += 1
+
+        # ── Session memory + adaptive quality counters ─────────────────────
+        candidate_memory = _append_candidate_memory(
+            candidate_memory,
+            answer=message,
+            answer_class=answer_class,
+            answer_relevance=answer_relevance,
+            new_techs=new_techs,
+        )
+        candidate_answers_count += 1
+
+        is_strong_signal = answer_class == "strong" and answer_relevance in {"medium", "high"}
+        is_weak_signal = answer_class in {"generic", "evasive", "no_experience_honest"} or answer_relevance == "low"
+
+        if is_strong_signal:
+            strong_answers_count += 1
+        if is_weak_signal:
+            weak_answers_count += 1
+            consecutive_weak_answers += 1
+        else:
+            consecutive_weak_answers = 0
+        if answer_relevance == "low":
+            low_relevance_answers_count += 1
+
+        role_max_cap = max(interview.max_questions, role_max_cap)
+        adapted_max_questions, should_end_now, adaptive_decision = _adapt_question_budget(
+            current_max_questions=interview.max_questions,
+            current_question_count=interview.question_count,
+            answer_count=candidate_answers_count,
+            strong_answers_count=strong_answers_count,
+            weak_answers_count=weak_answers_count,
+            low_relevance_answers_count=low_relevance_answers_count,
+            consecutive_weak_answers=consecutive_weak_answers,
+            min_questions_before_early_stop=max(1, min_questions_before_early_stop),
+            role_max_cap=role_max_cap,
+        )
+        interview.max_questions = adapted_max_questions
 
         # ── Contradiction detection ─────────────────────────────────────────
         # If we asked a verification question and got a shallow answer → flag it
@@ -675,7 +1116,13 @@ async def add_candidate_message(
             probed_claim_targets=probed_claim_targets,
         )
 
-        if force_topic_closure:
+        if should_end_now:
+            question_type = "main"
+            will_advance = True
+            next_pending_verification = None
+            forced_closure_reason = adaptive_decision or "early_stop_low_signal"
+            saturation_reason = None
+        elif force_topic_closure:
             question_type = "main"
             will_advance = True
         elif topic_saturated:
@@ -721,53 +1168,56 @@ async def add_candidate_message(
             question_type = "main"
             will_advance = True
 
-        competency_targets = None
-        resume_anchor = None
-        verification_target = None
-        diversification_hint = None
-        if topic_plan:
-            current_idx = max(current_topic_index, 0)
-            next_idx = interview.question_count
-            target_idx = next_idx if will_advance else current_idx
-            if target_idx < len(topic_plan):
-                target = topic_plan[target_idx]
-                competency_targets = target.get("competencies")
-                resume_anchor = target.get("resume_anchor")
-                verification_target = target.get("verification_target")
-                if will_advance:
-                    diversification_hint = _build_diversification_hint(
-                        next_target=target,
-                        current_target=current_target,
-                        closed_reason=forced_closure_reason or saturation_reason,
-                        language=interview.language,
-                    )
+        next_q: str | None = None
+        if not should_end_now:
+            competency_targets = None
+            resume_anchor = None
+            verification_target = None
+            diversification_hint = None
+            if topic_plan:
+                current_idx = max(current_topic_index, 0)
+                next_idx = interview.question_count
+                target_idx = next_idx if will_advance else current_idx
+                if target_idx < len(topic_plan):
+                    target = topic_plan[target_idx]
+                    competency_targets = target.get("competencies")
+                    resume_anchor = target.get("resume_anchor")
+                    verification_target = target.get("verification_target")
+                    if will_advance:
+                        diversification_hint = _build_diversification_hint(
+                            next_target=target,
+                            current_target=current_target,
+                            closed_reason=forced_closure_reason or saturation_reason,
+                            language=interview.language,
+                        )
 
-        # ── Build InterviewContext ──────────────────────────────────────────
-        q_number = interview.question_count + 1 if will_advance else max(interview.question_count, 1)
+            # ── Build InterviewContext ──────────────────────────────────────
+            q_number = interview.question_count + 1 if will_advance else max(interview.question_count, 1)
 
-        ctx = InterviewContext(
-            target_role=interview.target_role,
-            question_number=q_number,
-            max_questions=interview.max_questions,
-            message_history=history,
-            resume_text=resume.raw_text if resume else None,
-            template_questions=template_questions,
-            competency_targets=competency_targets,
-            language=interview.language,
-            follow_up_count=topic_turns,
-            last_answer_words=last_answer_words,
-            shallow_reason=shallow_reason,
-            answer_class=answer_class,
-            question_type=question_type,
-            mentioned_technologies=sorted(mentioned_technologies),
-            verified_skills=sorted(verified_skills),
-            contradiction_flags=contradiction_flags,
-            pending_verification=next_pending_verification,
-            resume_anchor=resume_anchor,
-            verification_target=verification_target,
-            diversification_hint=diversification_hint,
-        )
-        next_q = await interviewer.get_next_question(ctx)
+            ctx = InterviewContext(
+                target_role=interview.target_role,
+                question_number=q_number,
+                max_questions=interview.max_questions,
+                message_history=history,
+                resume_text=resume.raw_text if resume else None,
+                template_questions=template_questions,
+                competency_targets=competency_targets,
+                language=interview.language,
+                follow_up_count=topic_turns,
+                last_answer_words=last_answer_words,
+                shallow_reason=shallow_reason,
+                answer_class=answer_class,
+                question_type=question_type,
+                mentioned_technologies=sorted(mentioned_technologies),
+                verified_skills=sorted(verified_skills),
+                contradiction_flags=contradiction_flags,
+                pending_verification=next_pending_verification,
+                resume_anchor=resume_anchor,
+                verification_target=verification_target,
+                diversification_hint=diversification_hint,
+                candidate_memory=candidate_memory,
+            )
+            next_q = await interviewer.get_next_question(ctx)
 
         # ── Update DB state ─────────────────────────────────────────────────
         while len(topic_signals) <= current_topic_index:
@@ -783,7 +1233,12 @@ async def add_candidate_message(
             current_topic_index,
         )
 
-        if will_advance:
+        if should_end_now:
+            topic_closed_reasons[current_topic_index] = adaptive_decision or "early_stop_low_signal"
+            topic_mastered_flags[current_topic_index] = False
+            interview.followup_depth = 0
+            topic_turns = 0
+        elif will_advance:
             topic_closed_reasons[current_topic_index] = forced_closure_reason or saturation_reason or "advanced"
             topic_mastered_flags[current_topic_index] = bool(saturation_reason in {"topic_mastered", "topic_saturated"})
             interview.question_count += 1
@@ -820,15 +1275,28 @@ async def add_candidate_message(
             "topic_relevance_failures": topic_relevance_failures,
             "topic_closed_reasons": topic_closed_reasons,
             "topic_mastered_flags": topic_mastered_flags,
+            "candidate_memory": candidate_memory,
+            "candidate_answers_count": candidate_answers_count,
+            "strong_answers_count": strong_answers_count,
+            "weak_answers_count": weak_answers_count,
+            "low_relevance_answers_count": low_relevance_answers_count,
+            "consecutive_weak_answers": consecutive_weak_answers,
+            "adaptive_min_questions": max(1, min_questions_before_early_stop),
+            "adaptive_role_max_cap": role_max_cap,
+            "adaptive_last_decision": adaptive_decision,
         }
-
-        db.add(InterviewMessage(
-            id=uuid.uuid4(),
-            interview_id=interview.id,
-            role="assistant",
-            content=next_q,
-        ))
-        current_question = next_q
+        if next_q:
+            db.add(InterviewMessage(
+                id=uuid.uuid4(),
+                interview_id=interview.id,
+                role="assistant",
+                content=next_q,
+            ))
+            current_question = next_q
+            response_is_followup = not will_advance
+        else:
+            current_question = None
+            response_is_followup = False
 
     await db.commit()
     await db.refresh(interview)
@@ -839,7 +1307,7 @@ async def add_candidate_message(
         question_count=interview.question_count,
         max_questions=interview.max_questions,
         current_question=current_question,
-        is_followup=not will_advance,
+        is_followup=response_is_followup,
         question_type=question_type,
     )
 
@@ -852,141 +1320,266 @@ async def finish_interview(
     interview = await _get_interview(db, interview_id, candidate.id)
 
     if interview.status == "report_generated":
-        raise InterviewAlreadyFinishedError()
+        existing_report = await db.scalar(
+            select(AssessmentReport).where(AssessmentReport.interview_id == interview.id)
+        )
+        if not existing_report:
+            raise InterviewAlreadyFinishedError()
+        return FinishInterviewResponse(
+            interview_id=interview.id,
+            status="report_generated",
+            report_id=existing_report.id,
+            summary=ReportSummary(
+                overall_score=existing_report.overall_score,
+                hiring_recommendation=existing_report.hiring_recommendation,
+                interview_summary=existing_report.interview_summary,
+            ),
+        )
+    if interview.status == "report_processing":
+        _schedule_report_generation(interview.id)
+        return FinishInterviewResponse(
+            interview_id=interview.id,
+            status="report_processing",
+            report_id=None,
+            summary=None,
+        )
     if interview.status != "in_progress":
         raise InterviewNotActiveError()
 
     if interview.question_count < interview.max_questions:
         raise MaxQuestionsNotReachedError()
 
-    messages = await _get_messages(db, interview.id)
-
-    # Phase 1: mark completed
-    interview.status = "completed"
+    # Mark as processing and generate report asynchronously if needed.
+    interview.status = "report_processing"
     interview.completed_at = datetime.utcnow()
     await db.commit()
+    await db.refresh(interview)
 
-    # Phase 2: generate report — failure marks status=failed, "completed" rows
-    # can be retried by a background job later.
     try:
-        result: AssessmentResult = await assessor.assess(
-            target_role=interview.target_role,
-            message_history=_to_history(messages),
-            message_timestamps=_to_timestamps(messages),
-            behavioral_signals=interview.behavioral_signals,
-            language=interview.language,
-            interview_meta=interview.interview_state or {},
-        )
-
-        report = AssessmentReport(
-            id=uuid.uuid4(),
+        report = await _ensure_report_generated(db, interview, candidate)
+        return FinishInterviewResponse(
             interview_id=interview.id,
-            candidate_id=interview.candidate_id,
-            overall_score=result.overall_score,
-            hard_skills_score=result.hard_skills_score,
-            soft_skills_score=result.soft_skills_score,
-            communication_score=result.communication_score,
-            problem_solving_score=result.problem_solving_score,
-            strengths=result.strengths,
-            weaknesses=result.weaknesses,
-            recommendations=result.recommendations,
-            hiring_recommendation=result.hiring_recommendation,
-            interview_summary=result.interview_summary,
-            model_version=result.model_version,
-            full_report_json=result.full_report_json,
-            competency_scores=result.competency_scores or None,
-            per_question_analysis=result.per_question_analysis or None,
-            skill_tags=result.skill_tags or None,
-            red_flags=result.red_flags or None,
-            response_consistency=result.response_consistency,
-            cheat_risk_score=result.cheat_risk_score,
-            cheat_flags=result.cheat_flags or None,
-            overall_confidence=result.overall_confidence,
-            competency_confidence=result.competency_confidence or None,
-            confidence_reasons=result.confidence_reasons or None,
-            evidence_coverage=result.evidence_coverage or None,
-            decision_policy_version=result.decision_policy_version,
+            status="report_generated",
+            report_id=report.id,
+            summary=ReportSummary(
+                overall_score=report.overall_score,
+                hiring_recommendation=report.hiring_recommendation,
+                interview_summary=report.interview_summary,
+            ),
         )
-        db.add(report)
-        await db.flush()
-
-        # Persist extracted skills to candidate_skills table
-        if result.skill_tags:
-            _save_skills(db, interview.candidate_id, report.id, result.skill_tags)
-
-        interview.status = "report_generated"
-        await db.commit()
-        await db.refresh(report)
-
-        # Sync company assessment status if this was an employee assessment
-        if interview.company_assessment_id:
-            from app.services.assessment_invite_service import sync_assessment_status
-            await sync_assessment_status(db, interview.id)
-
-        # Send email notifications (fire-and-forget, never crash the response)
-        try:
-            from app.models.user import User
-            from app.core.config import settings
-            from app.services.email_service import send_report_ready, send_new_candidate_to_company
-
-            user = await db.scalar(select(User).where(User.id == candidate.user_id))
-            role_label = interview.target_role.replace("_", " ").title()
-
-            # 1. Notify candidate
-            if user:
-                await send_report_ready(
-                    candidate_email=user.email,
-                    candidate_name=candidate.full_name,
-                    role=role_label,
-                    overall_score=report.overall_score or 0,
-                    report_id=str(report.id),
-                    app_url=settings.APP_URL,
-                )
-
-            # 2. Notify the owning company only for private employee assessments.
-            if interview.company_assessment_id:
-                from app.models.company import Company
-                from app.models.company_assessment import CompanyAssessment
-
-                assessment = await db.scalar(
-                    select(CompanyAssessment).where(CompanyAssessment.id == interview.company_assessment_id)
-                )
-                if assessment:
-                    company = await db.scalar(select(Company).where(Company.id == assessment.company_id))
-                    company_user = (
-                        await db.scalar(select(User).where(User.id == company.owner_user_id))
-                        if company else None
-                    )
-                    if company and company_user:
-                        await send_new_candidate_to_company(
-                            company_email=company_user.email,
-                            company_name=company.name,
-                            candidate_name=candidate.full_name,
-                            candidate_email=user.email if user else "",
-                            role=role_label,
-                            overall_score=report.overall_score or 0,
-                            hiring_recommendation=report.hiring_recommendation,
-                            candidate_id=str(candidate.id),
-                            app_url=settings.APP_URL,
-                        )
-        except Exception as _email_exc:
-            import logging
-            logging.getLogger(__name__).warning("Email notification failed: %s", _email_exc)
-
     except Exception:
-        interview.status = "failed"
+        logger.exception("Initial report generation failed for interview %s, switching to async processing", interview.id)
+        interview.status = "report_processing"
         await db.commit()
-        raise
+        _schedule_report_generation(interview.id)
+        return FinishInterviewResponse(
+            interview_id=interview.id,
+            status="report_processing",
+            report_id=None,
+            summary=None,
+        )
 
-    return FinishInterviewResponse(
+async def _ensure_report_generated(
+    db: AsyncSession,
+    interview: Interview,
+    candidate: Candidate,
+) -> AssessmentReport:
+    existing_report = await db.scalar(
+        select(AssessmentReport).where(AssessmentReport.interview_id == interview.id)
+    )
+    if existing_report:
+        if interview.status != "report_generated":
+            interview.status = "report_generated"
+            await db.commit()
+        return existing_report
+
+    messages = await _get_messages(db, interview.id)
+    result: AssessmentResult = await assessor.assess(
+        target_role=interview.target_role,
+        message_history=_to_history(messages),
+        message_timestamps=_to_timestamps(messages),
+        behavioral_signals=interview.behavioral_signals,
+        language=interview.language,
+        interview_meta=interview.interview_state or {},
+    )
+
+    report = AssessmentReport(
+        id=uuid.uuid4(),
         interview_id=interview.id,
-        status="report_generated",
-        report_id=report.id,
-        summary=ReportSummary(
-            overall_score=report.overall_score,
-            hiring_recommendation=report.hiring_recommendation,
-            interview_summary=report.interview_summary,
-        ),
+        candidate_id=interview.candidate_id,
+        overall_score=result.overall_score,
+        hard_skills_score=result.hard_skills_score,
+        soft_skills_score=result.soft_skills_score,
+        communication_score=result.communication_score,
+        problem_solving_score=result.problem_solving_score,
+        strengths=result.strengths,
+        weaknesses=result.weaknesses,
+        recommendations=result.recommendations,
+        hiring_recommendation=result.hiring_recommendation,
+        interview_summary=result.interview_summary,
+        model_version=result.model_version,
+        full_report_json=result.full_report_json,
+        competency_scores=result.competency_scores or None,
+        per_question_analysis=result.per_question_analysis or None,
+        skill_tags=result.skill_tags or None,
+        red_flags=result.red_flags or None,
+        response_consistency=result.response_consistency,
+        cheat_risk_score=result.cheat_risk_score,
+        cheat_flags=result.cheat_flags or None,
+        overall_confidence=result.overall_confidence,
+        competency_confidence=result.competency_confidence or None,
+        confidence_reasons=result.confidence_reasons or None,
+        evidence_coverage=result.evidence_coverage or None,
+        decision_policy_version=result.decision_policy_version,
+    )
+    db.add(report)
+    await db.flush()
+
+    if result.skill_tags:
+        _save_skills(db, interview.candidate_id, report.id, result.skill_tags)
+
+    interview.status = "report_generated"
+    await db.commit()
+    await db.refresh(report)
+
+    if interview.company_assessment_id:
+        from app.services.assessment_invite_service import sync_assessment_status
+
+        await sync_assessment_status(db, interview.id)
+
+    try:
+        from app.models.user import User
+        from app.services.email_service import send_new_candidate_to_company, send_report_ready
+
+        user = await db.scalar(select(User).where(User.id == candidate.user_id))
+        role_label = interview.target_role.replace("_", " ").title()
+
+        if user:
+            await send_report_ready(
+                candidate_email=user.email,
+                candidate_name=candidate.full_name,
+                role=role_label,
+                overall_score=report.overall_score or 0,
+                report_id=str(report.id),
+                app_url=settings.APP_URL,
+            )
+
+        if interview.company_assessment_id:
+            from app.models.company import Company
+            from app.models.company_assessment import CompanyAssessment
+
+            assessment = await db.scalar(
+                select(CompanyAssessment).where(CompanyAssessment.id == interview.company_assessment_id)
+            )
+            if assessment:
+                company = await db.scalar(select(Company).where(Company.id == assessment.company_id))
+                company_user = (
+                    await db.scalar(select(User).where(User.id == company.owner_user_id))
+                    if company else None
+                )
+                if company and company_user:
+                    await send_new_candidate_to_company(
+                        company_email=company_user.email,
+                        company_name=company.name,
+                        candidate_name=candidate.full_name,
+                        candidate_email=user.email if user else "",
+                        role=role_label,
+                        overall_score=report.overall_score or 0,
+                        hiring_recommendation=report.hiring_recommendation,
+                        candidate_id=str(candidate.id),
+                        app_url=settings.APP_URL,
+                    )
+    except Exception as email_exc:
+        logger.warning("Email notification failed: %s", email_exc)
+
+    return report
+
+
+def _schedule_report_generation(interview_id: uuid.UUID) -> None:
+    if interview_id in _REPORT_GENERATION_TASKS:
+        return
+    _REPORT_GENERATION_TASKS.add(interview_id)
+    asyncio.create_task(_run_report_generation_job(interview_id))
+
+
+async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
+    try:
+        async with AsyncSessionLocal() as session:
+            interview = await session.scalar(select(Interview).where(Interview.id == interview_id))
+            if not interview:
+                return
+
+            existing_report = await session.scalar(
+                select(AssessmentReport).where(AssessmentReport.interview_id == interview.id)
+            )
+            if existing_report:
+                if interview.status != "report_generated":
+                    interview.status = "report_generated"
+                    await session.commit()
+                return
+
+            candidate = await session.scalar(select(Candidate).where(Candidate.id == interview.candidate_id))
+            if not candidate:
+                interview.status = "failed"
+                await session.commit()
+                return
+
+            interview.status = "report_processing"
+            await session.commit()
+            await _ensure_report_generated(session, interview, candidate)
+    except Exception:
+        logger.exception("Async report generation failed for interview %s", interview_id)
+        async with AsyncSessionLocal() as session:
+            interview = await session.scalar(select(Interview).where(Interview.id == interview_id))
+            if interview and interview.status != "report_generated":
+                interview.status = "failed"
+                await session.commit()
+    finally:
+        _REPORT_GENERATION_TASKS.discard(interview_id)
+
+
+async def get_interview_report_status(
+    db: AsyncSession,
+    candidate: Candidate,
+    interview_id: uuid.UUID,
+) -> InterviewReportStatusResponse:
+    interview = await _get_interview(db, interview_id, candidate.id)
+    report = await db.scalar(
+        select(AssessmentReport).where(AssessmentReport.interview_id == interview.id)
+    )
+
+    if report:
+        if interview.status != "report_generated":
+            interview.status = "report_generated"
+            await db.commit()
+        return InterviewReportStatusResponse(
+            interview_id=interview.id,
+            status="report_generated",
+            processing_state="ready",
+            report_id=report.id,
+            summary=ReportSummary(
+                overall_score=report.overall_score,
+                hiring_recommendation=report.hiring_recommendation,
+                interview_summary=report.interview_summary,
+            ),
+        )
+
+    if interview.status == "failed":
+        state = "failed"
+    elif interview.status in {"completed", "report_processing"}:
+        state = "processing"
+    else:
+        state = "pending"
+
+    if state == "processing":
+        _schedule_report_generation(interview.id)
+
+    return InterviewReportStatusResponse(
+        interview_id=interview.id,
+        status=interview.status,
+        processing_state=state,
+        report_id=None,
+        summary=None,
     )
 
 
@@ -1001,6 +1594,8 @@ async def get_interview_detail(
     report = await db.scalar(
         select(AssessmentReport).where(AssessmentReport.interview_id == interview.id)
     )
+    if not report and interview.status in {"completed", "report_processing"}:
+        _schedule_report_generation(interview.id)
 
     # Exclude system messages from API response
     visible = [
@@ -1084,8 +1679,26 @@ async def save_behavioral_signals(
 ) -> None:
     """Persist behavioral signals captured during the interview."""
     interview = await _get_interview(db, interview_id, candidate_id)
-    interview.behavioral_signals = signals
+    interview.behavioral_signals = normalize_behavioral_signals(signals)
     await db.commit()
+
+
+def build_proctoring_timeline_response(
+    *,
+    interview_id: uuid.UUID,
+    report_id: uuid.UUID | None,
+    signals: dict | None,
+) -> ProctoringTimelineResponse:
+    payload = get_proctoring_timeline_payload(signals)
+    return ProctoringTimelineResponse(
+        interview_id=interview_id,
+        report_id=report_id,
+        policy_mode=payload["policy_mode"],
+        risk_level=payload["risk_level"],
+        total_events=payload["total_events"],
+        high_severity_count=payload["high_severity_count"],
+        events=payload["events"],
+    )
 
 
 async def get_interview_replay(

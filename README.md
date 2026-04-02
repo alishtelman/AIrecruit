@@ -1,31 +1,36 @@
-# AIRecruit — AI-Powered Recruiting Platform
+# AIRecruit
 
-A platform where candidates complete structured AI interviews and receive verified skill reports. Companies access a database of pre-assessed, AI-verified professionals.
+AIRecruit is a FastAPI + Next.js recruiting platform where candidates pass structured AI interviews and companies work with scored, replayable interview evidence.
+
+## What Changed Recently (March 2026)
+
+- Adaptive interview engine with per-topic follow-ups, claim verification, and depth escalation.
+- Interview runtime state persisted in DB (`followup_depth`, `interview_state`) to avoid repeated generic questioning.
+- Company hiring workspace expanded with shortlists, notes, activity log, analytics, and role-based collaboration.
+- Candidate privacy model expanded (`private`, `marketplace`, `direct_link`, `request_only`) with access request approvals.
+- Frontend internationalization added with `next-intl` (`en` + `ru`) and unified workspace UI refresh.
+- Voice stack stabilized: Groq core AI, optional ElevenLabs TTS provider with backend fallback chain.
 
 ---
 
-## Product Overview
+## Product Capabilities
 
-**For Candidates**
-1. Register and upload your resume (PDF or DOCX)
-2. Choose a target role — optionally use a company's custom interview template
-3. Complete a structured AI text interview (8 questions, ~15–20 min)
-4. Receive a detailed assessment report with scores, strengths, and weaknesses
-5. Retake any interview to improve your score
-6. Join the verified candidate database
+### Candidate side
 
-**For Companies**
-1. Register and browse AI-verified candidates
-2. Filter by role, search by name/email, paginate through results
-3. View detailed assessment reports and interview replays for accessible candidates
-4. Create custom interview templates (public or private) with your own question sets
-5. Run private employee assessments via invite links
-6. Make data-driven hiring decisions
+1. Register/login, upload resume, manage salary and privacy visibility.
+2. Start AI interview (role + optional template + language).
+3. Interview flow supports screen/camera/mic recording, voice input, and TTS playback.
+4. Receive structured report with competency scores, confidence, and skill tags.
+5. Publish profile via marketplace/direct link or require explicit company approval.
 
-**Roadmap (post-MVP)**
-- Voice and video AI interviews
-- Multi-user company accounts
-- Additional trust and compliance tooling
+### Company side
+
+1. Browse/search candidates with filters and salary ranges.
+2. Use shortlists, notes, and activity log for team hiring workflow.
+3. Access report + interview replay within access scope/privacy rules.
+4. Track outcomes and analytics (overview, funnel, salary).
+5. Invite members with roles (`admin`, `recruiter`, `viewer`).
+6. Run internal/external assessment campaigns.
 
 ---
 
@@ -33,333 +38,273 @@ A platform where candidates complete structured AI interviews and receive verifi
 
 | Layer | Technology |
 |---|---|
-| Backend | Python 3.11, FastAPI, SQLAlchemy (async), Alembic |
+| Backend | Python 3.11, FastAPI, SQLAlchemy async, Alembic |
 | Database | PostgreSQL 16 |
-| Auth | HttpOnly session cookie + JWT (python-jose), bcrypt (passlib) |
-| AI | Groq API — Llama 3.3 70B (interviewer + assessor + STT), optional ElevenLabs dev TTS |
-| Frontend | Next.js 14, TypeScript, Tailwind CSS |
-| Infrastructure | Docker, Docker Compose |
+| Frontend | Next.js 14.2, TypeScript, Tailwind CSS |
+| i18n | `next-intl` (`en`, `ru`) |
+| AI | Groq (interviewer + assessor + STT), optional ElevenLabs for TTS |
+| Auth | HttpOnly cookie sessions + backward-compatible Bearer handling |
+| Infra | Docker Compose |
 
 ---
 
-## Project Structure
+## Repository Structure
 
-```
-.
-├── backend/
-│   ├── app/
-│   │   ├── ai/                  # AI modules (interviewer + assessor)
-│   │   │   ├── interviewer.py   # Question generation (mock → LLM)
-│   │   │   └── assessor.py      # Report generation (mock → LLM)
-│   │   ├── api/v1/              # REST endpoints
-│   │   │   ├── auth.py          # Register, login, /me
-│   │   │   ├── candidates.py    # Resume upload + profile stats
-│   │   │   ├── interviews.py    # Interview flow + public templates
-│   │   │   ├── company.py       # Candidate browsing + templates CRUD
-│   │   │   └── reports.py       # Assessment reports
-│   │   ├── core/                # Config, DB, security (JWT/bcrypt)
-│   │   ├── models/              # SQLAlchemy ORM models (+ template.py)
-│   │   ├── schemas/             # Pydantic request/response schemas (+ template.py)
-│   │   └── services/            # Business logic layer (+ template_service.py)
-│   ├── alembic/                 # Database migrations
-│   │   └── versions/
-│   │       └── 001_initial_schema.py
-│   ├── storage/resumes/         # Uploaded resume files (local dev)
-│   ├── requirements.txt
-│   └── Dockerfile
-├── frontend/
-│   └── src/
-│       ├── app/
-│       │   ├── (candidate)/     # Candidate-facing pages
-│       │   │   └── candidate/
-│       │   │       ├── register/
-│       │   │       ├── login/
-│       │   │       ├── dashboard/
-│       │   │       ├── resume/
-│       │   │       ├── interview/
-│       │   │       │   ├── start/
-│       │   │       │   └── [id]/
-│       │   │       └── reports/[id]/
-│       │   └── (company)/       # Company-facing pages (dashboard, templates, candidates)
-│       ├── hooks/               # useAuth hook
-│       └── lib/                 # API client, types, auth helpers
-├── docker-compose.yml
-├── .env.example
-└── README.md
+```text
+backend/app/
+  api/v1/            REST routers
+  services/          business logic
+  ai/                interviewer, assessor, calibration, resume profiling
+  models/            SQLAlchemy models
+  schemas/           Pydantic DTOs
+  core/              config, DB, security
+
+backend/alembic/versions/
+  ...                DB migrations
+
+frontend/src/
+  app/               Next.js app routes
+  components/        shared UI components
+  hooks/             auth/media/voice hooks
+  lib/               API client + shared TS types
+  i18n/              routing/request/navigation adapters
+
+frontend/messages/
+  en.json
+  ru.json
 ```
 
 ---
 
-## Database Schema
+## Adaptive Interview Engine
 
-```
-users               — unified auth (role: candidate | company_admin)
-candidates          — candidate profile (1:1 with users)
-companies           — company profile (owner_user_id → users)
-resumes             — uploaded CVs with extracted text (is_active flag)
-interview_templates — custom question sets per company (is_public flag)
-interviews          — interview sessions with state machine (optional template_id FK)
-interview_messages  — full dialogue history (system/assistant/candidate)
-assessment_reports  — structured AI assessment with scores
-```
+Interview flow is no longer a flat “8 independent turns.”
 
-**Interview state machine:**
-```
-created → in_progress → completed → report_generated
-                                  ↘ failed
-```
+- Core topic count is controlled by `question_count` (still max 8 by default).
+- Extra probing turns are controlled by `interview_state` and `followup_depth`.
+- Engine classifies each answer (`strong`, `partial`, `generic`, `evasive`, `no_experience_honest`).
+- Depending on answer quality/relevance, next question type may be:
+  - `main`
+  - `followup`
+  - `verification`
+  - `claim_verification`
+  - `deep_technical`
+  - `edge_cases`
+- Assessment consumes both transcript and interview runtime metadata (`interview_meta`) to produce stricter recommendations and confidence outputs.
 
 ---
 
-## API Endpoints
+## Key Database Notes
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/api/v1/auth/candidate/register` | — | Register candidate |
-| POST | `/api/v1/auth/company/register` | — | Register company |
-| POST | `/api/v1/auth/login` | — | Login (sets HttpOnly session cookie; token response kept for legacy clients) |
-| POST | `/api/v1/auth/logout` | Session | Clear session cookie |
-| GET | `/api/v1/auth/me` | Session / Bearer | Current user |
-| GET | `/api/v1/auth/me/candidate` | Session / Bearer | Candidate profile |
-| GET | `/api/v1/candidate/stats` | Bearer | Resume + interview stats for dashboard |
-| POST | `/api/v1/candidate/resume/upload` | Bearer | Upload PDF/DOCX resume |
-| GET | `/api/v1/interviews/` | Bearer | List all candidate interviews |
-| POST | `/api/v1/interviews/start` | Bearer | Start interview |
-| POST | `/api/v1/interviews/{id}/message` | Bearer | Send answer, get next question |
-| POST | `/api/v1/interviews/{id}/finish` | Bearer | Finish and generate report |
-| POST | `/api/v1/interviews/{id}/recording` | Bearer | Upload interview recording (`video/webm` or `video/mp4`) |
-| GET | `/api/v1/interviews/{id}` | Bearer | Interview details + messages |
-| GET | `/api/v1/reports/{id}` | Bearer (candidate) | Candidate-owned assessment report |
-| GET | `/api/v1/employee/invite/{token}` | — | Public employee assessment invite info |
-| POST | `/api/v1/employee/invite/{token}/start` | Bearer (candidate) | Start invited employee assessment |
-| GET | `/api/v1/company/candidates` | Bearer (company) | List verified candidates |
-| GET | `/api/v1/company/candidates/{id}` | Bearer (company) | Candidate profile + all reports |
-| GET | `/api/v1/company/reports/{id}` | Bearer (company) | Company-scoped report access |
-| GET | `/api/v1/company/interviews/{id}/replay` | Bearer (company) | Company-scoped replay access |
-| GET | `/api/v1/candidate/resume` | Bearer | Active resume info |
-| GET | `/api/v1/interviews/templates/public` | — | List public interview templates |
-| GET | `/api/v1/company/templates` | Bearer (company) | List company's own templates |
-| POST | `/api/v1/company/templates` | Bearer (company) | Create interview template |
-| DELETE | `/api/v1/company/templates/{id}` | Bearer (company) | Delete interview template |
+Main entities:
 
-Full interactive docs: **http://localhost:8001/docs**
+- `users`, `candidates`, `companies`, `company_members`
+- `resumes`, `interviews`, `interview_messages`, `assessment_reports`
+- `company_assessments`, `interview_templates`
+- collaboration/marketplace entities (shortlists, notes, activities, access requests, outcomes)
+
+Recent interview-state fields:
+
+- `interviews.followup_depth` (int)
+- `interviews.interview_state` (json)
+
+Assessment report includes confidence + policy metadata (`overall_confidence`, `competency_confidence`, `decision_policy_version`, etc.).
 
 ---
 
-## Security Hardening
+## API Overview
 
-- `POST /api/v1/employee/invite/{token}/start` now binds the invite to the authenticated candidate email and returns `403` on email mismatch.
-- `GET /api/v1/company/reports/{report_id}` and `GET /api/v1/company/interviews/{interview_id}/replay` are scoped to the owning company for private employee assessments.
-- Private employee assessments are excluded from the shared company candidate marketplace.
-- Interview recordings accept only `video/webm` and `video/mp4` and are capped by `MAX_RECORDING_SIZE_MB`.
-- Candidate login and registration redirects are sanitized to path-only, same-origin destinations.
-- Backend CORS is configured through `CORS_ORIGINS`; the full audit and remediation status lives in `security_best_practices_report.md`.
-- Browser auth now uses an `HttpOnly` session cookie by default; frontend localStorage is no longer required for new sessions.
-- `SECRET_KEY` now fails fast outside `development` / `test` if left on the insecure default or set too short.
+Base URL: `/api/v1`
+Interactive docs: `http://localhost:8001/docs`
+
+### Auth
+
+- `POST /auth/candidate/register`
+- `POST /auth/company/register`
+- `POST /auth/login`
+- `POST /auth/logout`
+- `GET /auth/me`
+- `GET /auth/me/candidate`
+- `POST /auth/change-password`
+
+### Candidate profile / privacy
+
+- `GET /candidate/stats`
+- `GET /candidate/resume`
+- `GET /candidate/resume/text`
+- `POST /candidate/resume/upload`
+- `GET /candidate/salary`
+- `PATCH /candidate/salary`
+- `GET /candidate/salary/benchmark`
+- `GET /candidate/privacy`
+- `PATCH /candidate/privacy`
+- `GET /candidate/access-requests`
+- `POST /candidate/access-requests/{request_id}/approve`
+- `POST /candidate/access-requests/{request_id}/deny`
+- `GET /candidate/share/{share_token}`
+
+### Interview runtime
+
+- `GET /interviews/`
+- `GET /interviews/templates/public`
+- `POST /interviews/start`
+- `POST /interviews/{interview_id}/message`
+- `POST /interviews/{interview_id}/signals`
+- `POST /interviews/{interview_id}/recording`
+- `POST /interviews/{interview_id}/finish`
+- `GET /interviews/{interview_id}`
+
+`SendMessageResponse` now includes:
+
+- `is_followup: bool`
+- `question_type: str`
+
+### Reports
+
+- `GET /reports/{report_id}` (candidate scope)
+
+### Company workspace
+
+- `GET /company/candidates`
+- `GET /company/candidates/{candidate_id}`
+- `POST /company/candidates/{candidate_id}/outcome`
+- `GET /company/candidates/{candidate_id}/outcome`
+- `GET /company/reports/{report_id}`
+- `GET /company/interviews/{interview_id}/replay`
+
+Shortlists:
+
+- `GET /company/shortlists`
+- `POST /company/shortlists`
+- `DELETE /company/shortlists/{shortlist_id}`
+- `POST /company/shortlists/{shortlist_id}/candidates/{candidate_id}`
+- `DELETE /company/shortlists/{shortlist_id}/candidates/{candidate_id}`
+
+Collaboration:
+
+- `GET /company/candidates/{candidate_id}/notes`
+- `POST /company/candidates/{candidate_id}/notes`
+- `GET /company/candidates/{candidate_id}/activity`
+- `GET /company/members`
+- `POST /company/members/invite`
+- `DELETE /company/members/{user_id}`
+
+Analytics:
+
+- `GET /company/analytics/overview`
+- `GET /company/analytics/funnel`
+- `GET /company/analytics/salary`
+
+Templates and campaigns:
+
+- `GET /company/templates`
+- `POST /company/templates`
+- `DELETE /company/templates/{template_id}`
+- `GET /company/assessments`
+- `POST /company/assessments`
+- `DELETE /company/assessments/{assessment_id}`
+
+Share-link access:
+
+- `GET /company/share-links/{share_token}`
+- `POST /company/share-links/{share_token}/request-access`
+
+### Employee invite flow
+
+- `GET /employee/invite/{token}`
+- `POST /employee/invite/{token}/start`
+
+### Voice APIs
+
+- `POST /tts` (provider-based TTS)
+- `POST /stt` (Groq Whisper STT)
 
 ---
 
-## Local Development Setup
+## Security Baseline
 
-### Prerequisites
-- [Docker](https://docs.docker.com/get-docker/) and Docker Compose v2+
-- Git
+- Cookie-first auth (`HttpOnly`, `SameSite`) with transitional Bearer support.
+- Production guard: insecure `SECRET_KEY` fails startup outside local/test.
+- Company-scoped private report/replay access.
+- Candidate privacy/access approval enforcement.
+- Recording upload MIME + size restrictions.
+- Safe path-only redirects on candidate auth pages.
+- CORS allowlist via `CORS_ORIGINS`.
 
-### 1. Clone the repository
+See also:
 
-```bash
-git clone https://github.com/alishtelman/AIrecruit.git
-cd AIrecruit
-```
+- [`SECURITY.md`](SECURITY.md)
+- [`security_best_practices_report.md`](security_best_practices_report.md)
 
-### 2. Configure environment
+---
+
+## Environment Variables
+
+Use `.env.example` as baseline.
+
+Core:
+
+- `APP_ENV` (`development` / `test` / `production`)
+- `DATABASE_URL`
+- `SECRET_KEY`
+- `CORS_ORIGINS`
+- `APP_URL`
+
+Auth/session:
+
+- `SESSION_COOKIE_NAME`
+- `SESSION_COOKIE_SAMESITE`
+- `SESSION_COOKIE_SECURE`
+- `ACCESS_TOKEN_EXPIRE_MINUTES`
+
+AI:
+
+- `GROQ_API_KEY`
+- `ALLOW_MOCK_AI` (dev/test fallback behavior)
+- `TTS_PROVIDER` (`groq` or `elevenlabs`)
+- `TTS_FALLBACK_PROVIDER`
+- `ELEVENLABS_API_KEY`
+- `ELEVENLABS_VOICE_ID`
+- `ELEVENLABS_TTS_MODEL`
+- `RESEND_API_KEY`
+- `FROM_EMAIL`
+
+Storage:
+
+- `RESUME_STORAGE_DIR`
+- `RECORDING_STORAGE_DIR`
+- `MAX_RESUME_SIZE_MB`
+- `MAX_RECORDING_SIZE_MB`
+
+Frontend:
+
+- `NEXT_PUBLIC_API_URL`
+
+---
+
+## Local Development
 
 ```bash
 cp .env.example .env
-```
-
-Open `.env` and set:
-```
-APP_ENV=development
-SECRET_KEY=your-random-secret     # change before any real use
-GROQ_API_KEY=gsk_...              # required for LLM interviews (free at console.groq.com)
-ELEVENLABS_API_KEY=               # optional dev/test TTS provider
-TTS_PROVIDER=groq                 # set to elevenlabs to try ElevenLabs TTS in dev
-TTS_FALLBACK_PROVIDER=groq        # keeps the app working when ElevenLabs is unavailable
-ELEVENLABS_TTS_MODEL=eleven_flash_v2_5
-NEXT_PUBLIC_API_URL=http://localhost:8001
-APP_URL=http://localhost:3000
-CORS_ORIGINS=http://localhost:3000
-MAX_RECORDING_SIZE_MB=250
-SESSION_COOKIE_NAME=airecruit_session
-SESSION_COOKIE_SAMESITE=lax
-SESSION_COOKIE_SECURE=false
-RESEND_API_KEY=re_...             # optional, enables email notifications
-```
-
-For dev-only ElevenLabs voice validation:
-```bash
-TTS_PROVIDER=elevenlabs
-TTS_FALLBACK_PROVIDER=groq
-ELEVENLABS_API_KEY=<your-elevenlabs-key>
-```
-
-If ElevenLabs credits are missing or exhausted, `/api/v1/tts` falls back to Groq, and the browser still falls back to `speechSynthesis` if backend TTS fails entirely.
-
-For production-like deployments:
-```
-APP_ENV=production
-SESSION_COOKIE_SECURE=true
-SECRET_KEY=<long-random-secret-at-least-32-chars>
-```
-
-> **Note on ports:** If you have other services running, the defaults are:
-> - Backend → `8001` (mapped from container's 8000)
-> - Frontend → `3000`
-> - PostgreSQL → `5433` (mapped from container's 5432)
-
-### 3. Start all services
-
-```bash
-docker compose up --build
-```
-
-### 4. Run database migrations
-
-```bash
+docker compose up -d --build
 docker compose exec backend alembic upgrade head
 ```
 
-### 5. Open in browser
-
-| URL | Service |
-|---|---|
-| http://localhost:3000 | Frontend |
-| http://localhost:8001/docs | Swagger UI |
-| http://localhost:8001/health | Backend health check |
-
----
-
-## Testing the Full Flow
-
-### Via Browser (Frontend)
-
-1. Go to `http://localhost:3000` → click **I'm a Candidate**
-2. Register with email + password
-3. Upload your resume (PDF or DOCX)
-4. Start Interview → select your role
-5. Answer 8 questions in the chat UI
-6. Click **Finish & Get Report** → view your assessment
-
-### Via curl
+Useful checks:
 
 ```bash
-# Register
-curl -s -X POST http://localhost:8001/api/v1/auth/candidate/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"dev@example.com","password":"password123","full_name":"Dev User"}'
-
-# Login → get token
-TOKEN=$(curl -s -X POST http://localhost:8001/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"dev@example.com","password":"password123"}' | jq -r .access_token)
-
-# Upload resume
-curl -s -X POST http://localhost:8001/api/v1/candidate/resume/upload \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@/path/to/resume.pdf"
-
-# Start interview
-INTERVIEW=$(curl -s -X POST http://localhost:8001/api/v1/interviews/start \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"target_role":"backend_engineer"}')
-INTERVIEW_ID=$(echo $INTERVIEW | jq -r .interview_id)
-
-# Send answers (repeat 8 times)
-curl -s -X POST http://localhost:8001/api/v1/interviews/$INTERVIEW_ID/message \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"message":"I have 5 years of backend experience..."}'
-
-# Finish and get report
-curl -s -X POST http://localhost:8001/api/v1/interviews/$INTERVIEW_ID/finish \
-  -H "Authorization: Bearer $TOKEN"
-```
-
----
-
-## Development Status
-
-| Phase | Status | Description |
-|---|---|---|
-| Phase 1 | ✅ Done | Project scaffold, Docker, DB schema |
-| Phase 2 | ✅ Done | JWT auth, candidate + company registration |
-| Phase 3 | ✅ Done | Resume upload, text extraction |
-| Phase 4 | ✅ Done | Interview engine (mock AI) |
-| Phase 4.5 | ✅ Done | Working frontend UI (full candidate flow) |
-| Phase 5 | ✅ Done | Real LLM integration (Groq — Llama 3.3 70B) |
-| Phase 6 | ✅ Done | Company dashboard, candidate browsing |
-| Phase 7 | ✅ Done | Custom interview templates, retry UX, profile page, pagination, 404/error pages |
-| Phase 8 | 🔜 Next | Voice/video interviews, multi-user company accounts |
-
----
-
-## Useful Commands
-
-```bash
-# Start / rebuild
-docker compose up -d --build
-
-# Container status
 docker compose ps
-
-# View logs
 docker compose logs backend -f
 docker compose logs frontend -f
-
-# Run migrations
-docker compose exec backend alembic revision --autogenerate -m "description"
-docker compose exec backend alembic upgrade head
-
-# Frontend checks
 docker compose exec frontend npm run lint
 docker compose exec frontend npm run build
-
-# Connect to DB
-docker compose exec postgres psql -U recruiting -d recruiting
-
-# Rebuild a single service
-docker compose build backend
-docker compose up -d backend
-
-# Stop everything
-docker compose down
+cd backend && python3 -m pytest -v
 ```
 
 ---
 
-## Environment Variables Reference
+## Notes
 
-| Variable | Default | Description |
-|---|---|---|
-| `DATABASE_URL` | `postgresql+asyncpg://...` | PostgreSQL connection string |
-| `SECRET_KEY` | — | JWT signing secret (change in production) |
-| `ALGORITHM` | `HS256` | JWT algorithm |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Token TTL |
-| `GROQ_API_KEY` | — | Groq API key for interviews, assessment, STT, and TTS fallback |
-| `ELEVENLABS_API_KEY` | empty | Optional dev/test TTS provider key for `/api/v1/tts` |
-| `TTS_PROVIDER` | `groq` | Primary backend TTS provider: `groq` or `elevenlabs` |
-| `TTS_FALLBACK_PROVIDER` | `groq` | Backup TTS provider if the primary fails |
-| `ELEVENLABS_VOICE_ID` | empty | Optional ElevenLabs voice override for dev TTS |
-| `ELEVENLABS_TTS_MODEL` | `eleven_flash_v2_5` | ElevenLabs low-latency model for dev TTS |
-| `ANTHROPIC_API_KEY` | empty | Reserved, currently unused by the runtime |
-| `RESEND_API_KEY` | empty | Optional email delivery provider key |
-| `APP_URL` | `http://localhost:3000` | Frontend base URL for invite links and emails |
-| `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated backend CORS allowlist |
-| `UPLOAD_DIR` | `/app/uploads` | General upload directory |
-| `RESUME_STORAGE_DIR` | `/app/storage/resumes` | Resume file storage path |
-| `RECORDING_STORAGE_DIR` | `/app/storage/recordings` | Interview recording storage path |
-| `MAX_RESUME_SIZE_MB` | `10` | Max upload size |
-| `MAX_RECORDING_SIZE_MB` | `250` | Max interview recording size |
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8001` | Backend URL for frontend |
+- Frontend uses localized copy from `frontend/messages/en.json` and `frontend/messages/ru.json`.
+- Locale is cookie-driven (`NEXT_LOCALE`) with middleware routing and no locale path prefix.
+- For production, disable mock AI mode and run only with real provider keys.

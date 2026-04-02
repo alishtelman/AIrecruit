@@ -31,6 +31,7 @@ export default function ReportsPage() {
     created: { label: t("statuses.created"), className: "text-slate-400" },
     in_progress: { label: t("statuses.in_progress"), className: "text-yellow-400" },
     completed: { label: t("statuses.completed"), className: "text-blue-400" },
+    report_processing: { label: t("statuses.report_processing"), className: "text-blue-400" },
     report_generated: { label: t("statuses.report_generated"), className: "text-green-400" },
     failed: { label: t("statuses.failed"), className: "text-red-400" },
   };
@@ -130,7 +131,7 @@ export default function ReportsPage() {
                           {t("retake")}
                         </Link>
                       </>
-                    ) : item.status === "in_progress" ? (
+                    ) : item.status === "in_progress" || item.status === "report_processing" ? (
                       <Link
                         href={`/candidate/interview/${item.interview_id}`}
                         className="bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"

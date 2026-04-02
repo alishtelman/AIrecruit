@@ -1,42 +1,74 @@
 # Security Policy
 
-## Reporting
+## Reporting a Vulnerability
 
-If you find a security issue, do not open a public issue with exploit details.
+Do not post exploit details in public issues.
 
-- Email the maintainer or repository owner with:
-  - affected area
-  - reproduction steps
-  - impact assessment
-  - any proposed mitigation
-- Give reasonable time for validation and remediation before public disclosure.
+Please contact the repository owner/maintainer privately and include:
+
+- affected component and endpoint/path
+- reproducible steps
+- impact (confidentiality, integrity, availability)
+- optional mitigation proposal
+
+Allow reasonable validation/remediation time before disclosure.
+
+---
 
 ## Supported Baseline
 
-This project currently treats the latest `main` branch as the supported security baseline.
+The active `main` branch is the supported security baseline.
 
-## Production Requirements
+---
 
-Before exposing the app outside local development:
+## Production Requirements (Mandatory)
 
-- Set `APP_ENV=production`
-- Override `SECRET_KEY` with a long random value
-- Set `SESSION_COOKIE_SECURE=true`
-- Restrict `CORS_ORIGINS` to trusted frontend origins only
-- Use HTTPS for both frontend and backend
-- Rotate any example/default secrets
-- Review `security_best_practices_report.md` and close any remaining high-risk items
+Before exposing the system publicly:
 
-## Current Controls
+- set `APP_ENV=production`
+- set a strong `SECRET_KEY` (32+ random chars)
+- set `SESSION_COOKIE_SECURE=true`
+- set strict `CORS_ORIGINS` (no wildcard)
+- run behind HTTPS only
+- set `ALLOW_MOCK_AI=false`
+- rotate any default/example secrets
 
-- Browser auth uses `HttpOnly` session cookies by default
-- Backend still accepts bearer tokens for backward compatibility during migration
-- Candidate privacy controls gate marketplace access, direct links, and request-only approvals
-- Private assessment reports and replays stay company-scoped
-- Recording uploads are constrained by MIME type and size
+Startup will fail outside local/test when `SECRET_KEY` is insecure.
 
-## Recommended Ongoing Checks
+---
 
-- Run frontend lint and build on every change
-- Run backend targeted auth/privacy/collaboration tests on every change
-- Keep dependencies updated and review advisories before releases
+## Current Security Controls
+
+- Cookie-first auth with `HttpOnly` session cookie.
+- Backward-compatible Bearer auth still accepted during migration.
+- Candidate privacy visibility + approval flow for company access.
+- Company-scoped access enforcement for private reports and interview replays.
+- Employee invite start is bound to authenticated candidate email.
+- Recording upload is restricted by MIME type and max size.
+- Candidate login/register redirects are path-only sanitized.
+
+---
+
+## Known Security Debt
+
+- Bearer-token compatibility remains in frontend/localStorage for migration safety.
+  - Risk: XSS can expose localStorage token.
+  - Target state: cookie-only auth transport + CSRF hardening for sensitive write actions.
+- Dependency vulnerability triage should continue in CI on each release.
+
+---
+
+## Minimum Security Checks per Release
+
+```bash
+docker compose exec -T backend alembic upgrade head
+docker compose exec -T frontend npm run lint
+docker compose exec -T frontend npm run build
+cd backend && python3 -m pytest -v
+```
+
+For high-risk changes (auth/privacy/company access), add targeted suites:
+
+```bash
+cd backend && python3 -m pytest tests/test_auth.py tests/test_candidate_privacy.py tests/test_company_collaboration_roles.py tests/test_employee_assessments.py -v
+```

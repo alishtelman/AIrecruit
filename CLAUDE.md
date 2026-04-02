@@ -1,129 +1,116 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working in this repository.
 
 ## Stack
-- Backend: Python 3.11, FastAPI, SQLAlchemy 2.0 async, Alembic, PostgreSQL 16 (asyncpg)
-- Frontend: Next.js 14.2, TypeScript, Tailwind CSS
-- Infrastructure: Docker Compose
 
-## Daily commands
-All run from repo root unless noted.
+- Backend: Python 3.11, FastAPI, SQLAlchemy 2.0 async, Alembic, PostgreSQL 16
+- Frontend: Next.js 14.2, TypeScript, Tailwind CSS, next-intl
+- Infra: Docker Compose
+
+## Daily Commands
+
+Run from repo root unless noted.
 
 ```bash
-# Start
-docker compose up --build
+# Start services
+docker compose up -d --build
 
-# Container status
+# Status / logs
 docker compose ps
-
-# Backend logs
 docker compose logs backend -f
+docker compose logs frontend -f
 
-# Apply migrations
+# DB migrations
 docker compose exec backend alembic upgrade head
-
-# Create migration after model changes
 docker compose exec backend alembic revision --autogenerate -m "description"
 
-# Frontend lint
+# Frontend checks
 docker compose exec frontend npm run lint
-
-# Frontend build
 docker compose exec frontend npm run build
 ```
 
-## Backend tests
-Tests run against the live backend at `http://localhost:8001`. Requires `docker compose up`.
+## Tests
+
+Backend tests (run against live backend with docker compose up):
 
 ```bash
-# Run all tests (from repo root)
 cd backend && python3 -m pytest -v
-
-# Run specific test file
-cd backend && python3 -m pytest tests/test_auth.py -v
+cd backend && python3 -m pytest tests/test_interview_flow.py -v
 ```
 
-20 integration tests: auth (7), interview flow (7), templates (6).
+Current main backend suites:
 
-## Assessment system
+- `test_auth.py`
+- `test_interview_flow.py`
+- `test_templates.py`
+- `test_candidate_privacy.py`
+- `test_company_collaboration_roles.py`
+- `test_company_search_shortlists.py`
+- `test_employee_assessments.py`
+- `test_ai_quality_controls.py`
+- `test_tts.py`
 
-Scientific competency-based assessment. Two LLM passes per interview:
-- **Pass 1** — per-question evidence extraction (answer quality, skills, red flags)
-- **Pass 2** — competency scoring with weighted aggregation → 5 score dimensions
+## Interview Engine Notes
 
-**5 score dimensions** (replacing old hard/soft/communication):
-- `overall_score` — weighted sum of all competencies
-- `hard_skills_score` — technical_core + technical_breadth
-- `soft_skills_score` — behavioral
-- `communication_score` — communication
-- `problem_solving_score` — problem_solving (new)
+The interview flow is stateful and adaptive.
 
-**Key files:**
-- `backend/app/ai/competencies.py` — role competency matrices (8 roles × 10 competencies, pure data)
-- `backend/app/ai/assessor.py` — two-pass LLM assessment pipeline
-- `backend/app/models/skill.py` — `candidate_skills` table (queryable skill index)
+- `interviews.question_count` tracks core topic progression.
+- `interviews.followup_depth` and `interviews.interview_state` track probing behavior.
+- `SendMessageResponse` includes `is_followup` and `question_type`.
+- `question_type` can be `main`, `followup`, `verification`, `claim_verification`, `deep_technical`, `edge_cases`.
 
-**New DB columns on `assessment_reports`** (all nullable, backward-compat):
-`problem_solving_score`, `competency_scores` (JSON), `per_question_analysis` (JSON),
-`skill_tags` (JSON), `red_flags` (JSON), `response_consistency` (Float)
+Key files:
 
-**Adding a new role:** add entry to `ROLE_COMPETENCIES` dict in `ai/competencies.py`
-and a mock question list in `ai/interviewer.py`.
+- `backend/app/services/interview_service.py`
+- `backend/app/ai/interviewer.py`
+- `backend/app/ai/resume_profile.py`
+- `backend/app/ai/competencies.py`
+- `backend/app/ai/assessor.py`
+- `backend/app/ai/calibration.py`
 
-## Structure
+## Frontend Notes
 
-```
-backend/app/
-  api/v1/       — thin FastAPI routers (no DB logic)
-  services/     — all business logic
-  ai/           — Groq LLM interviewer (adaptive, resume-aware) + assessor
-  models/       — SQLAlchemy ORM models
-  schemas/      — Pydantic DTOs
-  core/         — config, database setup, JWT/bcrypt
+- API calls must go through `frontend/src/lib/api.ts`.
+- Shared interfaces live in `frontend/src/lib/types.ts`.
+- Localization uses `next-intl`:
+  - `frontend/messages/en.json`
+  - `frontend/messages/ru.json`
+  - `frontend/src/i18n/*`
+- Locale is cookie-driven (`NEXT_LOCALE`) without locale URL prefix.
 
-frontend/src/
-  app/(candidate)/  — candidate pages
-  app/(company)/    — company pages
-  lib/api.ts        — HTTP client with Bearer middleware
-  lib/types.ts      — TypeScript interfaces
-  hooks/useAuth.ts  — auth state
-```
+## Security Notes
 
-Key files: `backend/app/services/interview_service.py` (state machine + competency planning), `backend/app/core/config.py`, `backend/app/api/v1/deps.py` (JWT dep), `backend/app/ai/competencies.py` (competency matrices).
+- Auth is cookie-first (`HttpOnly`) with temporary Bearer compatibility.
+- In non-local environments, insecure/default `SECRET_KEY` causes startup failure.
+- Keep `ALLOW_MOCK_AI=false` in production.
+- Recording uploads are MIME + size constrained.
 
-## Code rules
+## Code Rules
 
-**FastAPI**
-- Routers delegate to services; no SQLAlchemy queries in routers.
-- Raise domain exceptions in services; translate to HTTP responses in routers.
+FastAPI:
 
-**SQLAlchemy async**
-- Always use `async with session` / `await session.execute(...)`.
-- Never mix sync and async session usage.
+- routers are thin; business logic in services
+- raise domain errors in services, map to HTTP in routers
 
-**Alembic**
-- Always use `--autogenerate` from inside the container.
-- Run `upgrade head` before testing any schema change.
+SQLAlchemy async:
 
-**Next.js**
-- API calls go through `frontend/src/lib/api.ts` only — never fetch directly.
-- TypeScript interfaces live in `frontend/src/lib/types.ts`.
+- always async session patterns (`await session.execute`, etc.)
+- do not mix sync and async DB usage
 
-## Tool rules
+Alembic:
 
-**Serena** — use for codebase navigation: finding definitions, call paths, symbol search. Prefer over grep for code structure questions.
+- generate migrations from container environment
+- run `upgrade head` before testing schema-related changes
 
-**Context7** — use only for external library/framework documentation. Do not use for reading project code.
+Next.js:
 
-**playwright-cli skill** — use for all UI flow checks and regression testing. Do not default to Playwright MCP.
+- do not bypass shared API client layer
+- keep TS types in `lib/types.ts`
 
-## Core principles
-- Make the smallest safe change that solves the task.
-- Prefer existing project patterns over new abstractions.
-- Do not rewrite unrelated code.
-- Do not add dependencies unless clearly justified.
-- Before editing, identify the smallest relevant set of files.
-- Preserve backward compatibility unless the task explicitly allows breaking changes.
-- Never read or print secrets. Avoid touching `.env`, lockfiles, and generated files unless required.
-- Be concise. Reference exact files and commands when reporting changes.
+## Core Principles
+
+- Make the smallest safe change.
+- Preserve current architecture and compatibility unless explicitly changing contracts.
+- Avoid unrelated refactors.
+- Avoid touching secrets and generated artifacts unless required.

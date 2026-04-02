@@ -782,6 +782,7 @@
       "created": "Created",
       "in_progress": "In progress",
       "completed": "Processing...",
+      "report_processing": "Processing report...",
       "report_generated": "Report ready",
       "failed": "Failed"
     }
@@ -829,8 +830,8 @@
   "interviewStart": {
     "back": "Back to dashboard",
     "title": "Start AI interview",
-    "subtitle": "Choose your target role. Interviews usually take 15-20 minutes. Screen, camera, and microphone recording are required during the session.",
-    "grantAccessError": "Grant screen, camera, and microphone access to start the interview.",
+    "subtitle": "Choose your target role. Interviews usually take 15-20 minutes. We will try to enable screen, camera, and microphone recording automatically, but the interview can continue without it.",
+    "grantAccessError": "Could not access screen, camera, or microphone before start. Interview can still continue.",
     "startError": "Could not start interview",
     "companyTemplates": "Company templates",
     "noTemplates": "No public templates for this role.",
@@ -840,7 +841,7 @@
     "language": "Interview language",
     "start": "Start interview",
     "starting": "Starting...",
-    "recordingHint": "Recording is required for the interview session.",
+    "recordingHint": "Recording is attempted automatically. If permissions are denied, interview still continues.",
     "roles": {
       "backend_engineer": {
         "label": "Backend Engineer",
@@ -889,9 +890,9 @@
     "resume": "Resume",
     "voiceOn": "Voice on",
     "voiceOff": "Voice off",
-    "recordingRequired": "Recording required",
-    "enableRecording": "Enable recording",
-    "recordingDescription": "To continue the interview, enable screen, camera, and microphone recording.",
+    "recordingRequired": "Recording is off",
+    "enableRecording": "Retry recording",
+    "recordingDescription": "The interview can continue without recording. You can retry screen, camera, and microphone capture at any time.",
     "completeTitle": "Interview complete",
     "completeDescription": "You've answered all {count} questions. Generate your assessment report now.",
     "finish": "Finish and get report",

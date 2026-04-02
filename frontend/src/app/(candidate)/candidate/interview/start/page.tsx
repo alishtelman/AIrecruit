@@ -53,9 +53,8 @@ function StartInterviewInner() {
     try {
       await prepareInterviewMediaSession();
     } catch {
-      setError(t("grantAccessError"));
-      setStarting(false);
-      return;
+      // Non-blocking: interview should start even if media permissions are denied upfront.
+      clearPreparedInterviewMedia();
     }
 
     try {

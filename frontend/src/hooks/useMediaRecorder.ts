@@ -7,7 +7,7 @@ import { consumePreparedInterviewMedia } from "@/lib/interviewMediaSession";
  * useMediaRecorder — captures screen + microphone via MediaRecorder,
  * while keeping a webcam preview for the candidate.
  *
- * - Recording is required for interview flow
+ * - Recording is best-effort (interview continues even if permissions are denied)
  * - Prefers video/webm; falls back to video/mp4 for Safari
  * - Returns a webcam preview ref to attach to a <video> element
  */
@@ -108,7 +108,7 @@ export function useMediaRecorder() {
       return true;
     } catch {
       setErrorMessage(
-        "Screen, camera, or microphone permission denied. Enable permissions to continue the interview with recording.",
+        "Screen, camera, or microphone permission denied. Interview will continue without recording.",
       );
       cleanupStreams();
       return false;

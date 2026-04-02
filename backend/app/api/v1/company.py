@@ -3,10 +3,12 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, EmailStr
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_company, get_current_company_admin, get_current_company_recruiter, get_db
 from app.models.company import Company
+from app.models.interview import Interview
 from app.models.user import User
 from app.schemas.company import (
     AnalyticsFunnelResponse,
@@ -23,6 +25,7 @@ from app.schemas.company import (
     ShortlistSummaryResponse,
 )
 from app.schemas.interview import InterviewReplayResponse
+from app.schemas.interview import ProctoringTimelineResponse
 from app.schemas.report import AssessmentReportResponse
 from app.schemas.template import TemplateCreateRequest, TemplateResponse
 from app.services.company_service import (
@@ -45,6 +48,7 @@ from app.services.collaboration_service import (
 )
 from app.services.hire_outcome_service import get_hire_outcome, set_hire_outcome
 from app.services.interview_service import get_interview_replay
+from app.services.interview_service import build_proctoring_timeline_response
 from app.services.member_service import (
     MemberAlreadyExistsError,
     RoleConflictError,
@@ -244,6 +248,28 @@ async def get_report(
         metadata={"report_id": str(report.id)},
     )
     return report
+
+
+@router.get("/reports/{report_id}/proctoring-timeline", response_model=ProctoringTimelineResponse)
+async def get_report_proctoring_timeline(
+    report_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    _, company = user_and_company
+    report = await get_company_report(db, report_id, company.id)
+    if not report:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+
+    interview = await db.scalar(select(Interview).where(Interview.id == report.interview_id))
+    if not interview:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found")
+
+    return build_proctoring_timeline_response(
+        interview_id=interview.id,
+        report_id=report.id,
+        signals=interview.behavioral_signals,
+    )
 
 
 @router.get("/shortlists", response_model=list[ShortlistSummaryResponse])

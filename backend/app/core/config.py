@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     FROM_EMAIL: str = "AIRecruit <noreply@airecruit.app>"
     APP_URL: str = "http://localhost:3000"
     CORS_ORIGINS: str = "http://localhost:3000"
+    PROCTORING_POLICY_MODE: str = "observe_only"
 
     @property
     def cors_origins(self) -> list[str]:
