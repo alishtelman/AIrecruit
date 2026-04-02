@@ -29,6 +29,7 @@ import type {
   InterviewReplay,
   InterviewTemplate,
   LoginRequest,
+  ProctoringTimeline,
   ResumeTextResponse,
   ResumeUploadResponse,
   SharedCandidateProfile,
@@ -151,6 +152,9 @@ export const companyApi = {
 
   getReport: (reportId: string) =>
     request<AssessmentReport>(`/api/v1/company/reports/${reportId}`),
+
+  getReportProctoringTimeline: (reportId: string) =>
+    request<ProctoringTimeline>(`/api/v1/company/reports/${reportId}/proctoring-timeline`),
 
   listTemplates: () =>
     request<InterviewTemplate[]>("/api/v1/company/templates"),

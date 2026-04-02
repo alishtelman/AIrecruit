@@ -990,6 +990,23 @@
     "alert": "Сигнал",
     "behavioralRisk": "Поведенческие сигналы риска",
     "risk": "Риск",
+    "proctoringTimeline": "Таймлайн прокторинга",
+    "proctoringPolicy": "Режим политики",
+    "proctoringRisk": "Уровень риска",
+    "proctoringTotalEvents": "Всего событий",
+    "proctoringHighSeverity": "Высокая критичность",
+    "proctoringNoEvents": "Для этого интервью события прокторинга не зафиксированы.",
+    "proctoringEventTime": "Время",
+    "proctoringEventSource": "Источник",
+    "proctoringRiskLevel": {
+      "low": "Низкий",
+      "medium": "Средний",
+      "high": "Высокий"
+    },
+    "proctoringPolicyMode": {
+      "observe_only": "Только наблюдение",
+      "strict_flagging": "Строгие флаги"
+    },
     "aiLikelihood": "Вероятность генерации ИИ",
     "depth": {
       "expert": "Экспертно",

@@ -991,6 +991,23 @@
     "alert": "Alert",
     "behavioralRisk": "Behavioral risk signals",
     "risk": "Risk",
+    "proctoringTimeline": "Proctoring timeline",
+    "proctoringPolicy": "Policy",
+    "proctoringRisk": "Risk level",
+    "proctoringTotalEvents": "Total events",
+    "proctoringHighSeverity": "High severity",
+    "proctoringNoEvents": "No proctoring events were recorded for this interview.",
+    "proctoringEventTime": "Time",
+    "proctoringEventSource": "Source",
+    "proctoringRiskLevel": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High"
+    },
+    "proctoringPolicyMode": {
+      "observe_only": "Observe only",
+      "strict_flagging": "Strict flagging"
+    },
     "aiLikelihood": "AI likelihood",
     "depth": {
       "expert": "Expert",

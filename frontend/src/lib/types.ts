@@ -300,6 +300,24 @@ export interface InterviewReportStatusResponse {
   summary: ReportSummary | null;
 }
 
+export interface ProctoringTimelineEvent {
+  event_type: string;
+  severity: "info" | "medium" | "high";
+  occurred_at: string | null;
+  source: string;
+  details: Record<string, unknown>;
+}
+
+export interface ProctoringTimeline {
+  interview_id: string;
+  report_id: string | null;
+  policy_mode: "observe_only" | "strict_flagging";
+  risk_level: "low" | "medium" | "high";
+  total_events: number;
+  high_severity_count: number;
+  events: ProctoringTimelineEvent[];
+}
+
 // ── Company ───────────────────────────────────────────────────────────────────
 
 export interface CompanyRegisterRequest {

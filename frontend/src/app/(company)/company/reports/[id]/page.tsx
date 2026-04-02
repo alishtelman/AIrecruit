@@ -7,7 +7,7 @@ import { useRouter } from "@/i18n/navigation";
 import { CompanyWorkspaceHeader } from "@/components/company-workspace-header";
 import { useAuth } from "@/hooks/useAuth";
 import { companyApi } from "@/lib/api";
-import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis } from "@/lib/types";
+import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ProctoringTimeline, ProctoringTimelineEvent } from "@/lib/types";
 
 const RECOMMENDATION_CONFIG: Record<HiringRecommendation, { color: string; bg: string }> = {
   strong_yes: { color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
@@ -35,6 +35,12 @@ const SEVERITY_COLORS: Record<string, string> = {
   low: "border-slate-600 bg-slate-800 text-slate-400",
 };
 
+const TIMELINE_RISK_STYLES: Record<"low" | "medium" | "high", string> = {
+  low: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
+  medium: "bg-yellow-500/15 text-yellow-300 border-yellow-500/30",
+  high: "bg-red-500/15 text-red-300 border-red-500/30",
+};
+
 export default function CompanyReportPage() {
   const t = useTranslations("report");
   const dashboardT = useTranslations("companyDashboard");
@@ -46,12 +52,23 @@ export default function CompanyReportPage() {
     unauthorizedRedirectTo: "/candidate/dashboard",
   });
   const [report, setReport] = useState<AssessmentReport | null>(null);
+  const [timeline, setTimeline] = useState<ProctoringTimeline | null>(null);
   const [error, setError] = useState("");
   const [expandedQ, setExpandedQ] = useState<number | null>(null);
 
   useEffect(() => {
     if (!id || authLoading) return;
-    companyApi.getReport(id).then(setReport).catch(() => setError(t("loadFailed")));
+    companyApi
+      .getReport(id)
+      .then((data) => {
+        setReport(data);
+        return companyApi.getReportProctoringTimeline(id)
+          .then(setTimeline)
+          .catch(() => {
+            setTimeline(null);
+          });
+      })
+      .catch(() => setError(t("loadFailed")));
   }, [id, authLoading, t]);
 
   if (authLoading || (!report && !error)) {
@@ -171,6 +188,39 @@ export default function CompanyReportPage() {
               </ul>
             )}
           </div>
+        )}
+
+        {timeline && (
+          <Section title={t("proctoringTimeline")} color="cyan">
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="rounded-full border border-slate-600 px-2.5 py-1 text-slate-300">
+                  {t("proctoringPolicy")}: {t(`proctoringPolicyMode.${timeline.policy_mode}`)}
+                </span>
+                <span className={`rounded-full border px-2.5 py-1 ${TIMELINE_RISK_STYLES[timeline.risk_level]}`}>
+                  {t("proctoringRisk")}: {t(`proctoringRiskLevel.${timeline.risk_level}`)}
+                </span>
+                <span className="rounded-full border border-slate-600 px-2.5 py-1 text-slate-300">
+                  {t("proctoringTotalEvents")}: {timeline.total_events}
+                </span>
+                <span className="rounded-full border border-slate-600 px-2.5 py-1 text-slate-300">
+                  {t("proctoringHighSeverity")}: {timeline.high_severity_count}
+                </span>
+              </div>
+
+              {timeline.events.length === 0 ? (
+                <div className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-slate-400">
+                  {t("proctoringNoEvents")}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {timeline.events.map((event, idx) => (
+                    <TimelineEventRow key={`${event.event_type}-${idx}`} event={event} />
+                  ))}
+                </div>
+              )}
+            </div>
+          </Section>
         )}
 
         <div className="text-slate-600 text-xs mt-8">
@@ -293,6 +343,27 @@ function RedFlagRow({ flag }: { flag: RedFlag }) {
     <div className={`border rounded-lg px-4 py-3 ${style}`}>
       <div className="flex items-center gap-2 mb-1"><span className="text-sm font-medium">{t("alert")} {flag.flag}</span><span className="text-xs opacity-70 capitalize">{t(`severity.${flag.severity}`)}</span></div>
       {flag.evidence && <p className="text-xs opacity-80">{flag.evidence}</p>}
+    </div>
+  );
+}
+
+function TimelineEventRow({ event }: { event: ProctoringTimelineEvent }) {
+  const t = useTranslations("report");
+  const severityStyle = SEVERITY_COLORS[event.severity] ?? SEVERITY_COLORS.low;
+  const eventLabel = event.event_type.replace(/_/g, " ");
+  const timeLabel = event.occurred_at ? new Date(event.occurred_at).toLocaleTimeString() : "—";
+
+  return (
+    <div className={`rounded-lg border px-3 py-2 text-sm ${severityStyle}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-medium capitalize">{eventLabel}</div>
+        <div className="text-[11px] opacity-80">
+          {t("proctoringEventTime")}: {timeLabel}
+        </div>
+      </div>
+      <div className="mt-1 text-xs opacity-80">
+        {t("proctoringEventSource")}: {event.source || "client"}
+      </div>
     </div>
   );
 }
