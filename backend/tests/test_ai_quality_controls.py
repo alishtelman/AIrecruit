@@ -32,7 +32,7 @@ def test_normalize_question_output_keeps_single_concise_question():
 
     assert normalized.endswith("?")
     assert normalized.count("?") == 1
-    assert len(normalized) <= 240
+    assert len(normalized) <= 170
     assert "I understand" not in normalized
 
 
@@ -61,7 +61,7 @@ def test_resume_anchored_first_question_uses_resume_line_context():
 
     assert "Acme Payments" in question
     assert question.endswith("?")
-    assert len(question) <= 240
+    assert len(question) <= 170
 
 
 def test_resume_anchored_first_question_has_safe_fallback_without_resume():

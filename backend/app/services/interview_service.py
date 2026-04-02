@@ -487,10 +487,11 @@ def _adapt_question_budget(
     # Early stop for consistently weak sessions: keep interview short and let report generation proceed.
     if (
         answer_count >= min_questions_before_early_stop
-        and weak_ratio >= 0.72
-        and low_relevance_ratio >= 0.45
-        and consecutive_weak_answers >= 3
-        and strong_answers_count <= max(1, answer_count // 6)
+        and current_question_count >= min_questions_before_early_stop
+        and weak_ratio >= 0.68
+        and (low_relevance_ratio >= 0.35 or consecutive_weak_answers >= 4)
+        and consecutive_weak_answers >= 2
+        and strong_answers_count <= max(1, answer_count // 5)
     ):
         return max(current_question_count, 1), True, "early_stop_low_signal"
 
@@ -511,7 +512,8 @@ def _adapt_question_budget(
     if (
         answer_count >= 6
         and current_max_questions > min_questions_before_early_stop
-        and weak_ratio >= 0.80
+        and weak_ratio >= 0.78
+        and (low_relevance_ratio >= 0.30 or consecutive_weak_answers >= 3)
         and strong_answers_count == 0
     ):
         reduced = max(
@@ -741,6 +743,43 @@ def _rank_verification_target(
         return normalized_claim
 
     return None
+
+
+def _topic_signature(topic: dict | None) -> tuple[str, str]:
+    data = topic or {}
+    verification_target = str(data.get("verification_target") or "").strip().lower()
+    competencies = [str(item).strip().lower() for item in data.get("competencies", []) if item]
+    primary_competency = competencies[0] if competencies else ""
+    return verification_target, primary_competency
+
+
+def _resolve_next_topic_index(
+    *,
+    topic_plan: list[dict],
+    current_topic_index: int,
+    default_next_index: int,
+    close_reason: str | None,
+) -> int:
+    if not topic_plan:
+        return default_next_index
+    if default_next_index >= len(topic_plan):
+        return default_next_index
+
+    next_index = max(0, default_next_index)
+    if close_reason not in {"reused_answer", "low_relevance_after_probe"}:
+        return next_index
+
+    current_sig = _topic_signature(
+        topic_plan[current_topic_index] if 0 <= current_topic_index < len(topic_plan) else {}
+    )
+
+    cursor = next_index
+    while cursor < len(topic_plan):
+        if _topic_signature(topic_plan[cursor]) != current_sig:
+            return cursor
+        cursor += 1
+
+    return next_index
 
 
 # ---------------------------------------------------------------------------
@@ -1168,6 +1207,7 @@ async def add_candidate_message(
             question_type = "main"
             will_advance = True
 
+        resolved_next_topic_index: int | None = None
         next_q: str | None = None
         if not should_end_now:
             competency_targets = None
@@ -1178,6 +1218,14 @@ async def add_candidate_message(
                 current_idx = max(current_topic_index, 0)
                 next_idx = interview.question_count
                 target_idx = next_idx if will_advance else current_idx
+                if will_advance:
+                    resolved_next_topic_index = _resolve_next_topic_index(
+                        topic_plan=topic_plan,
+                        current_topic_index=current_idx,
+                        default_next_index=target_idx,
+                        close_reason=forced_closure_reason or saturation_reason,
+                    )
+                    target_idx = resolved_next_topic_index
                 if target_idx < len(topic_plan):
                     target = topic_plan[target_idx]
                     competency_targets = target.get("competencies")
@@ -1244,7 +1292,10 @@ async def add_candidate_message(
             interview.question_count += 1
             interview.followup_depth = 0
             topic_turns = 0
-            current_topic_index = max(interview.question_count - 1, 0)
+            if resolved_next_topic_index is not None:
+                current_topic_index = resolved_next_topic_index
+            else:
+                current_topic_index = max(interview.question_count - 1, 0)
         else:
             interview.followup_depth = topic_turns + 1
             topic_turns += 1

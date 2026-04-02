@@ -1246,8 +1246,11 @@ def _compute_confidence_metrics(
     }
 
 
-def _aggregate_skills(per_question: list[dict]) -> list[dict]:
-    """Aggregate skill tags from per-question analysis with evidence gating."""
+def _aggregate_skills(
+    per_question: list[dict],
+    message_history: list[dict] | None = None,
+) -> list[dict]:
+    """Aggregate skill tags with strict candidate-evidence gating."""
     proficiency_order = ["beginner", "intermediate", "advanced", "expert"]
     generic_terms = {
         "api",
@@ -1271,6 +1274,27 @@ def _aggregate_skills(per_question: list[dict]) -> list[dict]:
         "testing",
         "test",
     }
+    action_markers = (
+        "использ",
+        "настро",
+        "оптимиз",
+        "проектир",
+        "реализ",
+        "внедр",
+        "build",
+        "built",
+        "use",
+        "used",
+        "design",
+        "designed",
+        "configure",
+        "configured",
+        "optimiz",
+        "implemented",
+        "deployed",
+        "debug",
+        "troubleshoot",
+    )
 
     def _normalize_skill_name(name: str) -> str:
         normalized = re.sub(r"\s+", " ", (name or "").strip().lower())
@@ -1285,6 +1309,36 @@ def _aggregate_skills(per_question: list[dict]) -> list[dict]:
             return True
         return name in generic_terms
 
+    candidate_answers = [
+        str(msg.get("content", "") or "")
+        for msg in (message_history or [])
+        if str(msg.get("role", "")) == "candidate" and str(msg.get("content", "")).strip()
+    ]
+    candidate_corpus = " ".join(candidate_answers).lower()
+    candidate_tech_mentions = set()
+    for answer in candidate_answers:
+        candidate_tech_mentions.update(extract_mentioned_technologies(answer))
+
+    def _skill_has_candidate_evidence(skill: str) -> bool:
+        if not candidate_answers:
+            # Backward-compatible fallback for cases where we only have pass1.
+            return True
+        if skill in candidate_tech_mentions:
+            return True
+        pattern = re.compile(rf"\b{re.escape(skill)}\b")
+        matches = list(pattern.finditer(candidate_corpus))
+        if not matches:
+            return False
+        if len(matches) >= 2:
+            return True
+        for match in matches:
+            start = max(0, match.start() - 80)
+            end = min(len(candidate_corpus), match.end() + 80)
+            window = candidate_corpus[start:end]
+            if any(marker in window for marker in action_markers):
+                return True
+        return False
+
     skill_map: dict[str, dict] = {}
     for q in per_question:
         question_confidence = _question_evidence_confidence(q)
@@ -1293,6 +1347,8 @@ def _aggregate_skills(per_question: list[dict]) -> list[dict]:
         for sm in q.get("skills_mentioned", []):
             name = _normalize_skill_name(str(sm.get("skill", "")))
             if _is_noise_skill(name):
+                continue
+            if not _skill_has_candidate_evidence(name):
                 continue
             prof = str(sm.get("proficiency", "intermediate")).lower()
             if prof not in proficiency_order:
@@ -2007,7 +2063,7 @@ class LLMAssessor:
         else:
             hiring_rec = llm_rec
 
-        skill_tags = _aggregate_skills(pass1_data)
+        skill_tags = _aggregate_skills(pass1_data, message_history=message_history)
         confidence_metrics = _compute_confidence_metrics(comp_scores, pass1_data)
         response_consistency = data.get("response_consistency")
 
@@ -2188,7 +2244,7 @@ class MockAssessor:
         full_json = {
             "competency_scores": comp_scores,
             "per_question_analysis": per_q,
-            "skill_tags": _aggregate_skills(per_q),
+            "skill_tags": _aggregate_skills(per_q, message_history=message_history),
             "red_flags": [],
             "response_consistency": round(min(9.0, max(3.0, overall + 0.4)), 1),
             "aggregates": adjusted_aggregates,

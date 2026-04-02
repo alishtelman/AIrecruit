@@ -27,7 +27,7 @@ _ROLE_LABELS: dict[str, str] = {
     "designer": "UX/UI Дизайнер",
 }
 
-_MAX_QUESTION_CHARS = 240
+_MAX_QUESTION_CHARS = 170
 _QUESTION_SEGMENT_RE = re.compile(r"[^?]{8,}\?")
 _WHITESPACE_RE = re.compile(r"\s+")
 _MARKUP_RE = re.compile(r"[*_`#>\[\]\|]")
@@ -46,6 +46,17 @@ _LEADING_FILLERS = (
     "good answer",
     "i understand",
     "let's discuss",
+)
+_QUESTION_TOKEN_RE = re.compile(r"[a-zA-Zа-яА-Я0-9+#.-]+")
+_QUESTION_TOKEN_STOPWORDS = {
+    "как", "что", "какой", "какие", "где", "почему", "когда", "вы", "ты",
+    "это", "этот", "эта", "и", "или", "но", "для", "про", "без", "над",
+    "the", "a", "an", "how", "what", "which", "where", "when", "why", "you",
+    "your", "with", "for", "and", "or", "to", "of", "in", "on", "about",
+}
+_QUESTION_WORD_HINTS = (
+    "как", "что", "какой", "какие", "почему", "зачем", "где",
+    "how", "what", "which", "why", "where", "walk me through", "tell me about",
 )
 
 
@@ -484,12 +495,59 @@ def get_depth_escalation_question(language: str = "ru") -> str:
 
 def _trim_question(text: str, limit: int = _MAX_QUESTION_CHARS) -> str:
     """Trim question text to a safe UI length while keeping it readable."""
-    if len(text) <= limit:
-        return text
-    trimmed = text[:limit]
+    compact = _WHITESPACE_RE.sub(" ", text or "").strip()
+    if len(compact) <= limit:
+        return compact
+    if ". " in compact:
+        compact = compact.rsplit(". ", 1)[-1].strip()
+    if len(compact) <= limit:
+        return compact
+    trimmed = compact[:limit]
     if " " in trimmed:
         trimmed = trimmed.rsplit(" ", 1)[0]
     return trimmed.rstrip(" ,.;:") + "?"
+
+
+def _question_tokens(text: str) -> set[str]:
+    return {
+        token.lower()
+        for token in _QUESTION_TOKEN_RE.findall(text or "")
+        if len(token) > 2 and token.lower() not in _QUESTION_TOKEN_STOPWORDS
+    }
+
+
+def _question_similarity(a: str, b: str) -> float:
+    ta = _question_tokens(a)
+    tb = _question_tokens(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / max(1, len(ta | tb))
+
+
+def _question_is_repeated(question: str, history: list[dict], *, threshold: float = 0.78) -> bool:
+    normalized = _trim_question(question).lower().strip(" ?!.")
+    if not normalized:
+        return False
+    recent_assistant = [
+        str(item.get("content", "")).strip()
+        for item in history
+        if item.get("role") == "assistant" and str(item.get("content", "")).strip()
+    ][-4:]
+    for previous in recent_assistant:
+        prev_normalized = _trim_question(previous).lower().strip(" ?!.")
+        if normalized == prev_normalized:
+            return True
+        if _question_similarity(normalized, prev_normalized) >= threshold:
+            return True
+    return False
+
+
+def _question_like_score(candidate: str) -> tuple[int, int]:
+    lowered = candidate.lower()
+    hint_score = 1 if any(hint in lowered for hint in _QUESTION_WORD_HINTS) else 0
+    # Prefer concise direct questions.
+    length_penalty = abs(len(candidate) - 90)
+    return hint_score, -length_penalty
 
 
 def _normalize_question_output(raw: str, ctx: InterviewContext) -> str:
@@ -504,33 +562,26 @@ def _normalize_question_output(raw: str, ctx: InterviewContext) -> str:
             else "Расскажите о вашем самом релевантном проекте за последнее время?"
         )
 
-    segments = [
-        _WHITESPACE_RE.sub(" ", seg).strip()
-        for seg in _QUESTION_SEGMENT_RE.findall(cleaned)
-    ]
+    segments = [_WHITESPACE_RE.sub(" ", seg).strip() for seg in _QUESTION_SEGMENT_RE.findall(cleaned)]
 
-    question = ""
+    question_candidates: list[str] = []
     for seg in segments:
         normalized = seg.lstrip(" -:;,")
-        sentence_candidates = [
-            sentence.strip(" ,;:")
-            for sentence in re.split(r"[.!]", normalized)
-            if sentence.strip(" ,;:")
-        ]
-        prioritized = (
-            [item for item in sentence_candidates if "?" in item]
-            + [item for item in sentence_candidates if "?" not in item]
-        )
-        for candidate in prioritized:
+        for sentence in re.split(r"[.!]", normalized):
+            candidate = sentence.strip(" ,;:")
             if not candidate:
                 continue
             lowered = candidate.lower()
             if any(lowered.startswith(prefix) for prefix in _LEADING_FILLERS):
                 continue
-            question = candidate if candidate.endswith("?") else f"{candidate}?"
-            break
-        if question:
-            break
+            if len(candidate) < 12:
+                continue
+            question_candidates.append(candidate if candidate.endswith("?") else f"{candidate}?")
+
+    question = ""
+    if question_candidates:
+        question_candidates.sort(key=_question_like_score, reverse=True)
+        question = question_candidates[0]
 
     if not question:
         first_sentence = ""
@@ -548,7 +599,17 @@ def _normalize_question_output(raw: str, ctx: InterviewContext) -> str:
         question = first_sentence if first_sentence.endswith("?") else f"{first_sentence}?"
 
     if question.count("?") > 1:
-        question = question.split("?", 1)[0].strip() + "?"
+        tail = [part.strip() for part in question.split("?") if part.strip()]
+        question = f"{tail[-1]}?" if tail else question.split("?", 1)[0].strip() + "?"
+
+    # Drop obvious preambles before direct question wording.
+    lowered = question.lower()
+    for hint in ("расскажите", "как ", "что ", "почему ", "how ", "what ", "why "):
+        pos = lowered.find(hint)
+        if pos > 0:
+            question = question[pos:].strip(" ,;:")
+            break
+
     return _trim_question(question)
 
 
@@ -639,17 +700,46 @@ def _resume_claim_probe_question(ctx: InterviewContext) -> str | None:
     )
 
 
-def _competency_anchored_main_question(ctx: InterviewContext) -> str | None:
+def _competency_anchored_main_question(ctx: InterviewContext, *, preference_index: int = 0) -> str | None:
     competencies = [item for item in (ctx.competency_targets or []) if item]
     if not competencies:
         return None
-    primary = competencies[0]
+    target_idx = preference_index if 0 <= preference_index < len(competencies) else 0
+    primary = competencies[target_idx]
     bank = _COMPETENCY_MAIN_EN if ctx.language == "en" else _COMPETENCY_MAIN_RU
     base = bank.get(primary)
     if not base:
         return None
 
     return _trim_question(base)
+
+
+def _fallback_question_for_context(ctx: InterviewContext, *, prefer_secondary_main_topic: bool = False) -> str | None:
+    if ctx.question_type == "followup":
+        return _trim_question(get_fallback_followup(ctx.shallow_reason or "no_depth_indicators", ctx.language))
+    if ctx.question_type == "claim_verification":
+        probe = _resume_claim_probe_question(ctx)
+        return _trim_question(probe) if probe else None
+    if ctx.question_type == "verification":
+        tech = ctx.pending_verification or ctx.verification_target or ""
+        verification = get_verification_question(tech, ctx.language)
+        if verification:
+            return _trim_question(verification)
+        return None
+    if ctx.question_type in {"deep_technical", "edge_cases"}:
+        return _trim_question(get_depth_escalation_question(ctx.language))
+
+    anchored = _competency_anchored_main_question(ctx, preference_index=1 if prefer_secondary_main_topic else 0)
+    if anchored:
+        return anchored
+    resume_anchored = _resume_anchored_main_question(ctx)
+    if resume_anchored:
+        return resume_anchored
+    return (
+        "Can you share one concrete production case and explain your technical trade-off?"
+        if ctx.language == "en"
+        else "Приведите один конкретный production-кейс и объясните, какой технический компромисс вы выбрали?"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -697,7 +787,7 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
 
         "## Формат ответа\n"
         "- Только ОДИН вопрос. Без нумерации.\n"
-        "- Коротко: 1-2 предложения, максимум 220 символов.\n"
+        "- Коротко: 1 предложение, максимум 170 символов.\n"
         "- НЕ начинай с оценки («Отлично!», «Хороший ответ», «Интересно»).\n"
         "- НЕ повторяй вопрос. НЕ давай советов и комментариев.\n"
     )
@@ -990,15 +1080,18 @@ class LLMInterviewer:
             return _resume_anchored_first_question(ctx)
         if ctx.question_type == "main" and ctx.question_number == 2 and ctx.resume_anchor:
             anchored = _resume_anchored_main_question(ctx)
-            if anchored:
+            if anchored and not _question_is_repeated(anchored, ctx.message_history):
                 return anchored
         if ctx.question_type == "main":
             anchored_main = _competency_anchored_main_question(ctx)
-            if anchored_main:
+            if anchored_main and not _question_is_repeated(anchored_main, ctx.message_history):
                 return anchored_main
+            alternative_main = _fallback_question_for_context(ctx, prefer_secondary_main_topic=True)
+            if alternative_main and not _question_is_repeated(alternative_main, ctx.message_history):
+                return alternative_main
         if ctx.question_type == "claim_verification":
             probe = _resume_claim_probe_question(ctx)
-            if probe:
+            if probe and not _question_is_repeated(probe, ctx.message_history):
                 return probe
 
         system = _build_system_prompt(ctx)
@@ -1013,7 +1106,7 @@ class LLMInterviewer:
 
         # Non-main question types: shorter output, slightly higher temperature for variety
         is_non_main = ctx.question_type != "main"
-        max_tokens = 120 if is_non_main else 220
+        max_tokens = 96 if is_non_main else 140
         temperature = 0.65 if is_non_main else 0.5
 
         try:
@@ -1025,6 +1118,10 @@ class LLMInterviewer:
             )
             raw = response.choices[0].message.content.strip()
             normalized = _normalize_question_output(raw, ctx)
+            if _question_is_repeated(normalized, ctx.message_history):
+                fallback = _fallback_question_for_context(ctx, prefer_secondary_main_topic=True)
+                if fallback and not _question_is_repeated(fallback, ctx.message_history):
+                    return fallback
             return normalized
         except Exception:
             if settings.allow_mock_ai:
