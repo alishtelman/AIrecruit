@@ -1,4 +1,5 @@
 from app.services.interview_service import (
+    _assess_with_dev_fallback,
     _get_next_question_with_dev_fallback,
     _adapt_question_budget,
     _append_candidate_memory,
@@ -191,4 +192,53 @@ async def test_get_next_question_with_dev_fallback_raises_in_production_mode(
     with pytest.raises(RuntimeError, match="AI interviewer request failed"):
         await _get_next_question_with_dev_fallback(
             InterviewContext(target_role="backend_engineer", question_number=1, language="ru")
+        )
+
+
+class _FailingAssessor:
+    async def assess(self, **_kwargs):
+        raise RuntimeError("assessor provider failed")
+
+
+@pytest.mark.asyncio
+async def test_assess_with_dev_fallback_uses_mock_in_local_mode(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app.services import interview_service as interview_service_module
+
+    monkeypatch.setattr(interview_service_module, "assessor", _FailingAssessor())
+    monkeypatch.setattr(interview_service_module.settings, "APP_ENV", "development")
+
+    result = await _assess_with_dev_fallback(
+        target_role="backend_engineer",
+        message_history=[
+            {"role": "assistant", "content": "Расскажите о своем опыте с PostgreSQL."},
+            {"role": "candidate", "content": "Я использовал PostgreSQL и оптимизировал индексы."},
+        ],
+        message_timestamps=None,
+        behavioral_signals=None,
+        language="ru",
+        interview_meta={},
+    )
+
+    assert result.hiring_recommendation in {"no", "maybe", "yes", "strong_yes"}
+
+
+@pytest.mark.asyncio
+async def test_assess_with_dev_fallback_raises_in_production_mode(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app.services import interview_service as interview_service_module
+
+    monkeypatch.setattr(interview_service_module, "assessor", _FailingAssessor())
+    monkeypatch.setattr(interview_service_module.settings, "APP_ENV", "production")
+
+    with pytest.raises(RuntimeError, match="AI assessor request failed"):
+        await _assess_with_dev_fallback(
+            target_role="backend_engineer",
+            message_history=[],
+            message_timestamps=None,
+            behavioral_signals=None,
+            language="ru",
+            interview_meta={},
         )

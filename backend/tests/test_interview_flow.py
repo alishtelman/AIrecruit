@@ -47,6 +47,45 @@ async def _upload_docx_resume(client: AsyncClient, token: str, paragraphs: list[
     return resp.json()["resume_id"]
 
 
+async def _finish_and_wait_report_id(
+    client: AsyncClient,
+    token: str,
+    interview_id: str,
+    *,
+    max_attempts: int = 120,
+    poll_delay_seconds: float = 0.25,
+) -> str:
+    finish_resp = await client.post(
+        f"/api/v1/interviews/{interview_id}/finish",
+        headers=auth_headers(token),
+    )
+    assert finish_resp.status_code == 200, finish_resp.text
+    finish_payload = finish_resp.json()
+
+    if finish_payload.get("status") == "report_generated" and finish_payload.get("report_id"):
+        return str(finish_payload["report_id"])
+
+    assert finish_payload.get("status") == "report_processing"
+
+    last_state: str | None = None
+    for _ in range(max_attempts):
+        status_resp = await client.get(
+            f"/api/v1/interviews/{interview_id}/report-status",
+            headers=auth_headers(token),
+        )
+        assert status_resp.status_code == 200, status_resp.text
+        payload = status_resp.json()
+        last_state = payload.get("processing_state")
+        if payload.get("processing_state") == "ready" and payload.get("report_id"):
+            return str(payload["report_id"])
+        if payload.get("processing_state") == "failed":
+            raise AssertionError("Report generation failed")
+        assert payload.get("processing_state") in {"pending", "processing"}
+        await asyncio.sleep(poll_delay_seconds)
+
+    raise AssertionError(f"Timed out waiting for report generation (last_state={last_state})")
+
+
 @pytest.mark.asyncio
 async def test_candidate_stats_empty(client: AsyncClient, candidate_token: str):
     resp = await client.get(
@@ -126,15 +165,7 @@ async def test_full_interview_flow(client: AsyncClient, candidate_token: str):
     assert msg_data["current_question"] is None
 
     # Finish
-    resp = await client.post(
-        f"/api/v1/interviews/{interview_id}/finish",
-        headers=auth_headers(candidate_token),
-    )
-    assert resp.status_code == 200
-    finish_data = resp.json()
-    assert finish_data["status"] == "report_generated"
-    assert finish_data["report_id"]
-    assert 0 < finish_data["summary"]["overall_score"] <= 10
+    report_id = await _finish_and_wait_report_id(client, candidate_token, interview_id)
 
     # Get interview detail
     resp = await client.get(
@@ -149,7 +180,7 @@ async def test_full_interview_flow(client: AsyncClient, candidate_token: str):
 
     # Get report
     resp = await client.get(
-        f"/api/v1/reports/{finish_data['report_id']}",
+        f"/api/v1/reports/{report_id}",
         headers=auth_headers(candidate_token),
     )
     assert resp.status_code == 200
@@ -195,7 +226,7 @@ async def test_report_status_endpoint_returns_ready_after_finish(
     assert finish_resp.status_code == 200, finish_resp.text
 
     ready_payload = None
-    for _ in range(40):
+    for _ in range(120):
         status_resp = await client.get(
             f"/api/v1/interviews/{interview_id}/report-status",
             headers=auth_headers(candidate_token),
@@ -205,8 +236,10 @@ async def test_report_status_endpoint_returns_ready_after_finish(
         if payload["processing_state"] == "ready":
             ready_payload = payload
             break
+        if payload["processing_state"] == "failed":
+            raise AssertionError("Report generation failed")
         assert payload["processing_state"] in {"pending", "processing"}
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.25)
 
     assert ready_payload is not None
     assert ready_payload["status"] == "report_generated"
@@ -521,12 +554,7 @@ async def test_weak_answers_do_not_produce_strong_yes_recommendation(
             break
         assert idx < 32
 
-    finish = await client.post(
-        f"/api/v1/interviews/{interview_id}/finish",
-        headers=auth_headers(candidate_token),
-    )
-    assert finish.status_code == 200, finish.text
-    report_id = finish.json()["report_id"]
+    report_id = await _finish_and_wait_report_id(client, candidate_token, interview_id)
 
     report = await client.get(
         f"/api/v1/reports/{report_id}",

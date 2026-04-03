@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.assessor import AssessmentResult, assessor
+from app.ai.assessor import MockAssessor
 from app.ai.competencies import build_interview_plan
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
@@ -197,6 +198,8 @@ _ROLE_MIN_QUESTION_FLOOR = {
 }
 _ADAPTIVE_MIN_QUESTIONS_FLOOR = 10
 _ADAPTIVE_EXTENSION_STEP = 4
+_SYNC_REPORT_GENERATION_TIMEOUT_SECONDS = 8.0
+_ASSESSMENT_TIMEOUT_SECONDS = 25.0
 _MEMORY_ACTION_MARKERS = (
     "использ",
     "настро",
@@ -906,6 +909,46 @@ async def _get_next_question_with_dev_fallback(ctx: InterviewContext) -> str:
         raise RuntimeError("AI interviewer request failed") from exc
 
 
+async def _assess_with_dev_fallback(
+    *,
+    target_role: str,
+    message_history: list[dict],
+    message_timestamps: list[dict] | None,
+    behavioral_signals: dict | None,
+    language: str,
+    interview_meta: dict | None,
+) -> AssessmentResult:
+    try:
+        return await asyncio.wait_for(
+            assessor.assess(
+                target_role=target_role,
+                message_history=message_history,
+                message_timestamps=message_timestamps,
+                behavioral_signals=behavioral_signals,
+                language=language,
+                interview_meta=interview_meta,
+            ),
+            timeout=_ASSESSMENT_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        if settings.is_local_or_test:
+            logger.exception(
+                "Assessment generation failed in local/test mode; using deterministic fallback",
+            )
+            try:
+                return await MockAssessor().assess(
+                    target_role=target_role,
+                    message_history=message_history,
+                    message_timestamps=message_timestamps,
+                    behavioral_signals=behavioral_signals,
+                    language=language,
+                    interview_meta=interview_meta,
+                )
+            except Exception:
+                logger.exception("Deterministic assessor fallback also failed")
+        raise RuntimeError("AI assessor request failed") from exc
+
+
 def _resolve_next_topic_index(
     *,
     topic_plan: list[dict],
@@ -1574,7 +1617,10 @@ async def finish_interview(
     await db.refresh(interview)
 
     try:
-        report = await _ensure_report_generated(db, interview, candidate)
+        report = await asyncio.wait_for(
+            _ensure_report_generated(db, interview, candidate),
+            timeout=_SYNC_REPORT_GENERATION_TIMEOUT_SECONDS,
+        )
         return FinishInterviewResponse(
             interview_id=interview.id,
             status="report_generated",
@@ -1584,6 +1630,20 @@ async def finish_interview(
                 hiring_recommendation=report.hiring_recommendation,
                 interview_summary=report.interview_summary,
             ),
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Synchronous report generation timed out for interview %s, switching to async processing",
+            interview.id,
+        )
+        interview.status = "report_processing"
+        await db.commit()
+        _schedule_report_generation(interview.id)
+        return FinishInterviewResponse(
+            interview_id=interview.id,
+            status="report_processing",
+            report_id=None,
+            summary=None,
         )
     except Exception:
         logger.exception("Initial report generation failed for interview %s, switching to async processing", interview.id)
@@ -1612,7 +1672,7 @@ async def _ensure_report_generated(
         return existing_report
 
     messages = await _get_messages(db, interview.id)
-    result: AssessmentResult = await assessor.assess(
+    result: AssessmentResult = await _assess_with_dev_fallback(
         target_role=interview.target_role,
         message_history=_to_history(messages),
         message_timestamps=_to_timestamps(messages),
