@@ -43,11 +43,13 @@ from app.services.interview_service import (
     MaxQuestionsNotReachedError,
     MaxQuestionsReachedError,
     NoActiveResumeError,
+    ReportRetryNotAllowedError,
     add_candidate_message,
     finish_interview,
     get_interview_detail,
     get_interview_report_status,
     list_interviews,
+    retry_interview_report_generation,
     save_behavioral_signals,
     save_interview_recording,
     start_interview,
@@ -288,3 +290,21 @@ async def get_report_status(
         return await get_interview_report_status(db, candidate, interview_id)
     except InterviewNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
+
+
+@router.post(
+    "/{interview_id}/report-retry",
+    response_model=InterviewReportStatusResponse,
+    summary="Retry report generation for a completed or failed interview",
+)
+async def retry_report(
+    interview_id: uuid.UUID,
+    candidate: Candidate = Depends(_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await retry_interview_report_generation(db, candidate, interview_id)
+    except InterviewNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
+    except ReportRetryNotAllowedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))

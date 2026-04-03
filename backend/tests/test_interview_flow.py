@@ -254,6 +254,69 @@ async def test_report_status_endpoint_returns_ready_after_finish(
 
 
 @pytest.mark.asyncio
+async def test_report_retry_requires_completed_interview(
+    client: AsyncClient,
+    candidate_token: str,
+):
+    await _upload_resume(client, candidate_token)
+
+    start_resp = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "backend_engineer"},
+    )
+    assert start_resp.status_code == 201, start_resp.text
+    interview_id = start_resp.json()["interview_id"]
+
+    retry_resp = await client.post(
+        f"/api/v1/interviews/{interview_id}/report-retry",
+        headers=auth_headers(candidate_token),
+    )
+    assert retry_resp.status_code == 409, retry_resp.text
+
+
+@pytest.mark.asyncio
+async def test_report_retry_returns_ready_when_report_already_exists(
+    client: AsyncClient,
+    candidate_token: str,
+):
+    await _upload_resume(client, candidate_token)
+
+    start_resp = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "backend_engineer"},
+    )
+    assert start_resp.status_code == 201, start_resp.text
+    interview_id = start_resp.json()["interview_id"]
+
+    answer = (
+        "Я проектировал API, оптимизировал запросы, настраивал метрики и работал с PostgreSQL "
+        "в production под высокой нагрузкой."
+    )
+    while True:
+        msg_resp = await client.post(
+            f"/api/v1/interviews/{interview_id}/message",
+            headers=auth_headers(candidate_token),
+            json={"message": answer},
+        )
+        assert msg_resp.status_code == 200, msg_resp.text
+        if msg_resp.json()["current_question"] is None:
+            break
+
+    report_id = await _finish_and_wait_report_id(client, candidate_token, interview_id)
+
+    retry_resp = await client.post(
+        f"/api/v1/interviews/{interview_id}/report-retry",
+        headers=auth_headers(candidate_token),
+    )
+    assert retry_resp.status_code == 200, retry_resp.text
+    payload = retry_resp.json()
+    assert payload["processing_state"] == "ready"
+    assert payload["report_id"] == report_id
+
+
+@pytest.mark.asyncio
 async def test_dynamic_question_budget_scales_for_rich_resume(
     client: AsyncClient,
     candidate_token: str,

@@ -50,6 +50,7 @@ export default function InterviewPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const [reportRetrying, setReportRetrying] = useState(false);
   const [waitingForReport, setWaitingForReport] = useState(false);
   const [error, setError] = useState("");
   const [answerMode, setAnswerMode] = useState<"text" | "voice">("text");
@@ -394,6 +395,30 @@ export default function InterviewPage() {
     }
   }
 
+  async function handleRetryReport() {
+    if (!id || reportRetrying || finishing) return;
+    setReportRetrying(true);
+    setWaitingForReport(true);
+    setError("");
+    try {
+      const retryStatus = await interviewApi.retryReport(id);
+      if (retryStatus.processing_state === "ready" && retryStatus.report_id) {
+        router.push(`/candidate/reports/${retryStatus.report_id}`);
+        return;
+      }
+      if (retryStatus.processing_state === "failed") {
+        throw new Error(getReportFailureMessage(retryStatus));
+      }
+      const reportId = await waitForReport(id);
+      router.push(`/candidate/reports/${reportId}`);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : reportGenerationFailedMessage);
+    } finally {
+      setWaitingForReport(false);
+      setReportRetrying(false);
+    }
+  }
+
   if (authLoading || !interview) {
     if (error) {
       return (
@@ -624,17 +649,26 @@ export default function InterviewPage() {
             )}
             <button
               onClick={handleFinish}
-              disabled={finishing}
+              disabled={finishing || reportRetrying}
               className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold px-8 py-2.5 rounded-lg transition-colors"
             >
               {finishing ? (waitingForReport ? t("waiting") : t("generating")) : t("finish")}
             </button>
+            {error && (
+              <button
+                onClick={handleRetryReport}
+                disabled={finishing || reportRetrying}
+                className="mt-3 border border-slate-600 text-slate-200 hover:border-slate-500 hover:text-white disabled:opacity-50 px-6 py-2 rounded-lg text-sm transition-colors"
+              >
+                {reportRetrying ? t("retryingReport") : t("retryReport")}
+              </button>
+            )}
           </div>
         </div>
       )}
 
       {/* Full-screen finishing overlay */}
-      {finishing && (
+      {(finishing || reportRetrying) && (
         <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm flex flex-col items-center justify-center z-50">
           <div className="flex flex-col items-center gap-6 text-center px-8">
             <div className="relative w-16 h-16">
@@ -643,10 +677,10 @@ export default function InterviewPage() {
             </div>
             <div>
               <p className="text-white font-semibold text-lg">
-                {waitingForReport ? t("analyzing") : t("finishing")}
+                {waitingForReport || reportRetrying ? t("analyzing") : t("finishing")}
               </p>
               <p className="text-slate-400 text-sm mt-1">
-                {waitingForReport
+                {waitingForReport || reportRetrying
                   ? t("analysisDuration")
                   : t("savingResponses")}
               </p>

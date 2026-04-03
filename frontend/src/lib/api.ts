@@ -390,6 +390,11 @@ export const interviewApi = {
   getReportStatus: (id: string) =>
     request<InterviewReportStatusResponse>(`/api/v1/interviews/${id}/report-status`),
 
+  retryReport: (id: string) =>
+    request<InterviewReportStatusResponse>(`/api/v1/interviews/${id}/report-retry`, {
+      method: "POST",
+    }),
+
   getDetail: (id: string) =>
     request<InterviewDetail>(`/api/v1/interviews/${id}`),
 

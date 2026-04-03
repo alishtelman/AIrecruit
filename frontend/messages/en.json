@@ -905,6 +905,8 @@
     "savingResponses": "Saving your responses...",
     "analysisDuration": "AI is generating your assessment report. This usually takes 20-40 seconds.",
     "reportDelayed": "Report generation is taking longer than usual. Refresh this page in a few moments.",
+    "retryReport": "Retry report generation",
+    "retryingReport": "Retrying generation...",
     "sendFailed": "Failed to send message",
     "recordingUploadFailed": "Recording upload failed",
     "finishFailed": "Failed to finish interview",

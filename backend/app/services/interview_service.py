@@ -78,6 +78,10 @@ class MaxQuestionsNotReachedError(Exception):
     """Cannot finish before all questions have been asked."""
 
 
+class ReportRetryNotAllowedError(Exception):
+    """Manual retry is not allowed for this interview state."""
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -201,7 +205,7 @@ _ADAPTIVE_EXTENSION_STEP = 4
 _SYNC_REPORT_GENERATION_TIMEOUT_SECONDS = 8.0
 _ASSESSMENT_TIMEOUT_SECONDS = 25.0
 _REPORT_DIAGNOSTIC_STATUSES = {"pending", "processing", "ready", "failed"}
-_REPORT_ATTEMPT_PHASES = {"finish_sync", "async_worker"}
+_REPORT_ATTEMPT_PHASES = {"finish_sync", "async_worker", "manual_retry"}
 _MEMORY_ACTION_MARKERS = (
     "использ",
     "настро",
@@ -1968,6 +1972,46 @@ async def get_interview_report_status(
         summary=None,
         failure_reason=failure_reason,
         diagnostics=diagnostics,
+    )
+
+
+async def retry_interview_report_generation(
+    db: AsyncSession,
+    candidate: Candidate,
+    interview_id: uuid.UUID,
+) -> InterviewReportStatusResponse:
+    interview = await _get_interview(db, interview_id, candidate.id)
+
+    report = await db.scalar(
+        select(AssessmentReport).where(AssessmentReport.interview_id == interview.id)
+    )
+    if report:
+        return await get_interview_report_status(db, candidate, interview.id)
+
+    if interview.status in {"created", "in_progress"}:
+        raise ReportRetryNotAllowedError(
+            "Interview is still in progress. Complete all questions before retrying report generation."
+        )
+    if interview.question_count < interview.max_questions:
+        raise ReportRetryNotAllowedError(
+            "Interview is incomplete. Finish the interview before retrying report generation."
+        )
+    if interview.status not in {"failed", "completed", "report_processing"}:
+        raise ReportRetryNotAllowedError("Report retry is not available for this interview state.")
+
+    interview.status = "report_processing"
+    _update_report_diagnostics(interview, phase="manual_retry", status="processing")
+    await db.commit()
+    _schedule_report_generation(interview.id)
+
+    return InterviewReportStatusResponse(
+        interview_id=interview.id,
+        status=interview.status,
+        processing_state="processing",
+        report_id=None,
+        summary=None,
+        failure_reason=None,
+        diagnostics=_read_report_diagnostics(interview),
     )
 
 
