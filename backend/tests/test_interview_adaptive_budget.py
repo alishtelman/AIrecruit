@@ -1,10 +1,14 @@
 from app.services.interview_service import (
+    _get_next_question_with_dev_fallback,
     _adapt_question_budget,
     _append_candidate_memory,
     _estimate_dynamic_question_budget,
     _resolve_next_topic_index,
     _topic_guard_decision,
 )
+from app.ai.interviewer import InterviewContext
+
+import pytest
 
 
 def test_adapt_question_budget_extends_for_strong_signal_near_limit():
@@ -146,3 +150,45 @@ def test_resolve_next_topic_index_skips_similar_signature_for_claim_unverified_c
     )
 
     assert resolved == 2
+
+
+class _FailingInterviewer:
+    async def get_next_question(self, _ctx: InterviewContext) -> str:
+        raise RuntimeError("provider failed")
+
+
+class _FallbackInterviewer:
+    async def get_next_question(self, _ctx: InterviewContext) -> str:
+        return "Fallback question?"
+
+
+@pytest.mark.asyncio
+async def test_get_next_question_with_dev_fallback_uses_mock_in_local_mode(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app.services import interview_service as interview_service_module
+
+    monkeypatch.setattr(interview_service_module, "interviewer", _FailingInterviewer())
+    monkeypatch.setattr(interview_service_module, "MockInterviewer", _FallbackInterviewer)
+    monkeypatch.setattr(interview_service_module.settings, "APP_ENV", "development")
+
+    question = await _get_next_question_with_dev_fallback(
+        InterviewContext(target_role="backend_engineer", question_number=1, language="ru")
+    )
+
+    assert question == "Fallback question?"
+
+
+@pytest.mark.asyncio
+async def test_get_next_question_with_dev_fallback_raises_in_production_mode(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app.services import interview_service as interview_service_module
+
+    monkeypatch.setattr(interview_service_module, "interviewer", _FailingInterviewer())
+    monkeypatch.setattr(interview_service_module.settings, "APP_ENV", "production")
+
+    with pytest.raises(RuntimeError, match="AI interviewer request failed"):
+        await _get_next_question_with_dev_fallback(
+            InterviewContext(target_role="backend_engineer", question_number=1, language="ru")
+        )

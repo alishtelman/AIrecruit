@@ -22,6 +22,7 @@ from app.core.database import AsyncSessionLocal
 from app.ai.interviewer import (
     MAX_QUESTIONS,
     InterviewContext,
+    MockInterviewer,
     classify_answer,
     extract_mentioned_technologies,
     interviewer,
@@ -890,6 +891,21 @@ def _topic_signature(topic: dict | None) -> tuple[str, str]:
     return verification_target, primary_competency
 
 
+async def _get_next_question_with_dev_fallback(ctx: InterviewContext) -> str:
+    try:
+        return await interviewer.get_next_question(ctx)
+    except Exception as exc:
+        if settings.is_local_or_test:
+            logger.exception(
+                "Interviewer generation failed in local/test mode; using deterministic fallback",
+            )
+            try:
+                return await MockInterviewer().get_next_question(ctx)
+            except Exception:
+                logger.exception("Deterministic interviewer fallback also failed")
+        raise RuntimeError("AI interviewer request failed") from exc
+
+
 def _resolve_next_topic_index(
     *,
     topic_plan: list[dict],
@@ -1005,7 +1021,7 @@ async def start_interview(
         verification_target=topic_plan[0].get("verification_target") if topic_plan else None,
         candidate_memory=[],
     )
-    first_question = await interviewer.get_next_question(ctx)
+    first_question = await _get_next_question_with_dev_fallback(ctx)
 
     db.add(InterviewMessage(
         id=uuid.uuid4(),
@@ -1416,7 +1432,7 @@ async def add_candidate_message(
                 diversification_hint=diversification_hint,
                 candidate_memory=candidate_memory,
             )
-            next_q = await interviewer.get_next_question(ctx)
+            next_q = await _get_next_question_with_dev_fallback(ctx)
 
         # ── Update DB state ─────────────────────────────────────────────────
         while len(topic_signals) <= current_topic_index:
