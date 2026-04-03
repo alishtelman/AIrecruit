@@ -52,6 +52,8 @@ export default function InterviewPage() {
   const [finishing, setFinishing] = useState(false);
   const [reportRetrying, setReportRetrying] = useState(false);
   const [waitingForReport, setWaitingForReport] = useState(false);
+  const [reportStatus, setReportStatus] = useState<InterviewReportStatusResponse | null>(null);
+  const [retryCountdownSeconds, setRetryCountdownSeconds] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [answerMode, setAnswerMode] = useState<"text" | "voice">("text");
   const [latestTranscript, setLatestTranscript] = useState("");
@@ -248,12 +250,35 @@ export default function InterviewPage() {
     return reason || reportGenerationFailedMessage;
   }
 
+  useEffect(() => {
+    const nextRetryAtRaw = reportStatus?.diagnostics?.next_retry_at;
+    if (!waitingForReport || !nextRetryAtRaw) {
+      setRetryCountdownSeconds(null);
+      return;
+    }
+
+    const nextRetryAtMs = Date.parse(nextRetryAtRaw);
+    if (Number.isNaN(nextRetryAtMs)) {
+      setRetryCountdownSeconds(null);
+      return;
+    }
+
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((nextRetryAtMs - Date.now()) / 1000));
+      setRetryCountdownSeconds(remaining);
+    };
+    tick();
+    const timerId = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timerId);
+  }, [waitingForReport, reportStatus?.diagnostics?.next_retry_at]);
+
   async function waitForReport(interviewId: string): Promise<string> {
     const deadline = Date.now() + REPORT_POLL_TIMEOUT_MS;
     let lastKnownFailure: string | null = null;
     while (Date.now() < deadline) {
       try {
         const status = await interviewApi.getReportStatus(interviewId);
+        setReportStatus(status);
         if (status.processing_state === "ready" && status.report_id) {
           return status.report_id;
         }
@@ -334,6 +359,7 @@ export default function InterviewPage() {
     stopRecording();
     setFinishing(true);
     setWaitingForReport(false);
+    setReportStatus(null);
     setError("");
     try {
       let recordingNotice: string | null = null;
@@ -399,9 +425,11 @@ export default function InterviewPage() {
     if (!id || reportRetrying || finishing) return;
     setReportRetrying(true);
     setWaitingForReport(true);
+    setReportStatus(null);
     setError("");
     try {
       const retryStatus = await interviewApi.retryReport(id);
+      setReportStatus(retryStatus);
       if (retryStatus.processing_state === "ready" && retryStatus.report_id) {
         router.push(`/candidate/reports/${retryStatus.report_id}`);
         return;
@@ -445,6 +473,9 @@ export default function InterviewPage() {
   const roleLabel = startT(`roles.${interview.target_role}.label`);
   const progress = Math.round((questionCount / maxQuestions) * 100);
   const voiceMode = answerMode === "voice";
+  const reportAttempts = reportStatus?.diagnostics?.attempt_count ?? 0;
+  const reportMaxAttempts = reportStatus?.diagnostics?.max_attempts ?? 0;
+  const reportLastError = reportStatus?.diagnostics?.last_error;
   const uploadStatusLabel =
     recordingUploadState === "uploading"
       ? t("uploadStatus.uploading")
@@ -645,6 +676,17 @@ export default function InterviewPage() {
             {uploadStatusLabel && (
               <div className={`mb-4 text-sm ${recordingUploadState === "failed" ? "text-red-400" : "text-slate-300"}`}>
                 {uploadStatusLabel}
+              </div>
+            )}
+            {(waitingForReport || reportRetrying) && reportAttempts > 0 && (
+              <div className="mb-3 text-xs text-slate-300 space-y-1">
+                <p>{t("reportAttempts", {count: reportAttempts, max: reportMaxAttempts || reportAttempts})}</p>
+                {reportLastError && (
+                  <p className="text-yellow-300">{t("lastReportError", {reason: reportLastError})}</p>
+                )}
+                {retryCountdownSeconds !== null && retryCountdownSeconds > 0 && (
+                  <p>{t("nextRetryIn", {seconds: retryCountdownSeconds})}</p>
+                )}
               </div>
             )}
             <button

@@ -294,11 +294,13 @@ export interface FinishInterviewResponse {
 
 export interface ReportProcessingDiagnostics {
   attempt_count: number;
+  max_attempts: number;
   last_phase: string | null;
   last_status: "pending" | "processing" | "ready" | "failed" | null;
   last_started_at: string | null;
   last_completed_at: string | null;
   last_transition_at: string | null;
+  next_retry_at: string | null;
   last_error: string | null;
   last_error_at: string | null;
 }

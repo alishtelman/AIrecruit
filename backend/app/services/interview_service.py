@@ -8,7 +8,7 @@ It is the authoritative source of truth — no need to re-count messages.
 import asyncio
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import re
 from typing import Any
 
@@ -204,6 +204,10 @@ _ADAPTIVE_MIN_QUESTIONS_FLOOR = 10
 _ADAPTIVE_EXTENSION_STEP = 4
 _SYNC_REPORT_GENERATION_TIMEOUT_SECONDS = 8.0
 _ASSESSMENT_TIMEOUT_SECONDS = 25.0
+_REPORT_MAX_AUTO_RETRIES = 3
+_REPORT_RETRY_BASE_BACKOFF_SECONDS = 2
+_REPORT_RETRY_MAX_BACKOFF_SECONDS = 12
+_REPORT_LOCK_STALE_SECONDS = 300
 _REPORT_DIAGNOSTIC_STATUSES = {"pending", "processing", "ready", "failed"}
 _REPORT_ATTEMPT_PHASES = {"finish_sync", "async_worker", "manual_retry"}
 _MEMORY_ACTION_MARKERS = (
@@ -249,26 +253,53 @@ def _safe_int(value, default: int = 0) -> int:
         return default
 
 
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _compute_report_retry_backoff_seconds(attempt_number: int) -> int:
+    if attempt_number <= 0:
+        return _REPORT_RETRY_BASE_BACKOFF_SECONDS
+    return min(
+        _REPORT_RETRY_BASE_BACKOFF_SECONDS * (2 ** (attempt_number - 1)),
+        _REPORT_RETRY_MAX_BACKOFF_SECONDS,
+    )
+
+
 def _next_report_diagnostics(
     current: dict | None,
     *,
     phase: str,
     status: str,
     error: str | None = None,
+    next_retry_at: str | None = None,
 ) -> dict:
     now_iso = datetime.utcnow().isoformat()
     diagnostics = dict(current or {})
     increment_attempt = (
         status == "processing"
-        and phase in _REPORT_ATTEMPT_PHASES
+        and (
+            phase in _REPORT_ATTEMPT_PHASES
+            or phase.startswith("async_worker_attempt_")
+        )
         and diagnostics.get("last_phase") != phase
     )
     if increment_attempt:
         diagnostics["attempt_count"] = _safe_int(diagnostics.get("attempt_count"), 0) + 1
         diagnostics["last_started_at"] = now_iso
+    diagnostics["max_attempts"] = _REPORT_MAX_AUTO_RETRIES
     diagnostics["last_phase"] = phase
     diagnostics["last_status"] = status
     diagnostics["last_transition_at"] = now_iso
+    diagnostics["next_retry_at"] = next_retry_at
     if error:
         diagnostics["last_error"] = str(error)[:600]
         diagnostics["last_error_at"] = now_iso
@@ -285,6 +316,7 @@ def _update_report_diagnostics(
     phase: str,
     status: str,
     error: str | None = None,
+    next_retry_at: str | None = None,
 ) -> None:
     state = dict(interview.interview_state or {})
     current_diag = state.get("report_diagnostics")
@@ -295,6 +327,7 @@ def _update_report_diagnostics(
         phase=phase,
         status=status,
         error=error,
+        next_retry_at=next_retry_at,
     )
     interview.interview_state = state
 
@@ -309,14 +342,75 @@ def _read_report_diagnostics(interview: Interview) -> dict[str, Any] | None:
         last_status = None
     return {
         "attempt_count": _safe_int(raw.get("attempt_count"), 0),
+        "max_attempts": _safe_int(raw.get("max_attempts"), _REPORT_MAX_AUTO_RETRIES),
         "last_phase": raw.get("last_phase"),
         "last_status": last_status,
         "last_started_at": raw.get("last_started_at"),
         "last_completed_at": raw.get("last_completed_at"),
         "last_transition_at": raw.get("last_transition_at"),
+        "next_retry_at": raw.get("next_retry_at"),
         "last_error": raw.get("last_error"),
         "last_error_at": raw.get("last_error_at"),
     }
+
+
+async def _try_acquire_report_generation_lock(
+    db: AsyncSession,
+    interview_id: uuid.UUID,
+    *,
+    owner: str,
+) -> bool:
+    interview = await db.scalar(
+        select(Interview).where(Interview.id == interview_id).with_for_update()
+    )
+    if not interview:
+        await db.rollback()
+        return False
+
+    now = datetime.utcnow()
+    state = dict(interview.interview_state or {})
+    lock_payload = state.get("report_generation_lock")
+    if isinstance(lock_payload, dict):
+        lock_owner = str(lock_payload.get("owner") or "")
+        locked_at = _parse_iso_datetime(lock_payload.get("locked_at"))
+        lock_age_seconds = (
+            (now - locked_at).total_seconds() if locked_at else _REPORT_LOCK_STALE_SECONDS + 1
+        )
+        if lock_owner and lock_owner != owner and lock_age_seconds < _REPORT_LOCK_STALE_SECONDS:
+            await db.rollback()
+            return False
+
+    state["report_generation_lock"] = {
+        "owner": owner,
+        "locked_at": now.isoformat(),
+    }
+    interview.interview_state = state
+    await db.commit()
+    return True
+
+
+async def _release_report_generation_lock(
+    db: AsyncSession,
+    interview_id: uuid.UUID,
+    *,
+    owner: str,
+) -> None:
+    interview = await db.scalar(
+        select(Interview).where(Interview.id == interview_id).with_for_update()
+    )
+    if not interview:
+        await db.rollback()
+        return
+
+    state = dict(interview.interview_state or {})
+    lock_payload = state.get("report_generation_lock")
+    if isinstance(lock_payload, dict) and str(lock_payload.get("owner") or "") == owner:
+        state.pop("report_generation_lock", None)
+        interview.interview_state = state
+        await db.commit()
+        return
+
+    await db.rollback()
 
 
 def _normalize_policy_mode(value: str | None) -> str:
@@ -1869,40 +1963,111 @@ def _schedule_report_generation(interview_id: uuid.UUID) -> None:
 
 
 async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
+    lock_owner = str(uuid.uuid4())
+    lock_acquired = False
     try:
-        async with AsyncSessionLocal() as session:
-            interview = await session.scalar(select(Interview).where(Interview.id == interview_id))
-            if not interview:
-                return
-
-            existing_report = await session.scalar(
-                select(AssessmentReport).where(AssessmentReport.interview_id == interview.id)
+        async with AsyncSessionLocal() as lock_session:
+            lock_acquired = await _try_acquire_report_generation_lock(
+                lock_session,
+                interview_id,
+                owner=lock_owner,
             )
-            if existing_report:
-                if interview.status != "report_generated":
-                    interview.status = "report_generated"
-                _update_report_diagnostics(interview, phase="async_existing_report", status="ready")
-                await session.commit()
-                return
+        if not lock_acquired:
+            logger.debug(
+                "Skipped async report generation for interview %s because lock is already held",
+                interview_id,
+            )
+            return
 
-            candidate = await session.scalar(select(Candidate).where(Candidate.id == interview.candidate_id))
-            if not candidate:
-                interview.status = "failed"
-                _update_report_diagnostics(
-                    interview,
-                    phase="async_load_candidate",
-                    status="failed",
-                    error=f"Candidate {interview.candidate_id} not found",
+        for attempt_number in range(1, _REPORT_MAX_AUTO_RETRIES + 1):
+            phase = f"async_worker_attempt_{attempt_number}"
+            try:
+                async with AsyncSessionLocal() as session:
+                    interview = await session.scalar(select(Interview).where(Interview.id == interview_id))
+                    if not interview:
+                        return
+
+                    existing_report = await session.scalar(
+                        select(AssessmentReport).where(AssessmentReport.interview_id == interview.id)
+                    )
+                    if existing_report:
+                        if interview.status != "report_generated":
+                            interview.status = "report_generated"
+                        _update_report_diagnostics(
+                            interview,
+                            phase="async_existing_report",
+                            status="ready",
+                        )
+                        await session.commit()
+                        return
+
+                    candidate = await session.scalar(select(Candidate).where(Candidate.id == interview.candidate_id))
+                    if not candidate:
+                        interview.status = "failed"
+                        _update_report_diagnostics(
+                            interview,
+                            phase=phase,
+                            status="failed",
+                            error=f"Candidate {interview.candidate_id} not found",
+                        )
+                        await session.commit()
+                        return
+
+                    interview.status = "report_processing"
+                    _update_report_diagnostics(
+                        interview,
+                        phase=phase,
+                        status="processing",
+                    )
+                    await session.commit()
+                    await _ensure_report_generated(session, interview, candidate)
+                    return
+            except Exception as exc:
+                is_last_attempt = attempt_number >= _REPORT_MAX_AUTO_RETRIES
+                if is_last_attempt:
+                    logger.exception(
+                        "Async report generation exhausted retries for interview %s",
+                        interview_id,
+                    )
+                    async with AsyncSessionLocal() as session:
+                        interview = await session.scalar(select(Interview).where(Interview.id == interview_id))
+                        if interview and interview.status != "report_generated":
+                            interview.status = "failed"
+                            _update_report_diagnostics(
+                                interview,
+                                phase=phase,
+                                status="failed",
+                                error=str(exc),
+                            )
+                            await session.commit()
+                    return
+
+                backoff_seconds = _compute_report_retry_backoff_seconds(attempt_number)
+                next_retry_at_iso = (
+                    datetime.utcnow() + timedelta(seconds=backoff_seconds)
+                ).isoformat()
+                logger.warning(
+                    "Async report generation attempt %s failed for interview %s; retry in %ss",
+                    attempt_number,
+                    interview_id,
+                    backoff_seconds,
                 )
-                await session.commit()
-                return
-
-            interview.status = "report_processing"
-            _update_report_diagnostics(interview, phase="async_worker", status="processing")
-            await session.commit()
-            await _ensure_report_generated(session, interview, candidate)
-    except Exception as exc:
-        logger.exception("Async report generation failed for interview %s", interview_id)
+                async with AsyncSessionLocal() as session:
+                    interview = await session.scalar(select(Interview).where(Interview.id == interview_id))
+                    if interview and interview.status != "report_generated":
+                        interview.status = "report_processing"
+                        _update_report_diagnostics(
+                            interview,
+                            phase=phase,
+                            status="processing",
+                            error=str(exc),
+                            next_retry_at=next_retry_at_iso,
+                        )
+                        await session.commit()
+                await asyncio.sleep(backoff_seconds)
+                continue
+    except Exception:
+        logger.exception("Async report generation crashed for interview %s", interview_id)
         async with AsyncSessionLocal() as session:
             interview = await session.scalar(select(Interview).where(Interview.id == interview_id))
             if interview and interview.status != "report_generated":
@@ -1911,10 +2076,17 @@ async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
                     interview,
                     phase="async_worker",
                     status="failed",
-                    error=str(exc),
+                    error="Unexpected async worker crash",
                 )
                 await session.commit()
     finally:
+        if lock_acquired:
+            async with AsyncSessionLocal() as lock_session:
+                await _release_report_generation_lock(
+                    lock_session,
+                    interview_id,
+                    owner=lock_owner,
+                )
         _REPORT_GENERATION_TASKS.discard(interview_id)
 
 

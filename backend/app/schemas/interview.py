@@ -68,11 +68,13 @@ class FinishInterviewResponse(BaseModel):
 
 class ReportProcessingDiagnostics(BaseModel):
     attempt_count: int = 0
+    max_attempts: int = 0
     last_phase: str | None = None
     last_status: Literal["pending", "processing", "ready", "failed"] | None = None
     last_started_at: str | None = None
     last_completed_at: str | None = None
     last_transition_at: str | None = None
+    next_retry_at: str | None = None
     last_error: str | None = None
     last_error_at: str | None = None
 

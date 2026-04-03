@@ -1,11 +1,15 @@
 """Tests for the full interview flow: upload resume → start → message → finish."""
 import asyncio
 import io
+import json
 
 import pytest
 from docx import Document
 from httpx import AsyncClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.core.config import settings
 from app.services.interview_service import _answer_relevance, _is_cross_topic_reuse
 from tests.conftest import auth_headers
 
@@ -86,6 +90,66 @@ async def _finish_and_wait_report_id(
         await asyncio.sleep(poll_delay_seconds)
 
     raise AssertionError(f"Timed out waiting for report generation (last_state={last_state})")
+
+
+async def _wait_for_ready_report_id(
+    client: AsyncClient,
+    token: str,
+    interview_id: str,
+    *,
+    max_attempts: int = 120,
+    poll_delay_seconds: float = 0.25,
+) -> str:
+    last_state: str | None = None
+    for _ in range(max_attempts):
+        status_resp = await client.get(
+            f"/api/v1/interviews/{interview_id}/report-status",
+            headers=auth_headers(token),
+        )
+        assert status_resp.status_code == 200, status_resp.text
+        payload = status_resp.json()
+        last_state = payload.get("processing_state")
+        if payload.get("processing_state") == "ready" and payload.get("report_id"):
+            return str(payload["report_id"])
+        if payload.get("processing_state") == "failed":
+            raise AssertionError(
+                f"Report generation failed: {payload.get('failure_reason') or 'unknown reason'}"
+            )
+        await asyncio.sleep(poll_delay_seconds)
+
+    raise AssertionError(f"Timed out waiting for report generation (last_state={last_state})")
+
+
+async def _force_report_status(
+    interview_id: str,
+    *,
+    status: str,
+    diagnostics: dict | None,
+) -> None:
+    state_payload = {"report_diagnostics": diagnostics} if diagnostics is not None else {}
+    engine = create_async_engine(settings.DATABASE_URL, future=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with session_factory() as session:
+            result = await session.execute(
+                text(
+                    """
+                    UPDATE interviews
+                    SET status = :status,
+                        interview_state = CAST(:state_json AS jsonb)
+                    WHERE id = CAST(:interview_id AS uuid)
+                    """
+                ),
+                {
+                    "status": status,
+                    "state_json": json.dumps(state_payload),
+                    "interview_id": interview_id,
+                },
+            )
+            assert result.rowcount == 1
+            await session.commit()
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -314,6 +378,142 @@ async def test_report_retry_returns_ready_when_report_already_exists(
     payload = retry_resp.json()
     assert payload["processing_state"] == "ready"
     assert payload["report_id"] == report_id
+
+
+@pytest.mark.asyncio
+async def test_report_status_transition_processing_failed_retry_ready(
+    client: AsyncClient,
+    candidate_token: str,
+):
+    await _upload_resume(client, candidate_token)
+
+    start_resp = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "backend_engineer"},
+    )
+    assert start_resp.status_code == 201, start_resp.text
+    interview_id = start_resp.json()["interview_id"]
+
+    answer = "Я проектировал backend API, оптимизировал SQL-запросы и работал с PostgreSQL."
+    while True:
+        msg_resp = await client.post(
+            f"/api/v1/interviews/{interview_id}/message",
+            headers=auth_headers(candidate_token),
+            json={"message": answer},
+        )
+        assert msg_resp.status_code == 200, msg_resp.text
+        if msg_resp.json()["current_question"] is None:
+            break
+
+    await _force_report_status(
+        interview_id,
+        status="report_processing",
+        diagnostics={
+            "attempt_count": 1,
+            "max_attempts": 3,
+            "last_phase": "async_worker_attempt_1",
+            "last_status": "processing",
+            "last_transition_at": "2026-01-01T00:00:00",
+        },
+    )
+    processing_status = await client.get(
+        f"/api/v1/interviews/{interview_id}/report-status",
+        headers=auth_headers(candidate_token),
+    )
+    assert processing_status.status_code == 200, processing_status.text
+    assert processing_status.json()["processing_state"] == "processing"
+
+    await _force_report_status(
+        interview_id,
+        status="failed",
+        diagnostics={
+            "attempt_count": 2,
+            "max_attempts": 3,
+            "last_phase": "async_worker_attempt_2",
+            "last_status": "failed",
+            "last_error": "synthetic provider failure",
+            "last_error_at": "2026-01-01T00:00:01",
+            "last_transition_at": "2026-01-01T00:00:01",
+        },
+    )
+    failed_status = await client.get(
+        f"/api/v1/interviews/{interview_id}/report-status",
+        headers=auth_headers(candidate_token),
+    )
+    assert failed_status.status_code == 200, failed_status.text
+    failed_payload = failed_status.json()
+    assert failed_payload["processing_state"] == "failed"
+    assert failed_payload.get("failure_reason")
+
+    retry_resp = await client.post(
+        f"/api/v1/interviews/{interview_id}/report-retry",
+        headers=auth_headers(candidate_token),
+    )
+    assert retry_resp.status_code == 200, retry_resp.text
+    assert retry_resp.json()["processing_state"] == "processing"
+
+    report_id = await _wait_for_ready_report_id(client, candidate_token, interview_id)
+    assert report_id
+
+
+@pytest.mark.asyncio
+async def test_concurrent_report_retry_requests_are_idempotent(
+    client: AsyncClient,
+    candidate_token: str,
+):
+    await _upload_resume(client, candidate_token)
+
+    start_resp = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "backend_engineer"},
+    )
+    assert start_resp.status_code == 201, start_resp.text
+    interview_id = start_resp.json()["interview_id"]
+
+    answer = "Я проектировал API, работал с индексацией PostgreSQL и мониторингом производительности."
+    while True:
+        msg_resp = await client.post(
+            f"/api/v1/interviews/{interview_id}/message",
+            headers=auth_headers(candidate_token),
+            json={"message": answer},
+        )
+        assert msg_resp.status_code == 200, msg_resp.text
+        if msg_resp.json()["current_question"] is None:
+            break
+
+    await _force_report_status(
+        interview_id,
+        status="failed",
+        diagnostics={
+            "attempt_count": 1,
+            "max_attempts": 3,
+            "last_phase": "async_worker_attempt_1",
+            "last_status": "failed",
+            "last_error": "synthetic failure for retry race test",
+            "last_error_at": "2026-01-01T00:00:01",
+            "last_transition_at": "2026-01-01T00:00:01",
+        },
+    )
+
+    retry_path = f"/api/v1/interviews/{interview_id}/report-retry"
+    retry_one, retry_two = await asyncio.gather(
+        client.post(retry_path, headers=auth_headers(candidate_token)),
+        client.post(retry_path, headers=auth_headers(candidate_token)),
+    )
+    assert retry_one.status_code == 200, retry_one.text
+    assert retry_two.status_code == 200, retry_two.text
+
+    attempts = [
+        retry_one.json().get("diagnostics", {}).get("attempt_count", 0),
+        retry_two.json().get("diagnostics", {}).get("attempt_count", 0),
+    ]
+    assert max(attempts) <= 2
+    assert min(attempts) >= 1
+
+    report_id = await _wait_for_ready_report_id(client, candidate_token, interview_id)
+    assert report_id
 
 
 @pytest.mark.asyncio
