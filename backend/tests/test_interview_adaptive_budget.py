@@ -2,6 +2,8 @@ from app.services.interview_service import (
     _adapt_question_budget,
     _append_candidate_memory,
     _estimate_dynamic_question_budget,
+    _resolve_next_topic_index,
+    _topic_guard_decision,
 )
 
 
@@ -103,3 +105,44 @@ def test_estimate_dynamic_question_budget_keeps_legacy_sparse_resume_behavior():
     assert initial == 8
     assert cap == 8
     assert min_questions == 9
+
+
+def test_topic_guard_requires_claim_probe_before_advancing():
+    must_probe, closure_reason = _topic_guard_decision(
+        claim_target="postgresql",
+        verified_skills=set(),
+        probed_claim_targets=set(),
+        can_probe_current_topic=True,
+    )
+
+    assert must_probe is True
+    assert closure_reason is None
+
+
+def test_topic_guard_closes_unverified_claim_when_probe_window_is_exhausted():
+    must_probe, closure_reason = _topic_guard_decision(
+        claim_target="postgresql",
+        verified_skills=set(),
+        probed_claim_targets={"postgresql"},
+        can_probe_current_topic=False,
+    )
+
+    assert must_probe is False
+    assert closure_reason == "claim_unverified_after_probe"
+
+
+def test_resolve_next_topic_index_skips_similar_signature_for_claim_unverified_closure():
+    topic_plan = [
+        {"verification_target": "postgresql", "competencies": ["Database Design & Optimization"]},
+        {"verification_target": "postgresql", "competencies": ["Database Design & Optimization"]},
+        {"verification_target": "kafka", "competencies": ["API Design & Protocols"]},
+    ]
+
+    resolved = _resolve_next_topic_index(
+        topic_plan=topic_plan,
+        current_topic_index=0,
+        default_next_index=1,
+        close_reason="claim_unverified_after_probe",
+    )
+
+    assert resolved == 2

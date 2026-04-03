@@ -791,7 +791,7 @@ def _build_diversification_hint(
             parts.append(f"If relevant, ground the question in {next_verification}.")
         if closed_reason in {"topic_mastered", "topic_saturated", "enough_partial_signal"}:
             parts.append("Treat the previous topic as sufficiently covered and move to a different dimension.")
-        elif closed_reason in {"reused_answer", "low_relevance_after_probe"}:
+        elif closed_reason in {"reused_answer", "low_relevance_after_probe", "claim_unverified_after_probe"}:
             parts.append("Ask from a clearly different angle so the candidate cannot reuse the previous answer.")
     else:
         if next_label:
@@ -802,9 +802,41 @@ def _build_diversification_hint(
             parts.append(f"Если уместно, заземли вопрос в опыте с {next_verification}.")
         if closed_reason in {"topic_mastered", "topic_saturated", "enough_partial_signal"}:
             parts.append("Считай предыдущую тему достаточно раскрытой и переходи к другому измерению опыта.")
-        elif closed_reason in {"reused_answer", "low_relevance_after_probe"}:
+        elif closed_reason in {"reused_answer", "low_relevance_after_probe", "claim_unverified_after_probe"}:
             parts.append("Задай вопрос с явно другого угла, чтобы кандидат не мог повторить прежний ответ.")
     return " ".join(parts) if parts else None
+
+
+def _topic_guard_decision(
+    *,
+    claim_target: str | None,
+    verified_skills: set[str],
+    probed_claim_targets: set[str],
+    can_probe_current_topic: bool,
+) -> tuple[bool, str | None]:
+    """Return (must_probe_claim, closure_reason_if_advancing).
+
+    Guard rule:
+    - Stay on the current topic until its planned claim target is either
+      verified, explicitly probed once, or explicitly closed by rule.
+    """
+    normalized_claim = str(claim_target or "").strip().lower()
+    if not normalized_claim:
+        return False, None
+
+    normalized_verified = {str(item).strip().lower() for item in verified_skills}
+    normalized_probed = {str(item).strip().lower() for item in probed_claim_targets}
+    unresolved_claim = normalized_claim not in normalized_verified
+    if not unresolved_claim:
+        return False, None
+
+    if can_probe_current_topic and normalized_claim not in normalized_probed:
+        return True, None
+
+    if not can_probe_current_topic:
+        return False, "claim_unverified_after_probe"
+
+    return False, None
 
 
 def _rank_verification_target(
@@ -871,7 +903,7 @@ def _resolve_next_topic_index(
         return default_next_index
 
     next_index = max(0, default_next_index)
-    if close_reason not in {"reused_answer", "low_relevance_after_probe"}:
+    if close_reason not in {"reused_answer", "low_relevance_after_probe", "claim_unverified_after_probe"}:
         return next_index
 
     current_sig = _topic_signature(
@@ -1251,6 +1283,12 @@ async def add_candidate_message(
             and claim_target not in verified_skills
             and can_probe_current_topic
         )
+        topic_guard_requires_probe, topic_guard_closure_reason = _topic_guard_decision(
+            claim_target=claim_target,
+            verified_skills=verified_skills,
+            probed_claim_targets=probed_claim_targets,
+            can_probe_current_topic=can_probe_current_topic,
+        )
 
         ranked_claim_target = _rank_verification_target(
             current_claim_target=claim_target,
@@ -1272,6 +1310,12 @@ async def add_candidate_message(
         elif topic_saturated:
             question_type = "main"
             will_advance = True
+        elif topic_guard_requires_probe:
+            normalized_claim_target = str(claim_target or "").strip().lower()
+            question_type = "claim_verification"
+            next_pending_verification = normalized_claim_target
+            probed_claim_targets.add(normalized_claim_target)
+            will_advance = False
 
         elif can_probe_claim and ranked_claim_target and answer_class in {"generic", "evasive", "no_experience_honest"}:
             question_type = "claim_verification"
@@ -1311,6 +1355,8 @@ async def add_candidate_message(
         else:
             question_type = "main"
             will_advance = True
+            if topic_guard_closure_reason:
+                forced_closure_reason = forced_closure_reason or topic_guard_closure_reason
 
         resolved_next_topic_index: int | None = None
         next_q: str | None = None
