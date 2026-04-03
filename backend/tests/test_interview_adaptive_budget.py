@@ -4,6 +4,8 @@ from app.services.interview_service import (
     _adapt_question_budget,
     _append_candidate_memory,
     _estimate_dynamic_question_budget,
+    _next_report_diagnostics,
+    _read_report_diagnostics,
     _resolve_next_topic_index,
     _topic_guard_decision,
 )
@@ -151,6 +153,50 @@ def test_resolve_next_topic_index_skips_similar_signature_for_claim_unverified_c
     )
 
     assert resolved == 2
+
+
+def test_next_report_diagnostics_increments_attempts_and_tracks_errors():
+    first = _next_report_diagnostics(
+        None,
+        phase="finish_sync",
+        status="processing",
+    )
+    second = _next_report_diagnostics(
+        first,
+        phase="async_worker",
+        status="failed",
+        error="provider timeout",
+    )
+
+    assert first["attempt_count"] == 1
+    assert second["attempt_count"] == 1
+    assert second["last_phase"] == "async_worker"
+    assert second["last_status"] == "failed"
+    assert second["last_error"] == "provider timeout"
+    assert second["last_error_at"] is not None
+
+
+def test_read_report_diagnostics_sanitizes_unknown_status():
+    class _InterviewStub:
+        def __init__(self, state):
+            self.interview_state = state
+
+    diagnostics = _read_report_diagnostics(
+        _InterviewStub(
+            {
+                "report_diagnostics": {
+                    "attempt_count": "2",
+                    "last_status": "unknown_status",
+                    "last_error": "boom",
+                }
+            }
+        )
+    )
+
+    assert diagnostics is not None
+    assert diagnostics["attempt_count"] == 2
+    assert diagnostics["last_status"] is None
+    assert diagnostics["last_error"] == "boom"
 
 
 class _FailingInterviewer:

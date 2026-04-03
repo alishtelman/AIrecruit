@@ -292,12 +292,25 @@ export interface FinishInterviewResponse {
   summary: ReportSummary | null;
 }
 
+export interface ReportProcessingDiagnostics {
+  attempt_count: number;
+  last_phase: string | null;
+  last_status: "pending" | "processing" | "ready" | "failed" | null;
+  last_started_at: string | null;
+  last_completed_at: string | null;
+  last_transition_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+}
+
 export interface InterviewReportStatusResponse {
   interview_id: string;
   status: InterviewStatus;
   processing_state: "pending" | "processing" | "ready" | "failed";
   report_id: string | null;
   summary: ReportSummary | null;
+  failure_reason?: string | null;
+  diagnostics?: ReportProcessingDiagnostics | null;
 }
 
 export interface ProctoringTimelineEvent {

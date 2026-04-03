@@ -66,12 +66,25 @@ class FinishInterviewResponse(BaseModel):
     summary: ReportSummary | None = None
 
 
+class ReportProcessingDiagnostics(BaseModel):
+    attempt_count: int = 0
+    last_phase: str | None = None
+    last_status: Literal["pending", "processing", "ready", "failed"] | None = None
+    last_started_at: str | None = None
+    last_completed_at: str | None = None
+    last_transition_at: str | None = None
+    last_error: str | None = None
+    last_error_at: str | None = None
+
+
 class InterviewReportStatusResponse(BaseModel):
     interview_id: uuid.UUID
     status: str
     processing_state: Literal["pending", "processing", "ready", "failed"]
     report_id: uuid.UUID | None = None
     summary: ReportSummary | None = None
+    failure_reason: str | None = None
+    diagnostics: ReportProcessingDiagnostics | None = None
 
 
 class InterviewMessageResponse(BaseModel):

@@ -79,7 +79,9 @@ async def _finish_and_wait_report_id(
         if payload.get("processing_state") == "ready" and payload.get("report_id"):
             return str(payload["report_id"])
         if payload.get("processing_state") == "failed":
-            raise AssertionError("Report generation failed")
+            raise AssertionError(
+                f"Report generation failed: {payload.get('failure_reason') or 'unknown reason'}"
+            )
         assert payload.get("processing_state") in {"pending", "processing"}
         await asyncio.sleep(poll_delay_seconds)
 
@@ -244,6 +246,11 @@ async def test_report_status_endpoint_returns_ready_after_finish(
     assert ready_payload is not None
     assert ready_payload["status"] == "report_generated"
     assert ready_payload["report_id"]
+    assert ready_payload.get("failure_reason") in (None, "")
+    diagnostics = ready_payload.get("diagnostics")
+    assert diagnostics is not None
+    assert diagnostics.get("last_status") == "ready"
+    assert diagnostics.get("attempt_count", 0) >= 1
 
 
 @pytest.mark.asyncio

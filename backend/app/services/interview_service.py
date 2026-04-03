@@ -200,6 +200,8 @@ _ADAPTIVE_MIN_QUESTIONS_FLOOR = 10
 _ADAPTIVE_EXTENSION_STEP = 4
 _SYNC_REPORT_GENERATION_TIMEOUT_SECONDS = 8.0
 _ASSESSMENT_TIMEOUT_SECONDS = 25.0
+_REPORT_DIAGNOSTIC_STATUSES = {"pending", "processing", "ready", "failed"}
+_REPORT_ATTEMPT_PHASES = {"finish_sync", "async_worker"}
 _MEMORY_ACTION_MARKERS = (
     "использ",
     "настро",
@@ -241,6 +243,76 @@ def _safe_int(value, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _next_report_diagnostics(
+    current: dict | None,
+    *,
+    phase: str,
+    status: str,
+    error: str | None = None,
+) -> dict:
+    now_iso = datetime.utcnow().isoformat()
+    diagnostics = dict(current or {})
+    increment_attempt = (
+        status == "processing"
+        and phase in _REPORT_ATTEMPT_PHASES
+        and diagnostics.get("last_phase") != phase
+    )
+    if increment_attempt:
+        diagnostics["attempt_count"] = _safe_int(diagnostics.get("attempt_count"), 0) + 1
+        diagnostics["last_started_at"] = now_iso
+    diagnostics["last_phase"] = phase
+    diagnostics["last_status"] = status
+    diagnostics["last_transition_at"] = now_iso
+    if error:
+        diagnostics["last_error"] = str(error)[:600]
+        diagnostics["last_error_at"] = now_iso
+    elif status == "ready":
+        diagnostics["last_error"] = None
+        diagnostics["last_error_at"] = None
+        diagnostics["last_completed_at"] = now_iso
+    return diagnostics
+
+
+def _update_report_diagnostics(
+    interview: Interview,
+    *,
+    phase: str,
+    status: str,
+    error: str | None = None,
+) -> None:
+    state = dict(interview.interview_state or {})
+    current_diag = state.get("report_diagnostics")
+    if not isinstance(current_diag, dict):
+        current_diag = {}
+    state["report_diagnostics"] = _next_report_diagnostics(
+        current_diag,
+        phase=phase,
+        status=status,
+        error=error,
+    )
+    interview.interview_state = state
+
+
+def _read_report_diagnostics(interview: Interview) -> dict[str, Any] | None:
+    state = interview.interview_state if isinstance(interview.interview_state, dict) else {}
+    raw = state.get("report_diagnostics")
+    if not isinstance(raw, dict):
+        return None
+    last_status = raw.get("last_status")
+    if last_status not in _REPORT_DIAGNOSTIC_STATUSES:
+        last_status = None
+    return {
+        "attempt_count": _safe_int(raw.get("attempt_count"), 0),
+        "last_phase": raw.get("last_phase"),
+        "last_status": last_status,
+        "last_started_at": raw.get("last_started_at"),
+        "last_completed_at": raw.get("last_completed_at"),
+        "last_transition_at": raw.get("last_transition_at"),
+        "last_error": raw.get("last_error"),
+        "last_error_at": raw.get("last_error_at"),
+    }
 
 
 def _normalize_policy_mode(value: str | None) -> str:
@@ -1613,6 +1685,7 @@ async def finish_interview(
     # Mark as processing and generate report asynchronously if needed.
     interview.status = "report_processing"
     interview.completed_at = datetime.utcnow()
+    _update_report_diagnostics(interview, phase="finish_sync", status="processing")
     await db.commit()
     await db.refresh(interview)
 
@@ -1637,6 +1710,7 @@ async def finish_interview(
             interview.id,
         )
         interview.status = "report_processing"
+        _update_report_diagnostics(interview, phase="finish_sync_timeout", status="processing")
         await db.commit()
         _schedule_report_generation(interview.id)
         return FinishInterviewResponse(
@@ -1645,9 +1719,15 @@ async def finish_interview(
             report_id=None,
             summary=None,
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("Initial report generation failed for interview %s, switching to async processing", interview.id)
         interview.status = "report_processing"
+        _update_report_diagnostics(
+            interview,
+            phase="finish_sync_error",
+            status="processing",
+            error=str(exc),
+        )
         await db.commit()
         _schedule_report_generation(interview.id)
         return FinishInterviewResponse(
@@ -1668,10 +1748,13 @@ async def _ensure_report_generated(
     if existing_report:
         if interview.status != "report_generated":
             interview.status = "report_generated"
-            await db.commit()
+        _update_report_diagnostics(interview, phase="existing_report", status="ready")
+        await db.commit()
         return existing_report
 
     messages = await _get_messages(db, interview.id)
+    _update_report_diagnostics(interview, phase="assessing", status="processing")
+    await db.commit()
     result: AssessmentResult = await _assess_with_dev_fallback(
         target_role=interview.target_role,
         message_history=_to_history(messages),
@@ -1717,6 +1800,7 @@ async def _ensure_report_generated(
         _save_skills(db, interview.candidate_id, report.id, result.skill_tags)
 
     interview.status = "report_generated"
+    _update_report_diagnostics(interview, phase="report_saved", status="ready")
     await db.commit()
     await db.refresh(report)
 
@@ -1793,24 +1877,38 @@ async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
             if existing_report:
                 if interview.status != "report_generated":
                     interview.status = "report_generated"
-                    await session.commit()
+                _update_report_diagnostics(interview, phase="async_existing_report", status="ready")
+                await session.commit()
                 return
 
             candidate = await session.scalar(select(Candidate).where(Candidate.id == interview.candidate_id))
             if not candidate:
                 interview.status = "failed"
+                _update_report_diagnostics(
+                    interview,
+                    phase="async_load_candidate",
+                    status="failed",
+                    error=f"Candidate {interview.candidate_id} not found",
+                )
                 await session.commit()
                 return
 
             interview.status = "report_processing"
+            _update_report_diagnostics(interview, phase="async_worker", status="processing")
             await session.commit()
             await _ensure_report_generated(session, interview, candidate)
-    except Exception:
+    except Exception as exc:
         logger.exception("Async report generation failed for interview %s", interview_id)
         async with AsyncSessionLocal() as session:
             interview = await session.scalar(select(Interview).where(Interview.id == interview_id))
             if interview and interview.status != "report_generated":
                 interview.status = "failed"
+                _update_report_diagnostics(
+                    interview,
+                    phase="async_worker",
+                    status="failed",
+                    error=str(exc),
+                )
                 await session.commit()
     finally:
         _REPORT_GENERATION_TASKS.discard(interview_id)
@@ -1827,9 +1925,12 @@ async def get_interview_report_status(
     )
 
     if report:
-        if interview.status != "report_generated":
+        diagnostics = _read_report_diagnostics(interview)
+        if interview.status != "report_generated" or not diagnostics or diagnostics.get("last_status") != "ready":
             interview.status = "report_generated"
+            _update_report_diagnostics(interview, phase="status_poll", status="ready")
             await db.commit()
+            diagnostics = _read_report_diagnostics(interview)
         return InterviewReportStatusResponse(
             interview_id=interview.id,
             status="report_generated",
@@ -1840,6 +1941,8 @@ async def get_interview_report_status(
                 hiring_recommendation=report.hiring_recommendation,
                 interview_summary=report.interview_summary,
             ),
+            failure_reason=None,
+            diagnostics=diagnostics,
         )
 
     if interview.status == "failed":
@@ -1848,6 +1951,11 @@ async def get_interview_report_status(
         state = "processing"
     else:
         state = "pending"
+
+    diagnostics = _read_report_diagnostics(interview)
+    failure_reason = diagnostics.get("last_error") if diagnostics else None
+    if state == "failed" and not failure_reason:
+        failure_reason = "Report generation failed."
 
     if state == "processing":
         _schedule_report_generation(interview.id)
@@ -1858,6 +1966,8 @@ async def get_interview_report_status(
         processing_state=state,
         report_id=None,
         summary=None,
+        failure_reason=failure_reason,
+        diagnostics=diagnostics,
     )
 
 
