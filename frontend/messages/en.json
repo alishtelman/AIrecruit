@@ -890,6 +890,8 @@
     "resume": "Resume",
     "voiceOn": "Voice on",
     "voiceOff": "Voice off",
+    "cameraPreviewOff": "Camera preview is off",
+    "cameraPreviewStarting": "Starting camera preview...",
     "recordingRequired": "Recording is off",
     "enableRecording": "Retry recording",
     "recordingDescription": "The interview can continue without recording. You can retry screen, camera, and microphone capture at any time.",

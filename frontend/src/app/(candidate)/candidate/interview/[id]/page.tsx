@@ -68,23 +68,22 @@ export default function InterviewPage() {
   const [resumeOpen, setResumeOpen] = useState(false);
   const reportGenerationFailedMessage = t("reportGenerationFailed");
 
-  // Recording is optional for interview flow (best-effort proctoring).
-  const [recordingConsent, setRecordingConsent] = useState(false);
-
   // Language is loaded from interview, default "ru" until loaded
   const [interviewLanguage, setInterviewLanguage] = useState<string>("ru");
   const { enabled: ttsEnabled, speaking, speak, stop, toggle: toggleTTS } = useTTS(interviewLanguage);
   const {
     isRecording,
     isScreenSharing,
+    cameraPreviewReady,
     previewRef,
     startRecording,
     stopRecording,
     getBlob,
     clearRecording,
     errorMessage: recordingError,
+    errorCode: recordingErrorCode,
   } = useMediaRecorder();
-  const { faceAwayPct, isModelLoaded: faceModelLoaded } = useFaceDetection(previewRef, recordingConsent);
+  const { faceAwayPct, isModelLoaded: faceModelLoaded } = useFaceDetection(previewRef, isRecording);
   const { state: voiceState, start: startVoice, stop: stopVoice, errorMessage: voiceError, clearError: clearVoiceError } = useVoiceInput({
     onTranscript: (text) => {
       setLatestTranscript(text);
@@ -181,46 +180,45 @@ export default function InterviewPage() {
 
   useEffect(() => {
     if (!interview || interview.status !== "in_progress") return;
-    if (recordingConsent || autoRecordingAttemptedRef.current) return;
+    if (autoRecordingAttemptedRef.current) return;
     autoRecordingAttemptedRef.current = true;
 
     void startRecording().then((ok) => {
-      setRecordingConsent(ok);
       if (ok) {
         trackProctoringEvent({
           event_type: "recording_started",
           severity: "info",
         });
-      } else {
-        trackProctoringEvent({
-          event_type: "recording_permission_denied",
-          severity: PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
-        });
       }
     });
-  }, [interview, recordingConsent, startRecording]);
+  }, [interview, startRecording]);
 
   useEffect(() => {
     if (interview && interview.status !== "in_progress") {
       stopRecording();
-      setRecordingConsent(false);
     }
   }, [interview, stopRecording]);
 
   useEffect(() => {
     if (!recordingError) return;
-    const lowered = recordingError.toLowerCase();
-    const eventType = lowered.includes("screen")
-      ? "screen_share_stopped"
-      : lowered.includes("camera")
-      ? "camera_stream_lost"
-      : "recording_error";
+    const eventType =
+      recordingErrorCode === "screen_share_stopped"
+        ? "screen_share_stopped"
+        : recordingErrorCode === "camera_stream_lost"
+        ? "camera_stream_lost"
+        : recordingErrorCode === "screen_permission_denied"
+        ? "screen_permission_denied"
+        : recordingErrorCode === "camera_permission_denied"
+        ? "camera_permission_denied"
+        : recordingErrorCode === "microphone_permission_denied"
+        ? "microphone_permission_denied"
+        : "recording_error";
     trackProctoringEvent({
       event_type: eventType,
       severity: PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
       details: { message: recordingError },
     });
-  }, [recordingError]);
+  }, [recordingError, recordingErrorCode]);
 
   useEffect(() => {
     if (faceAwayPct === null) return;
@@ -378,16 +376,6 @@ export default function InterviewPage() {
     }
   }
 
-  async function handleConsentAndRecord() {
-    const ok = await startRecording();
-    setRecordingConsent(ok);
-    trackProctoringEvent({
-      event_type: ok ? "recording_started_manual" : "recording_permission_denied",
-      severity: ok ? "info" : PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
-      details: { source: "manual_retry" },
-    });
-  }
-
   if (authLoading || !interview) {
     if (error) {
       return (
@@ -449,14 +437,23 @@ export default function InterviewPage() {
         <div className="flex items-center gap-3">
           <LocaleSwitcher />
           {/* Webcam preview */}
-          {isRecording && (
-            <video
-              ref={previewRef}
-              muted
-              autoPlay
-              playsInline
-              className="w-[120px] h-[90px] rounded-lg object-cover border border-slate-700"
-            />
+          {interview.status === "in_progress" && (
+            <div className="relative w-[120px] h-[90px] rounded-lg overflow-hidden border border-slate-700 bg-slate-900">
+              <video
+                ref={previewRef}
+                muted
+                autoPlay
+                playsInline
+                className={`w-full h-full object-cover transition-opacity ${
+                  isRecording && cameraPreviewReady ? "opacity-100" : "opacity-0"
+                }`}
+              />
+              {(!isRecording || !cameraPreviewReady) && (
+                <div className="absolute inset-0 flex items-center justify-center text-[11px] text-slate-400 px-2 text-center">
+                  {isRecording ? t("cameraPreviewStarting") : t("cameraPreviewOff")}
+                </div>
+              )}
+            </div>
           )}
           {/* REC + eye tracking indicator */}
           {isRecording && (
@@ -587,15 +584,9 @@ export default function InterviewPage() {
         <div className="max-w-2xl w-full mx-auto px-4 pb-4">
           <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-5">
             <div className="text-yellow-300 font-semibold mb-1">{t("recordingRequired")}</div>
-            <div className="text-slate-300 text-sm mb-4">
+            <div className="text-slate-300 text-sm">
               {t("recordingDescription")}
             </div>
-            <button
-              onClick={handleConsentAndRecord}
-              className="bg-yellow-500/80 hover:bg-yellow-500 text-slate-900 font-semibold px-4 py-2 rounded-lg transition-colors"
-            >
-              {t("enableRecording")}
-            </button>
           </div>
         </div>
       )}
