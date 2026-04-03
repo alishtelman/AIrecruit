@@ -184,8 +184,33 @@ _ROLE_MAX_QUESTION_CAP = {
     "product_manager": 32,
     "designer": 30,
 }
+_ROLE_MIN_QUESTION_FLOOR = {
+    "backend_engineer": 10,
+    "devops_engineer": 10,
+    "data_scientist": 10,
+    "frontend_engineer": 9,
+    "mobile_engineer": 9,
+    "qa_engineer": 8,
+    "product_manager": 8,
+    "designer": 8,
+}
 _ADAPTIVE_MIN_QUESTIONS_FLOOR = 10
 _ADAPTIVE_EXTENSION_STEP = 4
+_MEMORY_ACTION_MARKERS = (
+    "использ",
+    "настро",
+    "оптимиз",
+    "проектир",
+    "реализ",
+    "внедр",
+    "deployed",
+    "configured",
+    "designed",
+    "implemented",
+    "optimized",
+    "built",
+    "debug",
+)
 _REPORT_GENERATION_TASKS: set[uuid.UUID] = set()
 
 _PROCTORING_POLICY_MODES = {"observe_only", "strict_flagging"}
@@ -381,6 +406,7 @@ def _estimate_dynamic_question_budget(
 ) -> tuple[int, int, int]:
     """Return (initial_max_questions, role_max_cap, min_questions_before_early_stop)."""
     role_cap = _ROLE_MAX_QUESTION_CAP.get(target_role, 32)
+    role_floor = _ROLE_MIN_QUESTION_FLOOR.get(target_role, _ADAPTIVE_MIN_QUESTIONS_FLOOR)
     profile = resume_profile or {}
 
     technologies = list(profile.get("technologies", []) or [])
@@ -420,8 +446,50 @@ def _estimate_dynamic_question_budget(
     budget += min(6, len(set(technologies)))
     budget += min(4, len(project_highlights))
 
-    initial = max(_ADAPTIVE_MIN_QUESTIONS_FLOOR, min(role_cap, budget))
-    return initial, role_cap, min(_ADAPTIVE_MIN_QUESTIONS_FLOOR, initial)
+    initial = max(role_floor, min(role_cap, budget))
+    return initial, role_cap, min(role_floor, initial)
+
+
+def _extract_candidate_memory_fact(
+    *,
+    answer: str,
+    answer_class: str,
+    new_techs: set[str],
+) -> str:
+    normalized = " ".join(answer.strip().split())
+    if not normalized:
+        return ""
+
+    sentences: list[tuple[int, str]] = []
+    for raw_sentence in re.split(r"[.!?]+", normalized):
+        sentence = raw_sentence.strip(" ,;:-")
+        if len(sentence.split()) < 5:
+            continue
+        lowered = sentence.lower()
+        score = 0
+        if new_techs and any(tech in lowered for tech in new_techs):
+            score += 3
+        if any(marker in lowered for marker in _MEMORY_ACTION_MARKERS):
+            score += 2
+        score += min(2, len(sentence.split()) // 12)
+        sentences.append((score, sentence))
+
+    if sentences:
+        sentences.sort(key=lambda item: (item[0], len(item[1])), reverse=True)
+        fact = sentences[0][1]
+    else:
+        fact = " ".join(normalized.split()[:26])
+
+    if answer_class == "no_experience_honest":
+        fact = f"Honest gap noted: {fact}"
+
+    if new_techs:
+        tech_hint = ", ".join(sorted(new_techs)[:3])
+        fact = f"{fact} [tech: {tech_hint}]"
+
+    if len(fact) > 180:
+        fact = f"{fact[:180].rstrip()}..."
+    return fact
 
 
 def _append_candidate_memory(
@@ -437,17 +505,21 @@ def _append_candidate_memory(
     # Ignore low-signal noise unless it adds concrete technology context.
     if answer_class in {"generic", "evasive"} and not new_techs:
         return memory[-12:]
-    if answer_relevance == "low" and len(answer.strip().split()) < 12 and not new_techs:
+    if (
+        answer_relevance == "low"
+        and len(answer.strip().split()) < 12
+        and not new_techs
+        and answer_class != "no_experience_honest"
+    ):
         return memory[-12:]
 
-    fact = " ".join(answer.strip().split())
+    fact = _extract_candidate_memory_fact(
+        answer=answer,
+        answer_class=answer_class,
+        new_techs=new_techs,
+    )
     if not fact:
         return memory[-12:]
-    if len(fact) > 180:
-        fact = f"{fact[:180].rstrip()}..."
-    if new_techs:
-        tech_hint = ", ".join(sorted(new_techs)[:3])
-        fact = f"{fact} [tech: {tech_hint}]"
 
     fact_fp = _normalize_answer_fingerprint(fact)
     if not fact_fp:
@@ -483,6 +555,7 @@ def _adapt_question_budget(
     weak_ratio = weak_answers_count / answer_count
     strong_ratio = strong_answers_count / answer_count
     low_relevance_ratio = low_relevance_answers_count / answer_count
+    remaining_questions = max(current_max_questions - current_question_count, 0)
 
     # Early stop for consistently weak sessions: keep interview short and let report generation proceed.
     if (
@@ -507,6 +580,38 @@ def _adapt_question_budget(
         extended = min(role_max_cap, current_max_questions + _ADAPTIVE_EXTENSION_STEP)
         if extended > current_max_questions:
             return extended, False, "extended_for_depth"
+
+    # Extend proactively when session quality is strong and we are close to current limit.
+    if (
+        answer_count >= 4
+        and current_max_questions < role_max_cap
+        and remaining_questions <= 4
+        and strong_ratio >= 0.50
+        and weak_ratio <= 0.45
+        and low_relevance_ratio <= 0.28
+        and consecutive_weak_answers == 0
+    ):
+        extension_step = _ADAPTIVE_EXTENSION_STEP + (
+            2 if strong_ratio >= 0.72 and answer_count >= 8 else 0
+        )
+        extended = min(role_max_cap, current_max_questions + extension_step)
+        if extended > current_max_questions:
+            return extended, False, "extended_for_strong_signal"
+
+    # Compress plan earlier for mixed/weak signals instead of waiting until the very end.
+    if (
+        answer_count >= 4
+        and current_max_questions > min_questions_before_early_stop
+        and weak_ratio >= 0.62
+        and strong_ratio <= 0.25
+        and (low_relevance_ratio >= 0.25 or consecutive_weak_answers >= 2)
+    ):
+        reduced = max(
+            min_questions_before_early_stop,
+            min(current_max_questions, current_question_count + 2),
+        )
+        if reduced < current_max_questions:
+            return reduced, False, "reduced_for_mixed_low_signal"
 
     # Compress overly long plans when signal is consistently weak.
     if (
