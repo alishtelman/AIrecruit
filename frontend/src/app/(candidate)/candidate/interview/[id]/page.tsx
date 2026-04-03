@@ -11,7 +11,11 @@ import { useMediaRecorder } from "@/hooks/useMediaRecorder";
 import { useVoiceInput } from "@/hooks/useVoiceInput";
 import { useFaceDetection } from "@/hooks/useFaceDetection";
 import { candidateApi, interviewApi } from "@/lib/api";
-import type { InterviewDetail, InterviewMessage } from "@/lib/types";
+import type {
+  InterviewDetail,
+  InterviewMessage,
+  InterviewReportStatusResponse,
+} from "@/lib/types";
 
 const REPORT_POLL_INTERVAL_MS = 1500;
 const REPORT_POLL_TIMEOUT_MS = 120000;
@@ -235,8 +239,17 @@ export default function InterviewPage() {
     }
   }, [faceAwayPct]);
 
+  function getReportFailureMessage(status: InterviewReportStatusResponse): string {
+    const reason =
+      status.failure_reason?.trim() ||
+      status.diagnostics?.last_error?.trim() ||
+      "";
+    return reason || reportGenerationFailedMessage;
+  }
+
   async function waitForReport(interviewId: string): Promise<string> {
     const deadline = Date.now() + REPORT_POLL_TIMEOUT_MS;
+    let lastKnownFailure: string | null = null;
     while (Date.now() < deadline) {
       try {
         const status = await interviewApi.getReportStatus(interviewId);
@@ -244,14 +257,19 @@ export default function InterviewPage() {
           return status.report_id;
         }
         if (status.processing_state === "failed") {
-          throw new Error(reportGenerationFailedMessage);
+          throw new Error(getReportFailureMessage(status));
         }
-      } catch (err: unknown) {
-        if (err instanceof Error && err.message.includes(reportGenerationFailedMessage)) {
-          throw err;
+        if (status.failure_reason?.trim()) lastKnownFailure = status.failure_reason.trim();
+        if (status.diagnostics?.last_error?.trim()) {
+          lastKnownFailure = status.diagnostics.last_error.trim();
         }
+      } catch {
+        // transient polling error, keep waiting until timeout
       }
       await new Promise((resolve) => setTimeout(resolve, REPORT_POLL_INTERVAL_MS));
+    }
+    if (lastKnownFailure) {
+      throw new Error(lastKnownFailure);
     }
     throw new Error(t("reportDelayed"));
   }
