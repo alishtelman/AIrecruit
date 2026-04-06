@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { removeToken } from "@/lib/auth";
 import { authApi } from "@/lib/api";
 import type { User } from "@/lib/types";
 
@@ -34,7 +33,6 @@ export function useAuth(options: string | UseAuthOptions = "/candidate/login") {
         setUser(nextUser);
       })
       .catch(() => {
-        removeToken();
         if (!cancelled) router.replace(redirectTo);
       })
       .finally(() => {
@@ -51,7 +49,6 @@ export function useAuth(options: string | UseAuthOptions = "/candidate/login") {
     } catch {
       // ignore
     } finally {
-      removeToken();
       router.push("/");
     }
   }

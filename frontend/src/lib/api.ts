@@ -1,4 +1,3 @@
-import { getToken } from "./auth";
 import type {
   ActiveResume,
   AnalyticsFunnel,
@@ -44,7 +43,6 @@ import type {
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string>),
   };
@@ -52,9 +50,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   // Don't set Content-Type for FormData — browser sets it with boundary
   if (!(options.body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
-  }
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
   }
 
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers, credentials: "include" });
@@ -438,9 +433,7 @@ export const sttApi = {
 
 export const ttsApi = {
   synthesize: async (text: string, language?: string): Promise<Blob> => {
-    const token = getToken();
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
 
     const res = await fetch(`${BASE_URL}/api/v1/tts`, {
       method: "POST",

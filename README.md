@@ -226,7 +226,7 @@ Share-link access:
 
 ## Security Baseline
 
-- Cookie-first auth (`HttpOnly`, `SameSite`) with transitional Bearer support.
+- Cookie-first auth (`HttpOnly`, `SameSite`) for frontend transport; backend still keeps Bearer compatibility for API/tests.
 - Production guard: insecure `SECRET_KEY` fails startup outside local/test.
 - Company-scoped private report/replay access.
 - Candidate privacy/access approval enforcement.

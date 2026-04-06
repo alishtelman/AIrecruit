@@ -67,6 +67,25 @@ async def test_login_sets_http_only_cookie_and_me_accepts_cookie_session(client:
 
 
 @pytest.mark.asyncio
+async def test_cookie_auth_takes_precedence_over_invalid_bearer(client: AsyncClient):
+    email = f"cookie_priority_{uuid.uuid4().hex[:8]}@example.com"
+    await client.post("/api/v1/auth/candidate/register", json={
+        "email": email, "password": "password123", "full_name": "Cookie Priority User",
+    })
+    login = await client.post("/api/v1/auth/login", json={
+        "email": email, "password": "password123",
+    })
+    assert login.status_code == 200
+
+    me = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": "Bearer invalid-token"},
+    )
+    assert me.status_code == 200
+    assert me.json()["email"] == email
+
+
+@pytest.mark.asyncio
 async def test_logout_clears_cookie_session(client: AsyncClient):
     email = f"logout_{uuid.uuid4().hex[:8]}@example.com"
     await client.post("/api/v1/auth/candidate/register", json={
