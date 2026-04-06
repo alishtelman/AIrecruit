@@ -172,6 +172,31 @@ _QUESTION_STOPWORDS = {
     "where", "when", "why", "which", "with", "from", "that", "this",
     "the", "and", "или", "для", "про", "was", "were", "there", "used",
 }
+_NONSENSE_MARKERS = (
+    "asdf",
+    "qwerty",
+    "zxcv",
+    "blah",
+    "bla bla",
+    "чушь",
+    "абракадабра",
+    "ываыва",
+    "фыв",
+)
+_FILLER_NOISE_TOKENS = {
+    "ээ",
+    "эм",
+    "ну",
+    "типа",
+    "короче",
+    "блин",
+    "вот",
+    "yeah",
+    "umm",
+    "uh",
+    "hmm",
+}
+_MAX_CHAT_QUESTION_WORDS = 28
 
 _ROLE_BASE_QUESTION_BUDGET = {
     "backend_engineer": 20,
@@ -759,6 +784,8 @@ def _append_candidate_memory(
     memory = [str(item).strip() for item in previous_memory if str(item).strip()]
 
     # Ignore low-signal noise unless it adds concrete technology context.
+    if _is_noise_or_nonsense_answer(answer) and not new_techs:
+        return memory[-12:]
     if answer_class in {"generic", "evasive"} and not new_techs:
         return memory[-12:]
     if (
@@ -804,6 +831,7 @@ def _adapt_question_budget(
     consecutive_weak_answers: int,
     min_questions_before_early_stop: int,
     role_max_cap: int,
+    nonsense_answers_count: int = 0,
 ) -> tuple[int, bool, str | None]:
     if answer_count <= 0:
         return current_max_questions, False, None
@@ -823,6 +851,15 @@ def _adapt_question_budget(
         and strong_answers_count <= max(1, answer_count // 5)
     ):
         return max(current_question_count, 1), True, "early_stop_low_signal"
+
+    # Fail-fast for sessions that are mostly noise/non-informative text.
+    if (
+        answer_count >= max(4, min_questions_before_early_stop - 2)
+        and nonsense_answers_count >= max(2, answer_count // 3)
+        and current_question_count >= max(4, min_questions_before_early_stop - 2)
+        and consecutive_weak_answers >= 2
+    ):
+        return max(current_question_count, 1), True, "early_stop_nonsense_signal"
 
     # Near the planned end, extend depth for strong candidates (up to role cap).
     if (
@@ -868,6 +905,19 @@ def _adapt_question_budget(
         )
         if reduced < current_max_questions:
             return reduced, False, "reduced_for_mixed_low_signal"
+
+    if (
+        answer_count >= 4
+        and current_max_questions > min_questions_before_early_stop
+        and nonsense_answers_count >= 2
+        and consecutive_weak_answers >= 2
+    ):
+        reduced = max(
+            min_questions_before_early_stop,
+            min(current_max_questions, current_question_count + 1),
+        )
+        if reduced < current_max_questions:
+            return reduced, False, "reduced_for_nonsense_signal"
 
     # Compress overly long plans when signal is consistently weak.
     if (
@@ -917,6 +967,66 @@ def _append_answer_history(previous_answers: list[dict] | list[str], answer: str
     normalized = _normalize_answer_history(previous_answers)
     normalized.append({"content": answer, "topic_index": topic_index})
     return normalized[-10:]
+
+
+def _is_noise_or_nonsense_answer(answer: str) -> bool:
+    normalized = " ".join((answer or "").strip().lower().split())
+    if not normalized:
+        return False
+
+    if any(marker in normalized for marker in _NONSENSE_MARKERS):
+        return True
+
+    if re.search(r"(.)\1{5,}", normalized):
+        return True
+
+    words = [token.lower() for token in _TOKEN_RE.findall(normalized)]
+    if len(words) < 6:
+        return False
+
+    unique_words = set(words)
+    unique_ratio = len(unique_words) / max(1, len(words))
+    if len(words) >= 10 and unique_ratio <= 0.30:
+        return True
+
+    filler_count = sum(1 for token in words if token in _FILLER_NOISE_TOKENS)
+    if len(words) >= 8 and filler_count / len(words) >= 0.45:
+        return True
+
+    return False
+
+
+def _sanitize_chat_question(question: str | None, *, language: str) -> str | None:
+    if not question:
+        return None
+
+    compact = re.sub(r"\s+", " ", str(question)).strip()
+    if not compact:
+        return None
+
+    if compact.count("?") > 1:
+        fragments = [fragment.strip(" ,;:") for fragment in compact.split("?") if fragment.strip()]
+        if fragments:
+            compact = f"{fragments[-1]}?"
+
+    words = compact.split()
+    if len(words) > _MAX_CHAT_QUESTION_WORDS:
+        compact = " ".join(words[:_MAX_CHAT_QUESTION_WORDS]).rstrip(" ,.;:!?") + "?"
+
+    if len(compact) > 170:
+        compact = compact[:170].rsplit(" ", 1)[0].rstrip(" ,.;:!?") + "?"
+
+    if not compact.endswith("?"):
+        compact = compact.rstrip(" ,.;:") + "?"
+
+    if len(compact.split()) < 4:
+        return (
+            "Can you walk me through one concrete production example?"
+            if language == "en"
+            else "Можете разобрать один конкретный пример из вашей практики?"
+        )
+
+    return compact
 
 
 def _is_cross_topic_reuse(answer: str, previous_answers: list[dict] | list[str], current_topic_index: int) -> bool:
@@ -1329,6 +1439,7 @@ async def start_interview(
         candidate_memory=[],
     )
     first_question = await _get_next_question_with_dev_fallback(ctx)
+    first_question = _sanitize_chat_question(first_question, language=language) or first_question
 
     db.add(InterviewMessage(
         id=uuid.uuid4(),
@@ -1365,6 +1476,7 @@ async def start_interview(
         "weak_answers_count": 0,
         "low_relevance_answers_count": 0,
         "consecutive_weak_answers": 0,
+        "nonsense_answers_count": 0,
         "adaptive_min_questions": min_questions_before_early_stop,
         "adaptive_role_max_cap": role_max_cap,
         "adaptive_last_decision": None,
@@ -1470,6 +1582,7 @@ async def add_candidate_message(
         weak_answers_count = _safe_int(state.get("weak_answers_count"), 0)
         low_relevance_answers_count = _safe_int(state.get("low_relevance_answers_count"), 0)
         consecutive_weak_answers = _safe_int(state.get("consecutive_weak_answers"), 0)
+        nonsense_answers_count = _safe_int(state.get("nonsense_answers_count"), 0)
         min_questions_before_early_stop = _safe_int(
             state.get("adaptive_min_questions"),
             min(_ADAPTIVE_MIN_QUESTIONS_FLOOR, interview.max_questions),
@@ -1500,6 +1613,7 @@ async def add_candidate_message(
             new_techs=new_techs,
             current_claim_target=claim_target,
         )
+        is_nonsense_answer = _is_noise_or_nonsense_answer(message)
         cross_topic_reuse = _is_cross_topic_reuse(message, previous_candidate_answers, current_topic_index)
 
         while len(topic_reuse_flags) <= current_topic_index:
@@ -1529,6 +1643,10 @@ async def add_candidate_message(
                 shallow_reason = "low_relevance"
         elif answer_class == "strong" and answer_relevance == "medium":
             answer_class = "partial"
+        if is_nonsense_answer:
+            answer_class = "evasive"
+            shallow_reason = "nonsense_input"
+            answer_relevance = "low"
         if answer_relevance == "low":
             topic_relevance_failures[current_topic_index] += 1
 
@@ -1554,6 +1672,8 @@ async def add_candidate_message(
             consecutive_weak_answers = 0
         if answer_relevance == "low":
             low_relevance_answers_count += 1
+        if is_nonsense_answer:
+            nonsense_answers_count += 1
 
         role_max_cap = max(interview.max_questions, role_max_cap)
         adapted_max_questions, should_end_now, adaptive_decision = _adapt_question_budget(
@@ -1566,6 +1686,7 @@ async def add_candidate_message(
             consecutive_weak_answers=consecutive_weak_answers,
             min_questions_before_early_stop=max(1, min_questions_before_early_stop),
             role_max_cap=role_max_cap,
+            nonsense_answers_count=nonsense_answers_count,
         )
         interview.max_questions = adapted_max_questions
 
@@ -1740,6 +1861,7 @@ async def add_candidate_message(
                 candidate_memory=candidate_memory,
             )
             next_q = await _get_next_question_with_dev_fallback(ctx)
+            next_q = _sanitize_chat_question(next_q, language=interview.language)
 
         # ── Update DB state ─────────────────────────────────────────────────
         while len(topic_signals) <= current_topic_index:
@@ -1806,6 +1928,7 @@ async def add_candidate_message(
             "weak_answers_count": weak_answers_count,
             "low_relevance_answers_count": low_relevance_answers_count,
             "consecutive_weak_answers": consecutive_weak_answers,
+            "nonsense_answers_count": nonsense_answers_count,
             "adaptive_min_questions": max(1, min_questions_before_early_stop),
             "adaptive_role_max_cap": role_max_cap,
             "adaptive_last_decision": adaptive_decision,

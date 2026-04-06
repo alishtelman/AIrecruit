@@ -3,7 +3,12 @@ from types import SimpleNamespace
 import pytest
 
 from app.ai import interviewer as interviewer_mod
-from app.ai.interviewer import InterviewContext, LLMInterviewer, _question_is_repeated
+from app.ai.interviewer import (
+    InterviewContext,
+    LLMInterviewer,
+    _normalize_question_output,
+    _question_is_repeated,
+)
 
 
 class _NoCallCompletions:
@@ -95,3 +100,23 @@ async def test_get_next_question_uses_followup_fallback_when_llm_repeats(monkeyp
     question = await LLMInterviewer(_StubClient(repeated)).get_next_question(ctx)
 
     assert question == fallback_question
+
+
+def test_normalize_question_output_strips_verbose_preamble():
+    raw = (
+        "Я понимаю, что масштабирование важно и требует системного подхода. "
+        "Однако как backend-инженер вы должны учитывать много факторов. "
+        "Расскажите, как бы вы проектировали REST API для высокой нагрузки с учетом безопасности и кэширования?"
+    )
+    ctx = InterviewContext(
+        target_role="backend_engineer",
+        question_number=3,
+        language="ru",
+        question_type="main",
+    )
+
+    question = _normalize_question_output(raw, ctx)
+
+    assert question.endswith("?")
+    assert len(question) <= 170
+    assert len(question.split()) <= 28

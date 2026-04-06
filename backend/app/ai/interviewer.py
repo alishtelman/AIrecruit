@@ -28,6 +28,7 @@ _ROLE_LABELS: dict[str, str] = {
 }
 
 _MAX_QUESTION_CHARS = 170
+_MAX_QUESTION_WORDS = 28
 _QUESTION_SEGMENT_RE = re.compile(r"[^?]{8,}\?")
 _WHITESPACE_RE = re.compile(r"\s+")
 _MARKUP_RE = re.compile(r"[*_`#>\[\]\|]")
@@ -497,15 +498,25 @@ def _trim_question(text: str, limit: int = _MAX_QUESTION_CHARS) -> str:
     """Trim question text to a safe UI length while keeping it readable."""
     compact = _WHITESPACE_RE.sub(" ", text or "").strip()
     if len(compact) <= limit:
+        words = compact.split()
+        if len(words) > _MAX_QUESTION_WORDS:
+            compact = " ".join(words[:_MAX_QUESTION_WORDS]).rstrip(" ,.;:!?") + "?"
         return compact
     if ". " in compact:
         compact = compact.rsplit(". ", 1)[-1].strip()
     if len(compact) <= limit:
+        words = compact.split()
+        if len(words) > _MAX_QUESTION_WORDS:
+            compact = " ".join(words[:_MAX_QUESTION_WORDS]).rstrip(" ,.;:!?") + "?"
         return compact
     trimmed = compact[:limit]
     if " " in trimmed:
         trimmed = trimmed.rsplit(" ", 1)[0]
-    return trimmed.rstrip(" ,.;:") + "?"
+    compact = trimmed.rstrip(" ,.;:") + "?"
+    words = compact.split()
+    if len(words) > _MAX_QUESTION_WORDS:
+        compact = " ".join(words[:_MAX_QUESTION_WORDS]).rstrip(" ,.;:!?") + "?"
+    return compact
 
 
 def _question_tokens(text: str) -> set[str]:

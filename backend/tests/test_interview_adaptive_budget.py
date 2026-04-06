@@ -6,9 +6,11 @@ from app.services.interview_service import (
     _adapt_question_budget,
     _append_candidate_memory,
     _estimate_dynamic_question_budget,
+    _is_noise_or_nonsense_answer,
     _next_report_diagnostics,
     _read_report_diagnostics,
     _resolve_next_topic_index,
+    _sanitize_chat_question,
     _topic_guard_decision,
 )
 from app.ai.interviewer import InterviewContext
@@ -50,6 +52,45 @@ def test_adapt_question_budget_reduces_early_for_mixed_low_signal():
     assert adapted == 10
     assert should_end is False
     assert decision == "reduced_for_mixed_low_signal"
+
+
+def test_adapt_question_budget_early_stops_for_nonsense_signal():
+    adapted, should_end, decision = _adapt_question_budget(
+        current_max_questions=20,
+        current_question_count=8,
+        answer_count=8,
+        strong_answers_count=0,
+        weak_answers_count=7,
+        low_relevance_answers_count=5,
+        consecutive_weak_answers=4,
+        min_questions_before_early_stop=10,
+        role_max_cap=30,
+        nonsense_answers_count=3,
+    )
+
+    assert adapted == 8
+    assert should_end is True
+    assert decision == "early_stop_nonsense_signal"
+
+
+def test_noise_or_nonsense_answer_detects_repetitive_input():
+    assert _is_noise_or_nonsense_answer("ну ну ну ну ну ну ну ну")
+    assert _is_noise_or_nonsense_answer("asdf asdf asdf asdf asdf asdf")
+    assert not _is_noise_or_nonsense_answer(
+        "Я использовал PostgreSQL в production и оптимизировал индексы под реальную нагрузку."
+    )
+
+
+def test_sanitize_chat_question_keeps_single_short_question():
+    sanitized = _sanitize_chat_question(
+        "Я понимаю ваш ответ. Это важно. Расскажите, как вы проектировали API и обрабатывали ошибки, "
+        "и как строили авторизацию, кэширование и деплой в одном сервисе?",
+        language="ru",
+    )
+
+    assert sanitized is not None
+    assert sanitized.endswith("?")
+    assert len(sanitized.split()) <= 28
 
 
 def test_append_candidate_memory_keeps_honest_short_gap():
