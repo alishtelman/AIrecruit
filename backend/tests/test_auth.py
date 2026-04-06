@@ -86,6 +86,47 @@ async def test_cookie_auth_takes_precedence_over_invalid_bearer(client: AsyncCli
 
 
 @pytest.mark.asyncio
+async def test_cookie_write_rejects_missing_csrf_origin(client: AsyncClient):
+    email = f"cookie_csrf_{uuid.uuid4().hex[:8]}@example.com"
+    await client.post("/api/v1/auth/candidate/register", json={
+        "email": email, "password": "password123", "full_name": "Cookie CSRF User",
+    })
+    login = await client.post("/api/v1/auth/login", json={
+        "email": email, "password": "password123",
+    })
+    assert login.status_code == 200
+
+    change = await client.post("/api/v1/auth/change-password", json={
+        "current_password": "password123",
+        "new_password": "password124",
+    })
+    assert change.status_code == 403
+    assert change.json()["detail"] == "CSRF validation failed"
+
+
+@pytest.mark.asyncio
+async def test_cookie_write_allows_trusted_csrf_origin(client: AsyncClient):
+    email = f"cookie_csrf_ok_{uuid.uuid4().hex[:8]}@example.com"
+    await client.post("/api/v1/auth/candidate/register", json={
+        "email": email, "password": "password123", "full_name": "Cookie CSRF Allowed",
+    })
+    login = await client.post("/api/v1/auth/login", json={
+        "email": email, "password": "password123",
+    })
+    assert login.status_code == 200
+
+    change = await client.post(
+        "/api/v1/auth/change-password",
+        headers={"Origin": "http://localhost:3000"},
+        json={
+            "current_password": "password123",
+            "new_password": "password124",
+        },
+    )
+    assert change.status_code == 204, change.text
+
+
+@pytest.mark.asyncio
 async def test_valid_bearer_overrides_cookie_session(client: AsyncClient):
     cookie_email = f"cookie_owner_{uuid.uuid4().hex[:8]}@example.com"
     await client.post("/api/v1/auth/candidate/register", json={

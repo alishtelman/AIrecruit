@@ -233,6 +233,7 @@ Share-link access:
 - Recording upload MIME + size restrictions.
 - Safe path-only redirects on candidate auth pages.
 - CORS allowlist via `CORS_ORIGINS`.
+- Cookie-auth write routes require trusted `Origin/Referer` (CSRF guard).
 
 See also:
 
@@ -258,6 +259,7 @@ Auth/session:
 - `SESSION_COOKIE_NAME`
 - `SESSION_COOKIE_SAMESITE`
 - `SESSION_COOKIE_SECURE`
+- `CSRF_TRUSTED_ORIGINS` (defaults to `CORS_ORIGINS` when empty)
 - `ACCESS_TOKEN_EXPIRE_MINUTES`
 
 AI:

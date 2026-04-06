@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     SESSION_COOKIE_NAME: str = "airecruit_session"
     SESSION_COOKIE_SAMESITE: str = "lax"
     SESSION_COOKIE_SECURE: bool = False
+    CSRF_TRUSTED_ORIGINS: str = ""
     ANTHROPIC_API_KEY: str = ""
     GROQ_API_KEY: str = ""
     ALLOW_MOCK_AI: bool = True
@@ -40,6 +41,11 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def csrf_trusted_origins(self) -> list[str]:
+        source = self.CSRF_TRUSTED_ORIGINS or self.CORS_ORIGINS
+        return [origin.strip() for origin in source.split(",") if origin.strip()]
 
     @property
     def is_local_or_test(self) -> bool:

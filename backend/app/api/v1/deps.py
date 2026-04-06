@@ -1,4 +1,5 @@
 import uuid
+from urllib.parse import urlparse
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -15,6 +16,32 @@ from app.models.company_member import CompanyMember
 from app.models.user import User
 
 bearer_scheme = HTTPBearer(auto_error=False)
+UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _normalize_origin(value: str) -> str | None:
+    parsed = urlparse(value)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+
+
+def _enforce_cookie_csrf(request: Request, session_token: str | None, bearer_token: str | None) -> None:
+    # Bearer transport is considered explicit API authentication and does not
+    # rely on browser cookie semantics. CSRF validation is for cookie-only auth.
+    if request.method.upper() not in UNSAFE_METHODS or not session_token or bearer_token:
+        return
+
+    origin_header = request.headers.get("origin")
+    referer_header = request.headers.get("referer")
+    source = origin_header or referer_header
+    normalized_source = _normalize_origin(source) if source else None
+    if normalized_source is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
+
+    trusted = {origin.rstrip("/") for origin in settings.csrf_trusted_origins}
+    if normalized_source not in trusted:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
 
 
 async def get_current_user(
@@ -31,6 +58,8 @@ async def get_current_user(
     bearer_token = credentials.credentials if credentials else None
     if not session_token and not bearer_token:
         raise credentials_exception
+
+    _enforce_cookie_csrf(request, session_token=session_token, bearer_token=bearer_token)
 
     user_id: str | None = None
 

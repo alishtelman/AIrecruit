@@ -29,6 +29,7 @@ Before exposing the system publicly:
 - set a strong `SECRET_KEY` (32+ random chars)
 - set `SESSION_COOKIE_SECURE=true`
 - set strict `CORS_ORIGINS` (no wildcard)
+- set strict `CSRF_TRUSTED_ORIGINS` (or leave empty to inherit `CORS_ORIGINS`)
 - run behind HTTPS only
 - set `ALLOW_MOCK_AI=false`
 - rotate any default/example secrets
@@ -40,6 +41,7 @@ Startup will fail outside local/test when `SECRET_KEY` is insecure.
 ## Current Security Controls
 
 - Cookie-first auth with `HttpOnly` session cookie.
+- Cookie-auth write endpoints enforce trusted `Origin/Referer` CSRF checks.
 - Backward-compatible Bearer auth still accepted during migration.
 - Candidate privacy visibility + approval flow for company access.
 - Company-scoped access enforcement for private reports and interview replays.
