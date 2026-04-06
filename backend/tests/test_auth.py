@@ -86,6 +86,34 @@ async def test_cookie_auth_takes_precedence_over_invalid_bearer(client: AsyncCli
 
 
 @pytest.mark.asyncio
+async def test_valid_bearer_overrides_cookie_session(client: AsyncClient):
+    cookie_email = f"cookie_owner_{uuid.uuid4().hex[:8]}@example.com"
+    await client.post("/api/v1/auth/candidate/register", json={
+        "email": cookie_email, "password": "password123", "full_name": "Cookie Owner",
+    })
+    cookie_login = await client.post("/api/v1/auth/login", json={
+        "email": cookie_email, "password": "password123",
+    })
+    assert cookie_login.status_code == 200
+
+    bearer_email = f"bearer_owner_{uuid.uuid4().hex[:8]}@example.com"
+    await client.post("/api/v1/auth/candidate/register", json={
+        "email": bearer_email, "password": "password123", "full_name": "Bearer Owner",
+    })
+
+    async with AsyncClient(base_url=str(client.base_url)) as clean_client:
+        bearer_login = await clean_client.post("/api/v1/auth/login", json={
+            "email": bearer_email, "password": "password123",
+        })
+    assert bearer_login.status_code == 200
+    bearer_token = bearer_login.json()["access_token"]
+
+    me = await client.get("/api/v1/auth/me", headers=auth_headers(bearer_token))
+    assert me.status_code == 200
+    assert me.json()["email"] == bearer_email
+
+
+@pytest.mark.asyncio
 async def test_logout_clears_cookie_session(client: AsyncClient):
     email = f"logout_{uuid.uuid4().hex[:8]}@example.com"
     await client.post("/api/v1/auth/candidate/register", json={

@@ -29,15 +29,28 @@ async def get_current_user(
     )
     session_token = request.cookies.get(settings.SESSION_COOKIE_NAME)
     bearer_token = credentials.credentials if credentials else None
-    token = session_token or bearer_token
-    if not token:
+    if not session_token and not bearer_token:
         raise credentials_exception
-    try:
-        payload = decode_access_token(token)
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise credentials_exception
-    except JWTError:
+
+    user_id: str | None = None
+
+    # Prefer explicit Authorization header when it is valid, but do not block
+    # cookie sessions when a stale/invalid bearer is present.
+    if bearer_token:
+        try:
+            bearer_payload = decode_access_token(bearer_token)
+            user_id = bearer_payload.get("sub")
+        except JWTError:
+            user_id = None
+
+    if user_id is None and session_token:
+        try:
+            session_payload = decode_access_token(session_token)
+            user_id = session_payload.get("sub")
+        except JWTError:
+            user_id = None
+
+    if user_id is None:
         raise credentials_exception
 
     user = await db.scalar(select(User).where(User.id == uuid.UUID(user_id)))
