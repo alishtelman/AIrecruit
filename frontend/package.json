@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "rm -rf .next-dev/types && NEXT_DIST_DIR=.next-build next build",
     "start": "NEXT_DIST_DIR=.next-build next start",
-    "lint": "next lint"
+    "lint": "eslint . --ext .js,.jsx,.ts,.tsx --max-warnings=0"
   },
   "dependencies": {
     "clsx": "^2.1.1",
