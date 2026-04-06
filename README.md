@@ -6,6 +6,7 @@ AIRecruit is a FastAPI + Next.js recruiting platform where candidates pass struc
 
 - Adaptive interview engine with per-topic follow-ups, claim verification, and depth escalation.
 - Interview runtime state persisted in DB (`followup_depth`, `interview_state`) to avoid repeated generic questioning.
+- Low-signal guardrails hardened: nonsense/noise answers are detected, interviews can end earlier on persistently weak signal, and generated questions are forced to stay short/single-question.
 - Company hiring workspace expanded with shortlists, notes, activity log, analytics, and role-based collaboration.
 - Candidate privacy model expanded (`private`, `marketplace`, `direct_link`, `request_only`) with access request approvals.
 - Frontend internationalization added with `next-intl` (`en` + `ru`) and unified workspace UI refresh.
@@ -19,7 +20,7 @@ AIRecruit is a FastAPI + Next.js recruiting platform where candidates pass struc
 
 1. Register/login, upload resume, manage salary and privacy visibility.
 2. Start AI interview (role + optional template + language).
-3. Interview flow supports screen/camera/mic recording, voice input, and TTS playback.
+3. Interview flow supports auto-start screen/camera/mic capture attempts, persistent camera self-preview, voice input, and TTS playback.
 4. Receive structured report with competency scores, confidence, and skill tags.
 5. Publish profile via marketplace/direct link or require explicit company approval.
 
@@ -83,6 +84,7 @@ Interview flow is no longer a flat “8 independent turns.”
 - Core topic count is controlled by `question_count` (still max 8 by default).
 - Extra probing turns are controlled by `interview_state` and `followup_depth`.
 - Engine classifies each answer (`strong`, `partial`, `generic`, `evasive`, `no_experience_honest`).
+- Additional noise guard detects repetitive/non-informative answers and pushes earlier session cutoff when weak signal persists.
 - Depending on answer quality/relevance, next question type may be:
   - `main`
   - `followup`
@@ -91,6 +93,7 @@ Interview flow is no longer a flat “8 independent turns.”
   - `deep_technical`
   - `edge_cases`
 - Assessment consumes both transcript and interview runtime metadata (`interview_meta`) to produce stricter recommendations and confidence outputs.
+- Interviewer output is normalized to one concise question to avoid long monologue-like prompts in chat UI.
 
 ---
 
