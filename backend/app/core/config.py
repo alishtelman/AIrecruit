@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     TTS_FALLBACK_PROVIDER: str = "groq"
     ELEVENLABS_VOICE_ID: str = ""
     ELEVENLABS_TTS_MODEL: str = "eleven_flash_v2_5"
+    REPORT_SYNC_GENERATION_TIMEOUT_SECONDS: float = 8.0
+    REPORT_ASSESSMENT_TIMEOUT_SECONDS: float = 25.0
+    REPORT_MAX_AUTO_RETRIES: int = 3
+    REPORT_RETRY_BASE_BACKOFF_SECONDS: int = 2
+    REPORT_RETRY_MAX_BACKOFF_SECONDS: int = 12
+    REPORT_LOCK_STALE_SECONDS: int = 300
     UPLOAD_DIR: str = "/app/uploads"
     RESUME_STORAGE_DIR: str = "/app/storage/resumes"
     RECORDING_STORAGE_DIR: str = "/app/storage/recordings"

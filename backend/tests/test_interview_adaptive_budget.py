@@ -1,3 +1,5 @@
+import asyncio
+
 from app.services.interview_service import (
     _assess_with_dev_fallback,
     _get_next_question_with_dev_fallback,
@@ -246,6 +248,17 @@ class _FailingAssessor:
         raise RuntimeError("assessor provider failed")
 
 
+class _InvalidPayloadAssessor:
+    async def assess(self, **_kwargs):
+        return None
+
+
+class _SlowAssessor:
+    async def assess(self, **_kwargs):
+        await asyncio.sleep(0.05)
+        return None
+
+
 @pytest.mark.asyncio
 async def test_assess_with_dev_fallback_uses_mock_in_local_mode(
     monkeypatch: pytest.MonkeyPatch,
@@ -288,3 +301,72 @@ async def test_assess_with_dev_fallback_raises_in_production_mode(
             language="ru",
             interview_meta={},
         )
+
+
+@pytest.mark.asyncio
+async def test_assess_with_dev_fallback_recovers_from_invalid_payload_in_local_mode(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app.services import interview_service as interview_service_module
+
+    monkeypatch.setattr(interview_service_module, "assessor", _InvalidPayloadAssessor())
+    monkeypatch.setattr(interview_service_module.settings, "APP_ENV", "development")
+
+    result = await _assess_with_dev_fallback(
+        target_role="backend_engineer",
+        message_history=[
+            {"role": "assistant", "content": "Tell me about your API design experience."},
+            {"role": "candidate", "content": "I designed REST APIs and validated contracts."},
+        ],
+        message_timestamps=None,
+        behavioral_signals=None,
+        language="en",
+        interview_meta={},
+    )
+
+    assert result.hiring_recommendation in {"no", "maybe", "yes", "strong_yes"}
+
+
+@pytest.mark.asyncio
+async def test_assess_with_dev_fallback_raises_on_invalid_payload_in_production_mode(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app.services import interview_service as interview_service_module
+
+    monkeypatch.setattr(interview_service_module, "assessor", _InvalidPayloadAssessor())
+    monkeypatch.setattr(interview_service_module.settings, "APP_ENV", "production")
+
+    with pytest.raises(RuntimeError, match="AI assessor request failed"):
+        await _assess_with_dev_fallback(
+            target_role="backend_engineer",
+            message_history=[],
+            message_timestamps=None,
+            behavioral_signals=None,
+            language="ru",
+            interview_meta={},
+        )
+
+
+@pytest.mark.asyncio
+async def test_assess_with_dev_fallback_uses_mock_when_provider_times_out_in_local_mode(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from app.services import interview_service as interview_service_module
+
+    monkeypatch.setattr(interview_service_module, "assessor", _SlowAssessor())
+    monkeypatch.setattr(interview_service_module.settings, "APP_ENV", "development")
+    monkeypatch.setattr(interview_service_module.settings, "REPORT_ASSESSMENT_TIMEOUT_SECONDS", 0.01)
+
+    result = await _assess_with_dev_fallback(
+        target_role="backend_engineer",
+        message_history=[
+            {"role": "assistant", "content": "Explain your scaling approach for databases."},
+            {"role": "candidate", "content": "I partition heavy tables and monitor slow queries."},
+        ],
+        message_timestamps=None,
+        behavioral_signals=None,
+        language="en",
+        interview_meta={},
+    )
+
+    assert result.hiring_recommendation in {"no", "maybe", "yes", "strong_yes"}

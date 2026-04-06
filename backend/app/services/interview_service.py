@@ -205,12 +205,12 @@ _ROLE_MIN_QUESTION_FLOOR = {
 }
 _ADAPTIVE_MIN_QUESTIONS_FLOOR = 10
 _ADAPTIVE_EXTENSION_STEP = 4
-_SYNC_REPORT_GENERATION_TIMEOUT_SECONDS = 8.0
-_ASSESSMENT_TIMEOUT_SECONDS = 25.0
-_REPORT_MAX_AUTO_RETRIES = 3
-_REPORT_RETRY_BASE_BACKOFF_SECONDS = 2
-_REPORT_RETRY_MAX_BACKOFF_SECONDS = 12
-_REPORT_LOCK_STALE_SECONDS = 300
+_DEFAULT_SYNC_REPORT_GENERATION_TIMEOUT_SECONDS = 8.0
+_DEFAULT_ASSESSMENT_TIMEOUT_SECONDS = 25.0
+_DEFAULT_REPORT_MAX_AUTO_RETRIES = 3
+_DEFAULT_REPORT_RETRY_BASE_BACKOFF_SECONDS = 2
+_DEFAULT_REPORT_RETRY_MAX_BACKOFF_SECONDS = 12
+_DEFAULT_REPORT_LOCK_STALE_SECONDS = 300
 _REPORT_DIAGNOSTIC_STATUSES = {"pending", "processing", "ready", "failed"}
 _REPORT_ATTEMPT_PHASES = {"finish_sync", "async_worker", "manual_retry"}
 _MEMORY_ACTION_MARKERS = (
@@ -257,6 +257,61 @@ def _safe_int(value, default: int = 0) -> int:
         return default
 
 
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _sync_report_generation_timeout_seconds() -> float:
+    value = _safe_float(
+        getattr(settings, "REPORT_SYNC_GENERATION_TIMEOUT_SECONDS", None),
+        _DEFAULT_SYNC_REPORT_GENERATION_TIMEOUT_SECONDS,
+    )
+    return max(value, 1.0)
+
+
+def _assessment_timeout_seconds() -> float:
+    value = _safe_float(
+        getattr(settings, "REPORT_ASSESSMENT_TIMEOUT_SECONDS", None),
+        _DEFAULT_ASSESSMENT_TIMEOUT_SECONDS,
+    )
+    return max(value, 1.0)
+
+
+def _report_max_auto_retries() -> int:
+    value = _safe_int(
+        getattr(settings, "REPORT_MAX_AUTO_RETRIES", None),
+        _DEFAULT_REPORT_MAX_AUTO_RETRIES,
+    )
+    return max(value, 1)
+
+
+def _report_retry_base_backoff_seconds() -> int:
+    value = _safe_int(
+        getattr(settings, "REPORT_RETRY_BASE_BACKOFF_SECONDS", None),
+        _DEFAULT_REPORT_RETRY_BASE_BACKOFF_SECONDS,
+    )
+    return max(value, 1)
+
+
+def _report_retry_max_backoff_seconds() -> int:
+    configured_max = _safe_int(
+        getattr(settings, "REPORT_RETRY_MAX_BACKOFF_SECONDS", None),
+        _DEFAULT_REPORT_RETRY_MAX_BACKOFF_SECONDS,
+    )
+    return max(configured_max, _report_retry_base_backoff_seconds())
+
+
+def _report_lock_stale_seconds() -> int:
+    value = _safe_int(
+        getattr(settings, "REPORT_LOCK_STALE_SECONDS", None),
+        _DEFAULT_REPORT_LOCK_STALE_SECONDS,
+    )
+    return max(value, 1)
+
+
 def _increment_report_pipeline_metric(metric_name: str, amount: int = 1) -> int:
     _REPORT_PIPELINE_METRICS[metric_name] += amount
     return _REPORT_PIPELINE_METRICS[metric_name]
@@ -290,11 +345,13 @@ def _parse_iso_datetime(value: Any) -> datetime | None:
 
 
 def _compute_report_retry_backoff_seconds(attempt_number: int) -> int:
+    base_backoff = _report_retry_base_backoff_seconds()
+    max_backoff = _report_retry_max_backoff_seconds()
     if attempt_number <= 0:
-        return _REPORT_RETRY_BASE_BACKOFF_SECONDS
+        return base_backoff
     return min(
-        _REPORT_RETRY_BASE_BACKOFF_SECONDS * (2 ** (attempt_number - 1)),
-        _REPORT_RETRY_MAX_BACKOFF_SECONDS,
+        base_backoff * (2 ** (attempt_number - 1)),
+        max_backoff,
     )
 
 
@@ -319,7 +376,7 @@ def _next_report_diagnostics(
     if increment_attempt:
         diagnostics["attempt_count"] = _safe_int(diagnostics.get("attempt_count"), 0) + 1
         diagnostics["last_started_at"] = now_iso
-    diagnostics["max_attempts"] = _REPORT_MAX_AUTO_RETRIES
+    diagnostics["max_attempts"] = _report_max_auto_retries()
     diagnostics["last_phase"] = phase
     diagnostics["last_status"] = status
     diagnostics["last_transition_at"] = now_iso
@@ -366,7 +423,7 @@ def _read_report_diagnostics(interview: Interview) -> dict[str, Any] | None:
         last_status = None
     return {
         "attempt_count": _safe_int(raw.get("attempt_count"), 0),
-        "max_attempts": _safe_int(raw.get("max_attempts"), _REPORT_MAX_AUTO_RETRIES),
+        "max_attempts": _safe_int(raw.get("max_attempts"), _report_max_auto_retries()),
         "last_phase": raw.get("last_phase"),
         "last_status": last_status,
         "last_started_at": raw.get("last_started_at"),
@@ -397,10 +454,11 @@ async def _try_acquire_report_generation_lock(
     if isinstance(lock_payload, dict):
         lock_owner = str(lock_payload.get("owner") or "")
         locked_at = _parse_iso_datetime(lock_payload.get("locked_at"))
+        lock_stale_seconds = _report_lock_stale_seconds()
         lock_age_seconds = (
-            (now - locked_at).total_seconds() if locked_at else _REPORT_LOCK_STALE_SECONDS + 1
+            (now - locked_at).total_seconds() if locked_at else lock_stale_seconds + 1
         )
-        if lock_owner and lock_owner != owner and lock_age_seconds < _REPORT_LOCK_STALE_SECONDS:
+        if lock_owner and lock_owner != owner and lock_age_seconds < lock_stale_seconds:
             await db.rollback()
             return False
 
@@ -1088,6 +1146,16 @@ def _topic_signature(topic: dict | None) -> tuple[str, str]:
     return verification_target, primary_competency
 
 
+def _validate_assessment_result(result: Any) -> AssessmentResult:
+    if not isinstance(result, AssessmentResult):
+        raise ValueError("Assessor returned invalid result type")
+    if result.hiring_recommendation not in {"strong_yes", "yes", "maybe", "no"}:
+        raise ValueError("Assessor returned invalid hiring recommendation")
+    if not isinstance(result.full_report_json, dict):
+        raise ValueError("Assessor returned invalid full_report_json payload")
+    return result
+
+
 async def _get_next_question_with_dev_fallback(ctx: InterviewContext) -> str:
     try:
         return await interviewer.get_next_question(ctx)
@@ -1113,7 +1181,7 @@ async def _assess_with_dev_fallback(
     interview_meta: dict | None,
 ) -> AssessmentResult:
     try:
-        return await asyncio.wait_for(
+        result = await asyncio.wait_for(
             assessor.assess(
                 target_role=target_role,
                 message_history=message_history,
@@ -1122,15 +1190,16 @@ async def _assess_with_dev_fallback(
                 language=language,
                 interview_meta=interview_meta,
             ),
-            timeout=_ASSESSMENT_TIMEOUT_SECONDS,
+            timeout=_assessment_timeout_seconds(),
         )
+        return _validate_assessment_result(result)
     except Exception as exc:
         if settings.is_local_or_test:
             logger.exception(
                 "Assessment generation failed in local/test mode; using deterministic fallback",
             )
             try:
-                return await MockAssessor().assess(
+                fallback_result = await MockAssessor().assess(
                     target_role=target_role,
                     message_history=message_history,
                     message_timestamps=message_timestamps,
@@ -1138,6 +1207,7 @@ async def _assess_with_dev_fallback(
                     language=language,
                     interview_meta=interview_meta,
                 )
+                return _validate_assessment_result(fallback_result)
             except Exception:
                 logger.exception("Deterministic assessor fallback also failed")
         raise RuntimeError("AI assessor request failed") from exc
@@ -1815,14 +1885,14 @@ async def finish_interview(
     _log_report_pipeline_event(
         "finish_sync_started",
         interview_id=interview.id,
-        timeout_seconds=_SYNC_REPORT_GENERATION_TIMEOUT_SECONDS,
+        timeout_seconds=_sync_report_generation_timeout_seconds(),
     )
 
     sync_started_at = time.perf_counter()
     try:
         report = await asyncio.wait_for(
             _ensure_report_generated(db, interview, candidate),
-            timeout=_SYNC_REPORT_GENERATION_TIMEOUT_SECONDS,
+            timeout=_sync_report_generation_timeout_seconds(),
         )
         duration_seconds = round(time.perf_counter() - sync_started_at, 3)
         _increment_report_pipeline_metric("finish_sync_succeeded_total")
@@ -2079,7 +2149,8 @@ async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
             interview_id=interview_id,
         )
 
-        for attempt_number in range(1, _REPORT_MAX_AUTO_RETRIES + 1):
+        max_attempts = _report_max_auto_retries()
+        for attempt_number in range(1, max_attempts + 1):
             phase = f"async_worker_attempt_{attempt_number}"
             attempt_started_at = time.perf_counter()
             _increment_report_pipeline_metric("report_async_attempt_started_total")
@@ -2087,7 +2158,7 @@ async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
                 "report_async_attempt_started",
                 interview_id=interview_id,
                 attempt=attempt_number,
-                max_attempts=_REPORT_MAX_AUTO_RETRIES,
+                max_attempts=max_attempts,
             )
             try:
                 async with AsyncSessionLocal() as session:
@@ -2157,13 +2228,13 @@ async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
                     )
                     return
             except Exception as exc:
-                is_last_attempt = attempt_number >= _REPORT_MAX_AUTO_RETRIES
+                is_last_attempt = attempt_number >= max_attempts
                 _increment_report_pipeline_metric("report_async_attempt_failed_total")
                 _log_report_pipeline_event(
                     "report_async_attempt_failed",
                     interview_id=interview_id,
                     attempt=attempt_number,
-                    max_attempts=_REPORT_MAX_AUTO_RETRIES,
+                    max_attempts=max_attempts,
                     error_type=exc.__class__.__name__,
                     error=str(exc),
                     duration_seconds=round(time.perf_counter() - attempt_started_at, 3),
