@@ -127,6 +127,31 @@ async def test_cookie_write_allows_trusted_csrf_origin(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_bearer_write_does_not_require_csrf_origin(client: AsyncClient):
+    email = f"bearer_csrf_{uuid.uuid4().hex[:8]}@example.com"
+    await client.post("/api/v1/auth/candidate/register", json={
+        "email": email, "password": "password123", "full_name": "Bearer CSRF User",
+    })
+
+    async with AsyncClient(base_url=str(client.base_url)) as clean_client:
+        login = await clean_client.post("/api/v1/auth/login", json={
+            "email": email, "password": "password123",
+        })
+    assert login.status_code == 200
+    bearer_token = login.json()["access_token"]
+
+    change = await client.post(
+        "/api/v1/auth/change-password",
+        headers=auth_headers(bearer_token),
+        json={
+            "current_password": "password123",
+            "new_password": "password124",
+        },
+    )
+    assert change.status_code == 204, change.text
+
+
+@pytest.mark.asyncio
 async def test_valid_bearer_overrides_cookie_session(client: AsyncClient):
     cookie_email = f"cookie_owner_{uuid.uuid4().hex[:8]}@example.com"
     await client.post("/api/v1/auth/candidate/register", json={
