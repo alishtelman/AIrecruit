@@ -894,7 +894,7 @@
     "cameraPreviewStarting": "Starting camera preview...",
     "recordingRequired": "Recording is off",
     "enableRecording": "Retry recording",
-    "recordingDescription": "The interview can continue without recording. You can retry screen, camera, and microphone capture at any time.",
+    "recordingDescription": "Recording starts automatically at interview launch. If screen permission is denied, the interview still continues and camera self-view remains available.",
     "completeTitle": "Interview complete",
     "completeDescription": "You've answered all {count} questions. Generate your assessment report now.",
     "finish": "Finish and get report",

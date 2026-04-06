@@ -150,39 +150,6 @@ export function useMediaRecorder() {
     setCameraPreviewReady(false);
     try {
       const prepared = consumePreparedInterviewMedia();
-      let screenStream: MediaStream;
-      if (prepared) {
-        screenStream = prepared.screenStream;
-      } else {
-        try {
-          screenStream = await navigator.mediaDevices.getDisplayMedia({
-            video: { frameRate: { ideal: 15, max: 30 } },
-            audio: false,
-          });
-        } catch (error: unknown) {
-          const mapped = mapPermissionError(error);
-          const code =
-            mapped.code === "recording_error"
-              ? "screen_permission_denied"
-              : mapped.code;
-          const message =
-            mapped.code === "recording_error"
-              ? "Screen permission denied. Interview will continue without recording."
-              : mapped.message;
-          setRecorderError(code, message);
-          cleanupStreams();
-          return false;
-        }
-      }
-      const screenVideoTrack = screenStream.getVideoTracks()[0];
-      if (!screenVideoTrack || screenVideoTrack.readyState === "ended") {
-        setRecorderError("screen_stream_unavailable", "Screen capture stream is unavailable.");
-        cleanupStreams();
-        return false;
-      }
-      screenStreamRef.current = screenStream;
-      setIsScreenSharing(true);
-
       let webcamStream: MediaStream;
       if (prepared) {
         webcamStream = prepared.webcamStream;
@@ -195,9 +162,7 @@ export function useMediaRecorder() {
         } catch (error: unknown) {
           const mapped = mapPermissionError(error);
           const code =
-            mapped.code === "screen_permission_denied"
-              ? "camera_permission_denied"
-              : mapped.code;
+            mapped.code === "screen_permission_denied" ? "camera_permission_denied" : mapped.code;
           const message =
             mapped.code === "screen_permission_denied"
               ? "Camera or microphone permission denied. Interview will continue without recording."
@@ -223,6 +188,48 @@ export function useMediaRecorder() {
       }
 
       bindPreview(webcamStream);
+
+      let screenStream: MediaStream;
+      if (prepared) {
+        screenStream = prepared.screenStream;
+      } else {
+        try {
+          screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: { frameRate: { ideal: 15, max: 30 } },
+            audio: false,
+          });
+        } catch (error: unknown) {
+          const mapped = mapPermissionError(error);
+          const code =
+            mapped.code === "recording_error" ? "screen_permission_denied" : mapped.code;
+          const message =
+            mapped.code === "recording_error"
+              ? "Screen permission denied. Interview will continue without recording."
+              : mapped.message;
+          setRecorderError(code, message);
+          if (screenStreamRef.current) {
+            screenStreamRef.current.getTracks().forEach((t) => t.stop());
+            screenStreamRef.current = null;
+          }
+          setIsScreenSharing(false);
+          setIsRecording(false);
+          return false;
+        }
+      }
+      const screenVideoTrack = screenStream.getVideoTracks()[0];
+      if (!screenVideoTrack || screenVideoTrack.readyState === "ended") {
+        setRecorderError("screen_stream_unavailable", "Screen capture stream is unavailable.");
+        screenStream.getTracks().forEach((t) => t.stop());
+        if (screenStreamRef.current) {
+          screenStreamRef.current.getTracks().forEach((t) => t.stop());
+          screenStreamRef.current = null;
+        }
+        setIsScreenSharing(false);
+        setIsRecording(false);
+        return false;
+      }
+      screenStreamRef.current = screenStream;
+      setIsScreenSharing(true);
 
       const recordingTracks: MediaStreamTrack[] = [];
       if (screenVideoTrack) {

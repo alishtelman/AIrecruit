@@ -210,6 +210,14 @@ export default function InterviewPage() {
   }, [interview, stopRecording]);
 
   useEffect(() => {
+    return () => {
+      stopRecording();
+      stop();
+      stopVoice();
+    };
+  }, [stopRecording, stop, stopVoice]);
+
+  useEffect(() => {
     if (!recordingError) return;
     const eventType =
       recordingErrorCode === "screen_share_stopped"
@@ -584,10 +592,10 @@ export default function InterviewPage() {
                 autoPlay
                 playsInline
                 className={`w-full h-full object-cover transition-opacity ${
-                  isRecording && cameraPreviewReady ? "opacity-100" : "opacity-0"
+                  cameraPreviewReady ? "opacity-100" : "opacity-0"
                 }`}
               />
-              {(!isRecording || !cameraPreviewReady) && (
+              {!cameraPreviewReady && (
                 <div className="absolute inset-0 flex items-center justify-center text-[11px] text-slate-400 px-2 text-center">
                   {isRecording ? t("cameraPreviewStarting") : t("cameraPreviewOff")}
                 </div>
