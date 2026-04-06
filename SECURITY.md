@@ -54,9 +54,11 @@ Startup will fail outside local/test when `SECRET_KEY` is insecure.
 - API-level Bearer compatibility is still enabled for non-browser/API clients.
   - Risk: accidental mixed-mode auth assumptions in endpoints/tests.
   - Target state: strictly document cookie-first browser flows and keep explicit token precedence tests.
-- Python dependencies currently require a temporary baseline allowlist:
+- Frontend dependency audit still reports high findings on current Next.js/face-api transitive chain.
+  - Target state: upgrade Next.js and related lint stack without breaking app-router behavior.
+- Python dependency baseline file is retained for emergency exceptions:
   - [`backend/pip_audit_baseline.txt`](backend/pip_audit_baseline.txt)
-  - Target state: remove entries as packages are upgraded and eventually enforce zero known vulnerabilities.
+  - Current state: empty (no accepted Python vulnerability exceptions).
 
 ---
 

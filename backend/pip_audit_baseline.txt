@@ -1,10 +1,2 @@
-# Known dependency vulnerabilities tracked for staged remediation.
-# CI ignores only these IDs and fails on any new vulnerability.
-PYSEC-2024-232
-PYSEC-2024-233
-CVE-2024-53981
-CVE-2026-24486
-CVE-2025-64512
-CVE-2025-70559
-CVE-2024-47874
-CVE-2025-54121
+# Keep this file for temporary exceptions only.
+# Leave empty when there are no accepted Python dependency vulnerabilities.
