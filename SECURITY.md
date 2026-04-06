@@ -69,7 +69,7 @@ docker compose exec -T backend alembic upgrade head
 docker compose exec -T frontend npm run lint
 docker compose exec -T frontend npm run build
 cd backend && python3 -m pytest -v
-npm --prefix frontend audit --audit-level=critical
+npm --prefix frontend audit --audit-level=high
 pip-audit -r backend/requirements.txt
 ```
 

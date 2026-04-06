@@ -317,7 +317,7 @@ CI gates (`.github/workflows/ci.yml`) run on push/PR:
 
 - frontend lint + build
 - backend migration + compile + targeted suite
-- dependency scan (`npm audit --audit-level=critical`, `pip-audit`)
+- dependency scan (`npm audit --audit-level=high`, `pip-audit`)
 - Python dependency baseline allowlist is tracked in `backend/pip_audit_baseline.txt`
 
 ---
