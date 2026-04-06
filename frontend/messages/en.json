@@ -910,6 +910,15 @@
     "reportAttempts": "Generation attempt: {count}/{max}",
     "lastReportError": "Last error: {reason}",
     "nextRetryIn": "Next auto-retry in {seconds}s",
+    "statusRefreshCycle": "Refreshing status cycle {current}/{total}",
+    "reportPhase": {
+      "queued": "Queued",
+      "assessing": "Assessing",
+      "retrying": "Retrying",
+      "finalizing": "Finalizing",
+      "ready": "Ready",
+      "failed": "Failed"
+    },
     "sendFailed": "Failed to send message",
     "recordingUploadFailed": "Recording upload failed",
     "finishFailed": "Failed to finish interview",

@@ -6,8 +6,11 @@ question_count is an explicit DB column on Interview, incremented here.
 It is the authoritative source of truth — no need to re-count messages.
 """
 import asyncio
+import json
 import logging
+import time
 import uuid
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 import re
 from typing import Any
@@ -226,6 +229,7 @@ _MEMORY_ACTION_MARKERS = (
     "debug",
 )
 _REPORT_GENERATION_TASKS: set[uuid.UUID] = set()
+_REPORT_PIPELINE_METRICS: defaultdict[str, int] = defaultdict(int)
 
 _PROCTORING_POLICY_MODES = {"observe_only", "strict_flagging"}
 _EVENT_SEVERITIES = {"info", "medium", "high"}
@@ -251,6 +255,26 @@ def _safe_int(value, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _increment_report_pipeline_metric(metric_name: str, amount: int = 1) -> int:
+    _REPORT_PIPELINE_METRICS[metric_name] += amount
+    return _REPORT_PIPELINE_METRICS[metric_name]
+
+
+def _log_report_pipeline_event(
+    stage: str,
+    *,
+    interview_id: uuid.UUID,
+    **fields: Any,
+) -> None:
+    payload = {
+        "stage": stage,
+        "interview_id": str(interview_id),
+        "ts": datetime.utcnow().isoformat(),
+        **fields,
+    }
+    logger.info("report_pipeline %s", json.dumps(payload, sort_keys=True, default=str))
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
@@ -1781,16 +1805,32 @@ async def finish_interview(
         raise MaxQuestionsNotReachedError()
 
     # Mark as processing and generate report asynchronously if needed.
+    prior_status = interview.status
     interview.status = "report_processing"
     interview.completed_at = datetime.utcnow()
     _update_report_diagnostics(interview, phase="finish_sync", status="processing")
     await db.commit()
     await db.refresh(interview)
+    _increment_report_pipeline_metric("finish_sync_started_total")
+    _log_report_pipeline_event(
+        "finish_sync_started",
+        interview_id=interview.id,
+        timeout_seconds=_SYNC_REPORT_GENERATION_TIMEOUT_SECONDS,
+    )
 
+    sync_started_at = time.perf_counter()
     try:
         report = await asyncio.wait_for(
             _ensure_report_generated(db, interview, candidate),
             timeout=_SYNC_REPORT_GENERATION_TIMEOUT_SECONDS,
+        )
+        duration_seconds = round(time.perf_counter() - sync_started_at, 3)
+        _increment_report_pipeline_metric("finish_sync_succeeded_total")
+        _log_report_pipeline_event(
+            "finish_sync_succeeded",
+            interview_id=interview.id,
+            duration_seconds=duration_seconds,
+            report_id=str(report.id),
         )
         return FinishInterviewResponse(
             interview_id=interview.id,
@@ -1807,6 +1847,13 @@ async def finish_interview(
             "Synchronous report generation timed out for interview %s, switching to async processing",
             interview.id,
         )
+        duration_seconds = round(time.perf_counter() - sync_started_at, 3)
+        _increment_report_pipeline_metric("finish_sync_timeout_total")
+        _log_report_pipeline_event(
+            "finish_sync_timeout",
+            interview_id=interview.id,
+            duration_seconds=duration_seconds,
+        )
         interview.status = "report_processing"
         _update_report_diagnostics(interview, phase="finish_sync_timeout", status="processing")
         await db.commit()
@@ -1819,6 +1866,15 @@ async def finish_interview(
         )
     except Exception as exc:
         logger.exception("Initial report generation failed for interview %s, switching to async processing", interview.id)
+        duration_seconds = round(time.perf_counter() - sync_started_at, 3)
+        _increment_report_pipeline_metric("finish_sync_error_total")
+        _log_report_pipeline_event(
+            "finish_sync_error",
+            interview_id=interview.id,
+            duration_seconds=duration_seconds,
+            error_type=exc.__class__.__name__,
+            error=str(exc),
+        )
         interview.status = "report_processing"
         _update_report_diagnostics(
             interview,
@@ -1840,6 +1896,7 @@ async def _ensure_report_generated(
     interview: Interview,
     candidate: Candidate,
 ) -> AssessmentReport:
+    assess_started_at = time.perf_counter()
     existing_report = await db.scalar(
         select(AssessmentReport).where(AssessmentReport.interview_id == interview.id)
     )
@@ -1848,6 +1905,12 @@ async def _ensure_report_generated(
             interview.status = "report_generated"
         _update_report_diagnostics(interview, phase="existing_report", status="ready")
         await db.commit()
+        _increment_report_pipeline_metric("report_existing_hit_total")
+        _log_report_pipeline_event(
+            "report_existing_hit",
+            interview_id=interview.id,
+            report_id=str(existing_report.id),
+        )
         return existing_report
 
     messages = await _get_messages(db, interview.id)
@@ -1901,6 +1964,15 @@ async def _ensure_report_generated(
     _update_report_diagnostics(interview, phase="report_saved", status="ready")
     await db.commit()
     await db.refresh(report)
+    duration_seconds = round(time.perf_counter() - assess_started_at, 3)
+    _increment_report_pipeline_metric("report_generated_total")
+    _log_report_pipeline_event(
+        "report_generated",
+        interview_id=interview.id,
+        report_id=str(report.id),
+        duration_seconds=duration_seconds,
+        hiring_recommendation=report.hiring_recommendation,
+    )
 
     if interview.company_assessment_id:
         from app.services.assessment_invite_service import sync_assessment_status
@@ -1957,14 +2029,32 @@ async def _ensure_report_generated(
 
 def _schedule_report_generation(interview_id: uuid.UUID) -> None:
     if interview_id in _REPORT_GENERATION_TASKS:
+        _increment_report_pipeline_metric("report_schedule_skipped_duplicate_total")
+        _log_report_pipeline_event(
+            "report_schedule_skipped_duplicate",
+            interview_id=interview_id,
+            active_tasks=len(_REPORT_GENERATION_TASKS),
+        )
         return
     _REPORT_GENERATION_TASKS.add(interview_id)
+    _increment_report_pipeline_metric("report_schedule_enqueued_total")
+    _log_report_pipeline_event(
+        "report_schedule_enqueued",
+        interview_id=interview_id,
+        active_tasks=len(_REPORT_GENERATION_TASKS),
+    )
     asyncio.create_task(_run_report_generation_job(interview_id))
 
 
 async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
     lock_owner = str(uuid.uuid4())
     lock_acquired = False
+    job_started_at = time.perf_counter()
+    _increment_report_pipeline_metric("report_async_job_started_total")
+    _log_report_pipeline_event(
+        "report_async_job_started",
+        interview_id=interview_id,
+    )
     try:
         async with AsyncSessionLocal() as lock_session:
             lock_acquired = await _try_acquire_report_generation_lock(
@@ -1977,14 +2067,38 @@ async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
                 "Skipped async report generation for interview %s because lock is already held",
                 interview_id,
             )
+            _increment_report_pipeline_metric("report_lock_contended_total")
+            _log_report_pipeline_event(
+                "report_lock_contended",
+                interview_id=interview_id,
+            )
             return
+        _increment_report_pipeline_metric("report_lock_acquired_total")
+        _log_report_pipeline_event(
+            "report_lock_acquired",
+            interview_id=interview_id,
+        )
 
         for attempt_number in range(1, _REPORT_MAX_AUTO_RETRIES + 1):
             phase = f"async_worker_attempt_{attempt_number}"
+            attempt_started_at = time.perf_counter()
+            _increment_report_pipeline_metric("report_async_attempt_started_total")
+            _log_report_pipeline_event(
+                "report_async_attempt_started",
+                interview_id=interview_id,
+                attempt=attempt_number,
+                max_attempts=_REPORT_MAX_AUTO_RETRIES,
+            )
             try:
                 async with AsyncSessionLocal() as session:
                     interview = await session.scalar(select(Interview).where(Interview.id == interview_id))
                     if not interview:
+                        _increment_report_pipeline_metric("report_async_missing_interview_total")
+                        _log_report_pipeline_event(
+                            "report_async_missing_interview",
+                            interview_id=interview_id,
+                            attempt=attempt_number,
+                        )
                         return
 
                     existing_report = await session.scalar(
@@ -1999,6 +2113,13 @@ async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
                             status="ready",
                         )
                         await session.commit()
+                        _increment_report_pipeline_metric("report_async_existing_hit_total")
+                        _log_report_pipeline_event(
+                            "report_async_existing_hit",
+                            interview_id=interview_id,
+                            attempt=attempt_number,
+                            duration_seconds=round(time.perf_counter() - attempt_started_at, 3),
+                        )
                         return
 
                     candidate = await session.scalar(select(Candidate).where(Candidate.id == interview.candidate_id))
@@ -2011,6 +2132,12 @@ async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
                             error=f"Candidate {interview.candidate_id} not found",
                         )
                         await session.commit()
+                        _increment_report_pipeline_metric("report_async_missing_candidate_total")
+                        _log_report_pipeline_event(
+                            "report_async_missing_candidate",
+                            interview_id=interview_id,
+                            attempt=attempt_number,
+                        )
                         return
 
                     interview.status = "report_processing"
@@ -2021,9 +2148,26 @@ async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
                     )
                     await session.commit()
                     await _ensure_report_generated(session, interview, candidate)
+                    _increment_report_pipeline_metric("report_async_attempt_succeeded_total")
+                    _log_report_pipeline_event(
+                        "report_async_attempt_succeeded",
+                        interview_id=interview_id,
+                        attempt=attempt_number,
+                        duration_seconds=round(time.perf_counter() - attempt_started_at, 3),
+                    )
                     return
             except Exception as exc:
                 is_last_attempt = attempt_number >= _REPORT_MAX_AUTO_RETRIES
+                _increment_report_pipeline_metric("report_async_attempt_failed_total")
+                _log_report_pipeline_event(
+                    "report_async_attempt_failed",
+                    interview_id=interview_id,
+                    attempt=attempt_number,
+                    max_attempts=_REPORT_MAX_AUTO_RETRIES,
+                    error_type=exc.__class__.__name__,
+                    error=str(exc),
+                    duration_seconds=round(time.perf_counter() - attempt_started_at, 3),
+                )
                 if is_last_attempt:
                     logger.exception(
                         "Async report generation exhausted retries for interview %s",
@@ -2040,6 +2184,15 @@ async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
                                 error=str(exc),
                             )
                             await session.commit()
+                    _increment_report_pipeline_metric("report_async_job_failed_total")
+                    _log_report_pipeline_event(
+                        "report_async_job_failed",
+                        interview_id=interview_id,
+                        attempts=attempt_number,
+                        error_type=exc.__class__.__name__,
+                        error=str(exc),
+                        duration_seconds=round(time.perf_counter() - job_started_at, 3),
+                    )
                     return
 
                 backoff_seconds = _compute_report_retry_backoff_seconds(attempt_number)
@@ -2064,10 +2217,23 @@ async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
                             next_retry_at=next_retry_at_iso,
                         )
                         await session.commit()
+                _log_report_pipeline_event(
+                    "report_async_retry_scheduled",
+                    interview_id=interview_id,
+                    attempt=attempt_number,
+                    next_retry_at=next_retry_at_iso,
+                    backoff_seconds=backoff_seconds,
+                )
                 await asyncio.sleep(backoff_seconds)
                 continue
     except Exception:
         logger.exception("Async report generation crashed for interview %s", interview_id)
+        _increment_report_pipeline_metric("report_async_worker_crash_total")
+        _log_report_pipeline_event(
+            "report_async_worker_crash",
+            interview_id=interview_id,
+            duration_seconds=round(time.perf_counter() - job_started_at, 3),
+        )
         async with AsyncSessionLocal() as session:
             interview = await session.scalar(select(Interview).where(Interview.id == interview_id))
             if interview and interview.status != "report_generated":
@@ -2088,6 +2254,19 @@ async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
                     owner=lock_owner,
                 )
         _REPORT_GENERATION_TASKS.discard(interview_id)
+        _increment_report_pipeline_metric("report_async_job_finished_total")
+        _log_report_pipeline_event(
+            "report_async_job_finished",
+            interview_id=interview_id,
+            lock_acquired=lock_acquired,
+            active_tasks=len(_REPORT_GENERATION_TASKS),
+            duration_seconds=round(time.perf_counter() - job_started_at, 3),
+            metrics={
+                "job_started": _REPORT_PIPELINE_METRICS.get("report_async_job_started_total", 0),
+                "job_finished": _REPORT_PIPELINE_METRICS.get("report_async_job_finished_total", 0),
+                "job_failed": _REPORT_PIPELINE_METRICS.get("report_async_job_failed_total", 0),
+            },
+        )
 
 
 async def get_interview_report_status(
@@ -2158,6 +2337,12 @@ async def retry_interview_report_generation(
         select(AssessmentReport).where(AssessmentReport.interview_id == interview.id)
     )
     if report:
+        _increment_report_pipeline_metric("report_manual_retry_skipped_ready_total")
+        _log_report_pipeline_event(
+            "report_manual_retry_skipped_ready",
+            interview_id=interview.id,
+            report_id=str(report.id),
+        )
         return await get_interview_report_status(db, candidate, interview.id)
 
     if interview.status in {"created", "in_progress"}:
@@ -2171,9 +2356,16 @@ async def retry_interview_report_generation(
     if interview.status not in {"failed", "completed", "report_processing"}:
         raise ReportRetryNotAllowedError("Report retry is not available for this interview state.")
 
+    prior_status = interview.status
     interview.status = "report_processing"
     _update_report_diagnostics(interview, phase="manual_retry", status="processing")
     await db.commit()
+    _increment_report_pipeline_metric("report_manual_retry_requested_total")
+    _log_report_pipeline_event(
+        "report_manual_retry_requested",
+        interview_id=interview.id,
+        prior_status=prior_status,
+    )
     _schedule_report_generation(interview.id)
 
     return InterviewReportStatusResponse(

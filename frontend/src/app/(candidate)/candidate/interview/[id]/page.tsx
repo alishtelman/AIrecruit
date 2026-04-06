@@ -19,6 +19,8 @@ import type {
 
 const REPORT_POLL_INTERVAL_MS = 1500;
 const REPORT_POLL_TIMEOUT_MS = 120000;
+const REPORT_SOFT_REFRESH_CYCLES = 2;
+const REPORT_SOFT_REFRESH_DELAY_MS = 1000;
 const PROCTORING_POLICY_MODE =
   process.env.NEXT_PUBLIC_PROCTORING_POLICY_MODE === "strict_flagging"
     ? "strict_flagging"
@@ -54,6 +56,7 @@ export default function InterviewPage() {
   const [waitingForReport, setWaitingForReport] = useState(false);
   const [reportStatus, setReportStatus] = useState<InterviewReportStatusResponse | null>(null);
   const [retryCountdownSeconds, setRetryCountdownSeconds] = useState<number | null>(null);
+  const [pollRefreshCycle, setPollRefreshCycle] = useState(0);
   const [error, setError] = useState("");
   const [answerMode, setAnswerMode] = useState<"text" | "voice">("text");
   const [latestTranscript, setLatestTranscript] = useState("");
@@ -250,6 +253,39 @@ export default function InterviewPage() {
     return reason || reportGenerationFailedMessage;
   }
 
+  function getReportPhase(status: InterviewReportStatusResponse | null): "queued" | "assessing" | "retrying" | "finalizing" | "ready" | "failed" {
+    if (!status) return "queued";
+    if (status.processing_state === "ready") return "ready";
+    if (status.processing_state === "failed") return "failed";
+
+    const phase = (status.diagnostics?.last_phase || "").toLowerCase();
+    if (phase === "manual_retry") return "retrying";
+    if (phase.startsWith("async_worker_attempt_")) {
+      return (status.diagnostics?.attempt_count ?? 0) > 1 ? "retrying" : "assessing";
+    }
+    if (phase === "report_saved" || phase === "status_poll" || phase === "async_existing_report") {
+      return "finalizing";
+    }
+    if (phase === "assessing" || phase === "finish_sync") {
+      return "assessing";
+    }
+    return "queued";
+  }
+
+  async function refreshReportSnapshot(interviewId: string): Promise<InterviewReportStatusResponse | null> {
+    try {
+      const [detail, status] = await Promise.all([
+        interviewApi.getDetail(interviewId),
+        interviewApi.getReportStatus(interviewId),
+      ]);
+      setInterview(detail);
+      setReportStatus(status);
+      return status;
+    } catch {
+      return null;
+    }
+  }
+
   useEffect(() => {
     const nextRetryAtRaw = reportStatus?.diagnostics?.next_retry_at;
     if (!waitingForReport || !nextRetryAtRaw) {
@@ -273,26 +309,41 @@ export default function InterviewPage() {
   }, [waitingForReport, reportStatus?.diagnostics?.next_retry_at]);
 
   async function waitForReport(interviewId: string): Promise<string> {
-    const deadline = Date.now() + REPORT_POLL_TIMEOUT_MS;
     let lastKnownFailure: string | null = null;
-    while (Date.now() < deadline) {
-      try {
-        const status = await interviewApi.getReportStatus(interviewId);
-        setReportStatus(status);
-        if (status.processing_state === "ready" && status.report_id) {
-          return status.report_id;
+    for (let cycle = 0; cycle <= REPORT_SOFT_REFRESH_CYCLES; cycle += 1) {
+      setPollRefreshCycle(cycle);
+      const deadline = Date.now() + REPORT_POLL_TIMEOUT_MS;
+
+      while (Date.now() < deadline) {
+        try {
+          const status = await interviewApi.getReportStatus(interviewId);
+          setReportStatus(status);
+          if (status.processing_state === "ready" && status.report_id) {
+            return status.report_id;
+          }
+          if (status.processing_state === "failed") {
+            throw new Error(getReportFailureMessage(status));
+          }
+          if (status.failure_reason?.trim()) lastKnownFailure = status.failure_reason.trim();
+          if (status.diagnostics?.last_error?.trim()) {
+            lastKnownFailure = status.diagnostics.last_error.trim();
+          }
+        } catch {
+          // transient polling error, keep waiting until timeout
         }
-        if (status.processing_state === "failed") {
-          throw new Error(getReportFailureMessage(status));
-        }
-        if (status.failure_reason?.trim()) lastKnownFailure = status.failure_reason.trim();
-        if (status.diagnostics?.last_error?.trim()) {
-          lastKnownFailure = status.diagnostics.last_error.trim();
-        }
-      } catch {
-        // transient polling error, keep waiting until timeout
+        await new Promise((resolve) => setTimeout(resolve, REPORT_POLL_INTERVAL_MS));
       }
-      await new Promise((resolve) => setTimeout(resolve, REPORT_POLL_INTERVAL_MS));
+
+      const refreshed = await refreshReportSnapshot(interviewId);
+      if (refreshed?.processing_state === "ready" && refreshed.report_id) {
+        return refreshed.report_id;
+      }
+      if (refreshed?.processing_state === "failed") {
+        throw new Error(getReportFailureMessage(refreshed));
+      }
+      if (cycle < REPORT_SOFT_REFRESH_CYCLES) {
+        await new Promise((resolve) => setTimeout(resolve, REPORT_SOFT_REFRESH_DELAY_MS));
+      }
     }
     if (lastKnownFailure) {
       throw new Error(lastKnownFailure);
@@ -360,6 +411,7 @@ export default function InterviewPage() {
     setFinishing(true);
     setWaitingForReport(false);
     setReportStatus(null);
+    setPollRefreshCycle(0);
     setError("");
     try {
       let recordingNotice: string | null = null;
@@ -418,6 +470,7 @@ export default function InterviewPage() {
     } finally {
       setWaitingForReport(false);
       setFinishing(false);
+      setPollRefreshCycle(0);
     }
   }
 
@@ -426,6 +479,7 @@ export default function InterviewPage() {
     setReportRetrying(true);
     setWaitingForReport(true);
     setReportStatus(null);
+    setPollRefreshCycle(0);
     setError("");
     try {
       const retryStatus = await interviewApi.retryReport(id);
@@ -444,6 +498,7 @@ export default function InterviewPage() {
     } finally {
       setWaitingForReport(false);
       setReportRetrying(false);
+      setPollRefreshCycle(0);
     }
   }
 
@@ -476,6 +531,16 @@ export default function InterviewPage() {
   const reportAttempts = reportStatus?.diagnostics?.attempt_count ?? 0;
   const reportMaxAttempts = reportStatus?.diagnostics?.max_attempts ?? 0;
   const reportLastError = reportStatus?.diagnostics?.last_error;
+  const reportPhase = getReportPhase(reportStatus);
+  const reportPhaseLabel = t(`reportPhase.${reportPhase}`);
+  const reportPhaseToneClass =
+    reportPhase === "ready"
+      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+      : reportPhase === "failed"
+      ? "border-red-500/30 bg-red-500/10 text-red-300"
+      : reportPhase === "retrying"
+      ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+      : "border-blue-500/30 bg-blue-500/10 text-blue-300";
   const uploadStatusLabel =
     recordingUploadState === "uploading"
       ? t("uploadStatus.uploading")
@@ -678,6 +743,13 @@ export default function InterviewPage() {
                 {uploadStatusLabel}
               </div>
             )}
+            {(waitingForReport || reportRetrying) && (
+              <div className="mb-3">
+                <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${reportPhaseToneClass}`}>
+                  {reportPhaseLabel}
+                </span>
+              </div>
+            )}
             {(waitingForReport || reportRetrying) && reportAttempts > 0 && (
               <div className="mb-3 text-xs text-slate-300 space-y-1">
                 <p>{t("reportAttempts", {count: reportAttempts, max: reportMaxAttempts || reportAttempts})}</p>
@@ -686,6 +758,9 @@ export default function InterviewPage() {
                 )}
                 {retryCountdownSeconds !== null && retryCountdownSeconds > 0 && (
                   <p>{t("nextRetryIn", {seconds: retryCountdownSeconds})}</p>
+                )}
+                {pollRefreshCycle > 0 && (
+                  <p>{t("statusRefreshCycle", {current: pollRefreshCycle + 1, total: REPORT_SOFT_REFRESH_CYCLES + 1})}</p>
                 )}
               </div>
             )}
@@ -726,6 +801,13 @@ export default function InterviewPage() {
                   ? t("analysisDuration")
                   : t("savingResponses")}
               </p>
+              {(waitingForReport || reportRetrying) && (
+                <div className="mt-3">
+                  <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${reportPhaseToneClass}`}>
+                    {reportPhaseLabel}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>
