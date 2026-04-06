@@ -55,3 +55,24 @@ def test_skill_with_no_candidate_mention_is_dropped():
 
     tags = _aggregate_skills(per_question, message_history=message_history)
     assert tags == []
+
+
+def test_single_unverified_skill_mention_without_action_context_is_dropped():
+    per_question = [
+        {
+            "question_number": 1,
+            "answer_quality": 7.6,
+            "specificity": "medium",
+            "depth": "adequate",
+            "ai_likelihood": 0.08,
+            "evidence": "Candidate referenced PostgreSQL but did not provide practical usage details.",
+            "skills_mentioned": [{"skill": "postgresql", "proficiency": "advanced"}],
+        }
+    ]
+    message_history = [
+        {"role": "assistant", "content": "Как вы работали с базами данных?"},
+        {"role": "candidate", "content": "Слышал про PostgreSQL, но только на уровне статей и общих обсуждений."},
+    ]
+
+    tags = _aggregate_skills(per_question, message_history=message_history)
+    assert tags == []

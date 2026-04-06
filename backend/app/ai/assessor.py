@@ -1295,6 +1295,23 @@ def _aggregate_skills(
         "debug",
         "troubleshoot",
     )
+    context_markers = (
+        "production",
+        "prod",
+        "проект",
+        "проекте",
+        "проекта",
+        "нагруз",
+        "latency",
+        "throughput",
+        "инцид",
+        "метрик",
+        "slo",
+        "results",
+        "результат",
+        "опыт",
+        "years",
+    )
 
     def _normalize_skill_name(name: str) -> str:
         normalized = re.sub(r"\s+", " ", (name or "").strip().lower())
@@ -1323,9 +1340,25 @@ def _aggregate_skills(
         if not candidate_answers:
             # Backward-compatible fallback for cases where we only have pass1.
             return True
-        if skill in candidate_tech_mentions:
-            return True
         pattern = re.compile(rf"\b{re.escape(skill)}\b")
+        for answer in candidate_answers:
+            answer_lower = answer.lower()
+            for match in pattern.finditer(answer_lower):
+                start = max(0, match.start() - 80)
+                end = min(len(answer_lower), match.end() + 80)
+                window = answer_lower[start:end]
+                if any(marker in window for marker in action_markers):
+                    return True
+                if any(marker in window for marker in context_markers):
+                    return True
+                if re.search(r"\d", window):
+                    return True
+
+        if skill in candidate_tech_mentions:
+            # Extracted mention exists but without local action context.
+            # Require repeated explicit mentions to avoid false-positive single hits.
+            return sum(1 for answer in candidate_answers if pattern.search(answer.lower())) >= 2
+
         matches = list(pattern.finditer(candidate_corpus))
         if not matches:
             return False
