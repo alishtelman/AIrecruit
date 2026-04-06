@@ -51,10 +51,12 @@ Startup will fail outside local/test when `SECRET_KEY` is insecure.
 
 ## Known Security Debt
 
-- Bearer-token compatibility remains in frontend/localStorage for migration safety.
-  - Risk: XSS can expose localStorage token.
-  - Target state: cookie-only auth transport + CSRF hardening for sensitive write actions.
-- Dependency vulnerability triage should continue in CI on each release.
+- API-level Bearer compatibility is still enabled for non-browser/API clients.
+  - Risk: accidental mixed-mode auth assumptions in endpoints/tests.
+  - Target state: strictly document cookie-first browser flows and keep explicit token precedence tests.
+- Python dependencies currently require a temporary baseline allowlist:
+  - [`backend/pip_audit_baseline.txt`](backend/pip_audit_baseline.txt)
+  - Target state: remove entries as packages are upgraded and eventually enforce zero known vulnerabilities.
 
 ---
 
@@ -65,6 +67,8 @@ docker compose exec -T backend alembic upgrade head
 docker compose exec -T frontend npm run lint
 docker compose exec -T frontend npm run build
 cd backend && python3 -m pytest -v
+npm --prefix frontend audit --audit-level=critical
+pip-audit -r backend/requirements.txt
 ```
 
 For high-risk changes (auth/privacy/company access), add targeted suites:
