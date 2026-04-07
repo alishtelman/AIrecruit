@@ -44,6 +44,7 @@ Startup will fail outside local/test when `SECRET_KEY` is insecure.
 - Cookie-first auth with `HttpOnly` session cookie.
 - Cookie-auth write endpoints enforce trusted `Origin/Referer` CSRF checks.
 - Backward-compatible Bearer auth can be disabled via `AUTH_ALLOW_BEARER=false` outside local/test.
+- API responses include baseline hardening headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`; plus HSTS when secure cookies are enabled).
 - Candidate privacy visibility + approval flow for company access.
 - Company-scoped access enforcement for private reports and interview replays.
 - Employee invite start is bound to authenticated candidate email.

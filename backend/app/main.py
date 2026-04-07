@@ -25,6 +25,20 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if settings.SESSION_COOKIE_SECURE:
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=63072000; includeSubDomains",
+        )
+    return response
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catch-all: ensures CORS headers are present on unhandled 500s."""
