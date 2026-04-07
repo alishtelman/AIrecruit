@@ -14,7 +14,10 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 
+from app.core.config import settings
+
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8001")
+TEST_ORIGIN = os.getenv("TEST_ORIGIN", "http://localhost:3000")
 
 
 @pytest_asyncio.fixture
@@ -56,4 +59,11 @@ async def company_token(client: AsyncClient) -> str:
 
 
 def auth_headers(token: str) -> dict:
+    return {
+        "Cookie": f"{settings.SESSION_COOKIE_NAME}={token}",
+        "Origin": TEST_ORIGIN,
+    }
+
+
+def bearer_auth_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}

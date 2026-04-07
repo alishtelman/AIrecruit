@@ -5,7 +5,7 @@ import pytest
 from httpx import AsyncClient
 
 from app.core.config import settings
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, bearer_auth_headers
 
 
 @pytest.mark.asyncio
@@ -143,7 +143,7 @@ async def test_bearer_write_does_not_require_csrf_origin(client: AsyncClient):
 
     change = await client.post(
         "/api/v1/auth/change-password",
-        headers=auth_headers(bearer_token),
+        headers=bearer_auth_headers(bearer_token),
         json={
             "current_password": "password123",
             "new_password": "password124",
@@ -186,7 +186,7 @@ async def test_valid_bearer_overrides_cookie_session(client: AsyncClient):
     assert bearer_login.status_code == 200
     bearer_token = bearer_login.json()["access_token"]
 
-    me = await client.get("/api/v1/auth/me", headers=auth_headers(bearer_token))
+    me = await client.get("/api/v1/auth/me", headers=bearer_auth_headers(bearer_token))
     assert me.status_code == 200
     assert me.json()["email"] == bearer_email
 

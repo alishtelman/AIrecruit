@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     SESSION_COOKIE_SECURE: bool = False
     AUTH_ALLOW_BEARER: bool = True
     CSRF_TRUSTED_ORIGINS: str = ""
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_LOGIN_PER_MINUTE: int = 12
+    RATE_LIMIT_INTERVIEW_START_PER_MINUTE: int = 30
+    RATE_LIMIT_INTERVIEW_MESSAGE_PER_MINUTE: int = 240
+    RATE_LIMIT_TTS_PER_MINUTE: int = 180
+    RATE_LIMIT_STT_PER_MINUTE: int = 90
     ANTHROPIC_API_KEY: str = ""
     GROQ_API_KEY: str = ""
     ALLOW_MOCK_AI: bool = True
@@ -60,6 +66,10 @@ class Settings(BaseSettings):
     def allow_bearer_auth(self) -> bool:
         return self.AUTH_ALLOW_BEARER
 
+    @property
+    def rate_limit_enabled(self) -> bool:
+        return self.RATE_LIMIT_ENABLED and not self.is_local_or_test
+
     def validate_security_settings(self) -> None:
         insecure_defaults = {
             "change-me-in-production",
@@ -71,6 +81,23 @@ class Settings(BaseSettings):
             raise ValueError(
                 "SECRET_KEY must be overridden with a long random value outside development/test."
             )
+        if not self.is_local_or_test:
+            if self.AUTH_ALLOW_BEARER:
+                raise ValueError(
+                    "AUTH_ALLOW_BEARER must be false outside development/test."
+                )
+            if not self.SESSION_COOKIE_SECURE:
+                raise ValueError(
+                    "SESSION_COOKIE_SECURE must be true outside development/test."
+                )
+            if any("*" in origin for origin in self.cors_origins):
+                raise ValueError(
+                    "CORS_ORIGINS must not contain wildcards outside development/test."
+                )
+            if any("*" in origin for origin in self.csrf_trusted_origins):
+                raise ValueError(
+                    "CSRF_TRUSTED_ORIGINS must not contain wildcards outside development/test."
+                )
 
 
 settings = Settings()

@@ -1,4 +1,5 @@
 import uuid
+import logging
 from urllib.parse import urlparse
 
 from fastapi import Depends, HTTPException, Request, status
@@ -17,6 +18,7 @@ from app.models.user import User
 
 bearer_scheme = HTTPBearer(auto_error=False)
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+audit_logger = logging.getLogger("security.audit")
 
 
 def _normalize_origin(value: str) -> str | None:
@@ -24,6 +26,10 @@ def _normalize_origin(value: str) -> str | None:
     if not parsed.scheme or not parsed.netloc:
         return None
     return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
 
 
 def _enforce_cookie_csrf(request: Request, session_token: str | None, bearer_token: str | None) -> None:
@@ -37,10 +43,23 @@ def _enforce_cookie_csrf(request: Request, session_token: str | None, bearer_tok
     source = origin_header or referer_header
     normalized_source = _normalize_origin(source) if source else None
     if normalized_source is None:
+        audit_logger.warning(
+            "csrf_rejected reason=missing_or_invalid_origin ip=%s method=%s path=%s",
+            _client_ip(request),
+            request.method,
+            request.url.path,
+        )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
 
     trusted = {origin.rstrip("/") for origin in settings.csrf_trusted_origins}
     if normalized_source not in trusted:
+        audit_logger.warning(
+            "csrf_rejected reason=untrusted_origin ip=%s method=%s path=%s origin=%s",
+            _client_ip(request),
+            request.method,
+            request.url.path,
+            normalized_source,
+        )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
 
 
@@ -55,8 +74,22 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     session_token = request.cookies.get(settings.SESSION_COOKIE_NAME)
-    bearer_token = credentials.credentials if (credentials and settings.allow_bearer_auth) else None
+    raw_bearer_token = credentials.credentials if credentials else None
+    if raw_bearer_token and not settings.allow_bearer_auth:
+        audit_logger.warning(
+            "auth_rejected reason=bearer_disabled ip=%s method=%s path=%s",
+            _client_ip(request),
+            request.method,
+            request.url.path,
+        )
+    bearer_token = raw_bearer_token if (raw_bearer_token and settings.allow_bearer_auth) else None
     if not session_token and not bearer_token:
+        audit_logger.warning(
+            "auth_rejected reason=missing_credentials ip=%s method=%s path=%s",
+            _client_ip(request),
+            request.method,
+            request.url.path,
+        )
         raise credentials_exception
 
     _enforce_cookie_csrf(request, session_token=session_token, bearer_token=bearer_token)
@@ -70,6 +103,12 @@ async def get_current_user(
             bearer_payload = decode_access_token(bearer_token)
             user_id = bearer_payload.get("sub")
         except JWTError:
+            audit_logger.warning(
+                "auth_bearer_invalid ip=%s method=%s path=%s",
+                _client_ip(request),
+                request.method,
+                request.url.path,
+            )
             user_id = None
 
     if user_id is None and session_token:
@@ -77,13 +116,32 @@ async def get_current_user(
             session_payload = decode_access_token(session_token)
             user_id = session_payload.get("sub")
         except JWTError:
+            audit_logger.warning(
+                "auth_cookie_invalid ip=%s method=%s path=%s",
+                _client_ip(request),
+                request.method,
+                request.url.path,
+            )
             user_id = None
 
     if user_id is None:
+        audit_logger.warning(
+            "auth_rejected reason=invalid_credentials ip=%s method=%s path=%s",
+            _client_ip(request),
+            request.method,
+            request.url.path,
+        )
         raise credentials_exception
 
     user = await db.scalar(select(User).where(User.id == uuid.UUID(user_id)))
     if user is None or not user.is_active:
+        audit_logger.warning(
+            "auth_rejected reason=inactive_or_missing_user ip=%s method=%s path=%s user_id=%s",
+            _client_ip(request),
+            request.method,
+            request.url.path,
+            user_id,
+        )
         raise credentials_exception
     return user
 

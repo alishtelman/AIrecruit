@@ -1,6 +1,7 @@
 from datetime import timedelta
+import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,7 @@ from app.services.auth_service import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+audit_logger = logging.getLogger("security.audit")
 
 
 def _set_auth_cookie(response: Response, access_token: str) -> None:
@@ -125,6 +127,7 @@ async def company_register(
 async def user_login(
     body: LoginRequest,
     response: Response,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -132,6 +135,12 @@ async def user_login(
         _set_auth_cookie(response, token_response.access_token)
         return token_response
     except InvalidCredentialsError:
+        client_ip = request.client.host if request.client else "unknown"
+        audit_logger.warning(
+            "login_failed ip=%s email=%s",
+            client_ip,
+            body.email,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
