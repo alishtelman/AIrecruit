@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     SESSION_COOKIE_NAME: str = "airecruit_session"
     SESSION_COOKIE_SAMESITE: str = "lax"
     SESSION_COOKIE_SECURE: bool = False
+    AUTH_ALLOW_BEARER: bool = True
     CSRF_TRUSTED_ORIGINS: str = ""
     ANTHROPIC_API_KEY: str = ""
     GROQ_API_KEY: str = ""
@@ -54,6 +55,10 @@ class Settings(BaseSettings):
     @property
     def allow_mock_ai(self) -> bool:
         return self.ALLOW_MOCK_AI and self.is_local_or_test
+
+    @property
+    def allow_bearer_auth(self) -> bool:
+        return self.AUTH_ALLOW_BEARER
 
     def validate_security_settings(self) -> None:
         insecure_defaults = {

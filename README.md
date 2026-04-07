@@ -259,6 +259,7 @@ Auth/session:
 - `SESSION_COOKIE_NAME`
 - `SESSION_COOKIE_SAMESITE`
 - `SESSION_COOKIE_SECURE`
+- `AUTH_ALLOW_BEARER` (recommended `false` outside local/test after API clients migrate)
 - `CSRF_TRUSTED_ORIGINS` (defaults to `CORS_ORIGINS` when empty)
 - `ACCESS_TOKEN_EXPIRE_MINUTES`
 

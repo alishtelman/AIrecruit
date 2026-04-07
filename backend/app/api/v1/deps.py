@@ -55,7 +55,7 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     session_token = request.cookies.get(settings.SESSION_COOKIE_NAME)
-    bearer_token = credentials.credentials if credentials else None
+    bearer_token = credentials.credentials if (credentials and settings.allow_bearer_auth) else None
     if not session_token and not bearer_token:
         raise credentials_exception
 

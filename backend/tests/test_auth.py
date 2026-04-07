@@ -4,6 +4,7 @@ import uuid
 import pytest
 from httpx import AsyncClient
 
+from app.core.config import settings
 from tests.conftest import auth_headers
 
 
@@ -149,6 +150,17 @@ async def test_bearer_write_does_not_require_csrf_origin(client: AsyncClient):
         },
     )
     assert change.status_code == 204, change.text
+
+
+def test_bearer_auth_flag_controls_runtime_behavior():
+    original_allow_bearer = settings.AUTH_ALLOW_BEARER
+    try:
+        settings.AUTH_ALLOW_BEARER = True
+        assert settings.allow_bearer_auth is True
+        settings.AUTH_ALLOW_BEARER = False
+        assert settings.allow_bearer_auth is False
+    finally:
+        settings.AUTH_ALLOW_BEARER = original_allow_bearer
 
 
 @pytest.mark.asyncio
