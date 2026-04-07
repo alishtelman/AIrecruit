@@ -30,12 +30,13 @@ Before exposing the system publicly:
 - set `SESSION_COOKIE_SECURE=true`
 - set strict `CORS_ORIGINS` (no wildcard)
 - set strict `CSRF_TRUSTED_ORIGINS` (or leave empty to inherit `CORS_ORIGINS`)
-- set `AUTH_ALLOW_BEARER=false` once non-browser/API clients are migrated
+- set `AUTH_ALLOW_BEARER=false`
 - run behind HTTPS only
 - set `ALLOW_MOCK_AI=false`
 - rotate any default/example secrets
 
-Startup will fail outside local/test when `SECRET_KEY` is insecure.
+Startup will fail outside local/test when security-critical settings are unsafe
+(`SECRET_KEY`, `AUTH_ALLOW_BEARER`, secure cookie settings, wildcard CORS/CSRF).
 
 ---
 
@@ -45,6 +46,8 @@ Startup will fail outside local/test when `SECRET_KEY` is insecure.
 - Cookie-auth write endpoints enforce trusted `Origin/Referer` CSRF checks.
 - Backward-compatible Bearer auth can be disabled via `AUTH_ALLOW_BEARER=false` outside local/test.
 - API responses include baseline hardening headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`; plus HSTS when secure cookies are enabled).
+- Non-local environments enforce per-endpoint rate limiting on login/interview/voice endpoints.
+- Security audit logs are emitted for failed auth, CSRF denials, and rate-limit blocks.
 - Candidate privacy visibility + approval flow for company access.
 - Company-scoped access enforcement for private reports and interview replays.
 - Employee invite start is bound to authenticated candidate email.
@@ -55,11 +58,9 @@ Startup will fail outside local/test when `SECRET_KEY` is insecure.
 
 ## Known Security Debt
 
-- API-level Bearer compatibility is still enabled for non-browser/API clients.
-  - Risk: accidental mixed-mode auth assumptions in endpoints/tests.
-  - Target state: strictly document cookie-first browser flows and keep explicit token precedence tests.
-- Frontend dependency audit still reports high findings on current Next.js/face-api transitive chain.
-  - Target state: upgrade Next.js and related lint stack without breaking app-router behavior.
+- API-level Bearer compatibility still exists as a runtime toggle.
+  - Risk: leaving `AUTH_ALLOW_BEARER=true` in hardened environments.
+  - Target state: keep it disabled by policy in all non-local environments.
 - Python dependency baseline file is retained for emergency exceptions:
   - [`backend/pip_audit_baseline.txt`](backend/pip_audit_baseline.txt)
   - Current state: empty (no accepted Python vulnerability exceptions).

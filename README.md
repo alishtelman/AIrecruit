@@ -226,14 +226,16 @@ Share-link access:
 
 ## Security Baseline
 
-- Cookie-first auth (`HttpOnly`, `SameSite`) for frontend transport; backend still keeps Bearer compatibility for API/tests.
-- Production guard: insecure `SECRET_KEY` fails startup outside local/test.
+- Cookie-first auth (`HttpOnly`, `SameSite`) for frontend transport; Bearer transport is toggleable via `AUTH_ALLOW_BEARER`.
+- Production guards fail startup on insecure `SECRET_KEY`, insecure cookie config, or wildcard CORS/CSRF origins.
 - Company-scoped private report/replay access.
 - Candidate privacy/access approval enforcement.
 - Recording upload MIME + size restrictions.
 - Safe path-only redirects on candidate auth pages.
 - CORS allowlist via `CORS_ORIGINS`.
 - Cookie-auth write routes require trusted `Origin/Referer` (CSRF guard).
+- Critical endpoint rate limiting (`/auth/login`, `/interviews/start`, `/interviews/{id}/message`, `/tts`, `/stt`) in non-local environments.
+- Security audit logging for auth/CSRF/rate-limit denials.
 
 See also:
 
@@ -259,9 +261,18 @@ Auth/session:
 - `SESSION_COOKIE_NAME`
 - `SESSION_COOKIE_SAMESITE`
 - `SESSION_COOKIE_SECURE`
-- `AUTH_ALLOW_BEARER` (recommended `false` outside local/test after API clients migrate)
+- `AUTH_ALLOW_BEARER` (must be `false` outside local/test)
 - `CSRF_TRUSTED_ORIGINS` (defaults to `CORS_ORIGINS` when empty)
 - `ACCESS_TOKEN_EXPIRE_MINUTES`
+
+Rate limiting:
+
+- `RATE_LIMIT_ENABLED` (enforced only outside local/test)
+- `RATE_LIMIT_LOGIN_PER_MINUTE`
+- `RATE_LIMIT_INTERVIEW_START_PER_MINUTE`
+- `RATE_LIMIT_INTERVIEW_MESSAGE_PER_MINUTE`
+- `RATE_LIMIT_TTS_PER_MINUTE`
+- `RATE_LIMIT_STT_PER_MINUTE`
 
 AI:
 
