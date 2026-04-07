@@ -72,7 +72,7 @@ jobs:
           done
           cat /tmp/backend.log
           exit 1
-      - run: python -m pytest tests/test_auth.py tests/test_interview_flow.py tests/test_templates.py tests/test_candidate_privacy.py tests/test_company_collaboration_roles.py tests/test_company_search_shortlists.py tests/test_employee_assessments.py tests/test_ai_quality_controls.py tests/test_tts.py -v
+      - run: python -m pytest tests/test_auth.py tests/test_security_headers.py tests/test_interview_flow.py tests/test_templates.py tests/test_candidate_privacy.py tests/test_company_collaboration_roles.py tests/test_company_search_shortlists.py tests/test_employee_assessments.py tests/test_ai_quality_controls.py tests/test_tts.py -v
 
   dependency-scan:
     runs-on: ubuntu-latest
