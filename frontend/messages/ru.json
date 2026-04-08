@@ -1023,6 +1023,14 @@
     "areasToImprove": "Зоны роста",
     "recommendations": "Рекомендации",
     "perQuestionAnalysis": "Анализ по вопросам",
+    "systemDesign": {
+      "eyebrow": "Доказательства system design",
+      "title": "Модуль system design",
+      "scenario": "Сценарий",
+      "stageCount": "{count} этапа",
+      "questionsCovered": "{count} вопроса",
+      "noEvidence": "По этому этапу пока не зафиксировано доказательств."
+    },
     "summaryModel": {
       "eyebrow": "Структура интервью",
       "title": "Как был собран итоговый сигнал",

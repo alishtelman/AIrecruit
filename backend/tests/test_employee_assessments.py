@@ -407,8 +407,25 @@ async def test_employee_assessment_accepts_custom_module_plan_and_advances_to_ne
     final_finish_data = final_finish_resp.json()
     assert final_finish_data["assessment_progress"] is not None
     assert final_finish_data["assessment_progress"]["has_remaining_modules"] is False
-    if not final_finish_data.get("report_id"):
-        await _wait_for_report_id(client, candidate_token, system_design_interview_id)
+    final_report_id = final_finish_data.get("report_id")
+    if not final_report_id:
+        final_report_id = await _wait_for_report_id(client, candidate_token, system_design_interview_id)
+
+    company_report_resp = await client.get(
+        f"/api/v1/company/reports/{final_report_id}",
+        headers=auth_headers(company_token),
+    )
+    assert company_report_resp.status_code == 200, company_report_resp.text
+    company_report = company_report_resp.json()
+    assert company_report["module_session"] is not None
+    assert company_report["module_session"]["module_type"] == "system_design"
+    assert company_report["module_session"]["scenario_title"]
+    assert company_report["system_design_summary"] is not None
+    assert company_report["system_design_summary"]["stage_count"] == 3
+    assert len(company_report["system_design_summary"]["stages"]) == 3
+    assert all(stage["stage_title"] for stage in company_report["system_design_summary"]["stages"])
+    assert company_report["per_question_analysis"]
+    assert any(item.get("stage_title") for item in company_report["per_question_analysis"])
 
     completed_assessments_resp = await client.get(
         "/api/v1/company/assessments",

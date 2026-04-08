@@ -641,6 +641,8 @@ export interface QuestionAnalysis {
   specificity: string;
   depth: string;
   ai_likelihood: number | null;
+  stage_key?: string | null;
+  stage_title?: string | null;
 }
 
 export interface SkillTag {
@@ -685,4 +687,35 @@ export interface AssessmentReport {
   cheat_flags: string[] | null;
   summary: ReportSummaryBlock | null;
   summary_model: InterviewSummaryModel | null;
+  module_session: ReportModuleSession | null;
+  system_design_summary: SystemDesignSummary | null;
+}
+
+export interface ReportModuleSession {
+  module_type: string;
+  module_title: string | null;
+  scenario_id: string | null;
+  scenario_title: string | null;
+  scenario_prompt: string | null;
+  stage_key: string | null;
+  stage_title: string | null;
+  stage_index: number;
+  stage_count: number;
+}
+
+export interface SystemDesignStageSummary {
+  stage_key: string;
+  stage_title: string;
+  question_numbers: number[];
+  average_answer_quality: number | null;
+  evidence_items: string[];
+}
+
+export interface SystemDesignSummary {
+  module_title: string | null;
+  scenario_id: string | null;
+  scenario_title: string | null;
+  scenario_prompt: string | null;
+  stage_count: number;
+  stages: SystemDesignStageSummary[];
 }

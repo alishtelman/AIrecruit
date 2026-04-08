@@ -7,7 +7,7 @@ import { useRouter } from "@/i18n/navigation";
 import { CompanyWorkspaceHeader } from "@/components/company-workspace-header";
 import { useAuth } from "@/hooks/useAuth";
 import { companyApi } from "@/lib/api";
-import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ProctoringTimeline, ProctoringTimelineEvent } from "@/lib/types";
+import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ProctoringTimeline, ProctoringTimelineEvent, SystemDesignStageSummary } from "@/lib/types";
 
 const RECOMMENDATION_CONFIG: Record<HiringRecommendation, { color: string; bg: string }> = {
   strong_yes: { color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
@@ -102,12 +102,13 @@ export default function CompanyReportPage() {
           <h1 className="mb-2 text-3xl font-semibold tracking-[-0.03em] text-white">{t("title")}</h1>
           {report.interview_summary && <p className="max-w-3xl text-slate-400">{report.interview_summary}</p>}
 
-          <div className={`mt-5 inline-flex items-center gap-2 border rounded-full px-4 py-1.5 text-sm font-semibold ${rec.bg} ${rec.color}`}>
-            {t("recommendation")}: {dashboardT(`recommendations.${report.hiring_recommendation}`)}
-          </div>
+        <div className={`mt-5 inline-flex items-center gap-2 border rounded-full px-4 py-1.5 text-sm font-semibold ${rec.bg} ${rec.color}`}>
+          {t("recommendation")}: {dashboardT(`recommendations.${report.hiring_recommendation}`)}
+        </div>
         </div>
 
         {report.summary_model && <InterviewSummaryPanel summaryModel={report.summary_model} />}
+        {report.system_design_summary && <SystemDesignSummaryPanel summary={report.system_design_summary} />}
 
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
           <ScoreCard label={t("overallScore")} score={report.overall_score} highlight />
@@ -226,6 +227,67 @@ export default function CompanyReportPage() {
         <div className="text-slate-600 text-xs mt-8">
           {t("generatedBy", {model: report.model_version, date: new Date(report.created_at).toLocaleDateString()})}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function SystemDesignSummaryPanel({ summary }: { summary: NonNullable<AssessmentReport["system_design_summary"]> }) {
+  const t = useTranslations("report");
+
+  return (
+    <div className="mb-6 rounded-2xl border border-violet-500/20 bg-violet-500/10 p-5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.24em] text-violet-300">{t("systemDesign.eyebrow")}</div>
+          <div className="text-sm font-semibold text-white">{summary.module_title || t("systemDesign.title")}</div>
+        </div>
+        <span className="rounded-full border border-violet-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
+          {t("systemDesign.stageCount", { count: summary.stage_count })}
+        </span>
+      </div>
+
+      {summary.scenario_title && (
+        <div className="mb-3">
+          <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("systemDesign.scenario")}</div>
+          <div className="mt-1 text-sm font-medium text-white">{summary.scenario_title}</div>
+        </div>
+      )}
+      {summary.scenario_prompt && <p className="mb-4 text-sm leading-6 text-slate-300">{summary.scenario_prompt}</p>}
+
+      <div className="grid gap-3 md:grid-cols-3">
+        {summary.stages.map((stage) => (
+          <SystemDesignStageCard key={stage.stage_key} stage={stage} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SystemDesignStageCard({ stage }: { stage: SystemDesignStageSummary }) {
+  const t = useTranslations("report");
+
+  return (
+    <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-sm font-semibold text-white">{stage.stage_title}</div>
+        {stage.average_answer_quality != null && (
+          <div className="text-sm font-bold text-violet-300">{stage.average_answer_quality.toFixed(1)}</div>
+        )}
+      </div>
+      {stage.question_numbers.length > 0 && (
+        <div className="mt-2 text-xs text-slate-500">
+          {t("systemDesign.questionsCovered", { count: stage.question_numbers.length })}: {stage.question_numbers.join(", ")}
+        </div>
+      )}
+      <div className="mt-3 space-y-2">
+        {stage.evidence_items.length > 0 ? stage.evidence_items.map((item, index) => (
+          <div key={index} className="text-sm leading-6 text-slate-300">
+            {item}
+          </div>
+        )) : (
+          <div className="text-sm text-slate-500">{t("systemDesign.noEvidence")}</div>
+        )}
       </div>
     </div>
   );
@@ -376,6 +438,11 @@ function QuestionAccordion({ qa, expanded, onToggle }: { qa: QuestionAnalysis; e
       <button onClick={onToggle} className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-750 transition-colors">
         <div className="flex items-center gap-3">
           <span className="text-slate-500 text-xs">{t("questionShort", { number: qa.question_number })}</span>
+          {qa.stage_title && (
+            <span className="rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-[11px] text-violet-300">
+              {qa.stage_title}
+            </span>
+          )}
           <span className="text-slate-300 text-sm font-medium">{qa.targeted_competencies.join(", ") || t("general")}</span>
         </div>
         <div className="flex items-center gap-3 shrink-0">

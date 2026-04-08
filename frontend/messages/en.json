@@ -1023,6 +1023,14 @@
     "areasToImprove": "Areas to improve",
     "recommendations": "Recommendations",
     "perQuestionAnalysis": "Per-question analysis",
+    "systemDesign": {
+      "eyebrow": "System design evidence",
+      "title": "System design module",
+      "scenario": "Scenario",
+      "stageCount": "{count} stages",
+      "questionsCovered": "{count} questions",
+      "noEvidence": "No evidence captured for this stage yet."
+    },
     "summaryModel": {
       "eyebrow": "Interview structure",
       "title": "How the final signal was built",
