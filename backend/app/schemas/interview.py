@@ -32,6 +32,18 @@ class StartInterviewResponse(BaseModel):
     language: Literal["ru", "en"] = "ru"
 
 
+class InterviewModuleSessionResponse(BaseModel):
+    module_type: str
+    module_title: str | None = None
+    scenario_id: str | None = None
+    scenario_title: str | None = None
+    scenario_prompt: str | None = None
+    stage_key: str | None = None
+    stage_title: str | None = None
+    stage_index: int = 0
+    stage_count: int = 0
+
+
 class SendMessageRequest(BaseModel):
     message: str
 
@@ -51,6 +63,7 @@ class SendMessageResponse(BaseModel):
     current_question: str | None  # null when max_questions reached — call /finish
     is_followup: bool = False  # True when the next question is a follow-up/verification
     question_type: str = "main"  # main | followup | verification | deep_technical | edge_cases
+    module_session: InterviewModuleSessionResponse | None = None
 
 
 class ReportSummary(BaseModel):
@@ -59,11 +72,24 @@ class ReportSummary(BaseModel):
     interview_summary: str | None
 
 
+class AssessmentProgressResponse(BaseModel):
+    assessment_id: uuid.UUID
+    invite_token: str
+    assessment_status: str
+    has_remaining_modules: bool
+    module_count: int
+    current_module_index: int
+    current_module_type: str | None = None
+    current_module_title: str | None = None
+
+
 class FinishInterviewResponse(BaseModel):
     interview_id: uuid.UUID
     status: str
     report_id: uuid.UUID | None = None
     summary: ReportSummary | None = None
+    assessment_progress: AssessmentProgressResponse | None = None
+    module_session: InterviewModuleSessionResponse | None = None
 
 
 class ReportProcessingDiagnostics(BaseModel):
@@ -87,6 +113,8 @@ class InterviewReportStatusResponse(BaseModel):
     summary: ReportSummary | None = None
     failure_reason: str | None = None
     diagnostics: ReportProcessingDiagnostics | None = None
+    assessment_progress: AssessmentProgressResponse | None = None
+    module_session: InterviewModuleSessionResponse | None = None
 
 
 class InterviewMessageResponse(BaseModel):
@@ -109,6 +137,8 @@ class InterviewDetailResponse(BaseModel):
     messages: list[InterviewMessageResponse]
     has_report: bool
     report_id: uuid.UUID | None
+    assessment_progress: AssessmentProgressResponse | None = None
+    module_session: InterviewModuleSessionResponse | None = None
 
 
 class BehavioralSignalsRequest(BaseModel):
@@ -127,6 +157,16 @@ class ReplayTurn(BaseModel):
     question_time: datetime | None
     answer_time: datetime | None
     analysis: dict | None  # QuestionAnalysis dict from per_question_analysis
+    stage_key: str | None = None
+    stage_title: str | None = None
+
+
+class TranscriptBlockResponse(BaseModel):
+    speaker: Literal["interviewer", "candidate"]
+    kind: Literal["question", "answer"]
+    turn_number: int
+    text: str
+    timestamp: datetime | None
 
 
 class InterviewReplayResponse(BaseModel):
@@ -136,6 +176,9 @@ class InterviewReplayResponse(BaseModel):
     target_role: str
     completed_at: datetime | None
     turns: list[ReplayTurn]
+    transcript_blocks: list[TranscriptBlockResponse] | None = None
+    transcript_text: str | None = None
+    module_session: InterviewModuleSessionResponse | None = None
 
 
 class ProctoringTimelineEventResponse(BaseModel):

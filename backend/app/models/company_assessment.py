@@ -2,8 +2,8 @@ import secrets
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -49,6 +49,8 @@ class CompanyAssessment(Base):
     invite_token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, default=_token)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
     # pending | opened | in_progress | completed | expired
+    module_plan: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    current_module_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     interview_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("interviews.id", ondelete="SET NULL"), nullable=True
     )

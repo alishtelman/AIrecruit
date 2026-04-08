@@ -140,6 +140,10 @@ export default function EmployeesPage() {
     return new Date(value).toLocaleString();
   };
   const statusLabel = (status: CompanyAssessment["status"]): string => t(`status.${status}`);
+  const currentModuleTitle = (assessment: CompanyAssessment): string => {
+    const currentModule = assessment.module_plan[assessment.current_module_index];
+    return currentModule?.title ?? t("meta.notSet");
+  };
 
   if (authLoading || loading) {
     return (
@@ -392,6 +396,8 @@ export default function EmployeesPage() {
                       <div className="mt-4 grid gap-3 text-sm text-slate-400 md:grid-cols-2 xl:grid-cols-4">
                         <Meta label={t("meta.role")} value={roleT(assessment.target_role)} />
                         <Meta label={t("meta.template")} value={assessment.template_name ?? t("meta.adaptiveDefault")} />
+                        <Meta label={t("meta.modules")} value={String(assessment.module_count)} />
+                        <Meta label={t("meta.currentModule")} value={currentModuleTitle(assessment)} />
                         <Meta label={t("meta.created")} value={formatDate(assessment.created_at)} />
                         <Meta label={t("meta.brand")} value={assessment.branding_name ?? t("meta.companyDefault")} />
                         <Meta label={t("meta.deadline")} value={formatDate(assessment.deadline_at)} />

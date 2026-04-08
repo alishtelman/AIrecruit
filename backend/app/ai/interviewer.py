@@ -89,6 +89,16 @@ class InterviewContext:
     verified_skills: list[str] = field(default_factory=list)
     contradiction_flags: list[str] = field(default_factory=list)
     pending_verification: str | None = None  # technology currently being asked about
+    module_type: str | None = None
+    module_title: str | None = None
+    module_scenario_id: str | None = None
+    module_scenario_title: str | None = None
+    module_scenario_prompt: str | None = None
+    module_stage_key: str | None = None
+    module_stage_title: str | None = None
+    module_stage_prompt: str | None = None
+    module_stage_index: int = 0
+    module_stage_count: int = 0
 
     @property
     def is_followup_mode(self) -> bool:
@@ -738,7 +748,15 @@ def _fallback_question_for_context(ctx: InterviewContext, *, prefer_secondary_ma
             return _trim_question(verification)
         return None
     if ctx.question_type in {"deep_technical", "edge_cases"}:
+        if ctx.module_type == "system_design":
+            system_design_depth = _system_design_depth_question(ctx)
+            if system_design_depth:
+                return system_design_depth
         return _trim_question(get_depth_escalation_question(ctx.language))
+    if ctx.module_type == "system_design":
+        system_design_main = _system_design_main_question(ctx)
+        if system_design_main:
+            return system_design_main
 
     anchored = _competency_anchored_main_question(ctx, preference_index=1 if prefer_secondary_main_topic else 0)
     if anchored:
@@ -751,6 +769,76 @@ def _fallback_question_for_context(ctx: InterviewContext, *, prefer_secondary_ma
         if ctx.language == "en"
         else "Приведите один конкретный production-кейс и объясните, какой технический компромисс вы выбрали?"
     )
+
+
+def _system_design_main_question(ctx: InterviewContext) -> str | None:
+    if ctx.module_type != "system_design":
+        return None
+
+    scenario_title = ctx.module_scenario_title or (
+        "the system design scenario" if ctx.language == "en" else "сценарий system design"
+    )
+    match ctx.module_stage_key:
+        case "requirements":
+            question = (
+                f'For the scenario "{scenario_title}", which requirements, traffic assumptions, and constraints would you clarify first?'
+                if ctx.language == "en"
+                else f'Для сценария «{scenario_title}» какие требования, объёмы нагрузки и ограничения вы бы уточнили вначале?'
+            )
+        case "high_level_design":
+            question = (
+                f'Now outline the high-level architecture for "{scenario_title}": main services, data flow, storage, and scaling choices.'
+                if ctx.language == "en"
+                else f'Теперь опишите high-level архитектуру для «{scenario_title}»: основные сервисы, поток данных, хранилища и масштабирование.'
+            )
+        case "tradeoffs":
+            question = (
+                f'What are the main trade-offs in your design for "{scenario_title}", and what would break first at 10x load?'
+                if ctx.language == "en"
+                else f'Какие ключевые trade-offs есть в вашем дизайне для «{scenario_title}» и что сломается первым при нагрузке x10?'
+            )
+        case _:
+            question = (
+                f'Walk me through how you would design "{scenario_title}" from requirements to key technical trade-offs.'
+                if ctx.language == "en"
+                else f'Проведите меня по тому, как вы бы спроектировали «{scenario_title}»: от требований до ключевых технических trade-offs.'
+            )
+    return _trim_question(question)
+
+
+def _system_design_depth_question(ctx: InterviewContext) -> str | None:
+    if ctx.module_type != "system_design":
+        return None
+
+    scenario_title = ctx.module_scenario_title or (
+        "the system design scenario" if ctx.language == "en" else "этот system design сценарий"
+    )
+    match ctx.module_stage_key:
+        case "requirements":
+            question = (
+                f'Which assumption in "{scenario_title}" is the riskiest, and how would you validate it before implementation?'
+                if ctx.language == "en"
+                else f'Какое допущение в сценарии «{scenario_title}» самое рискованное и как вы бы проверили его до реализации?'
+            )
+        case "high_level_design":
+            question = (
+                f'In your design for "{scenario_title}", what is the first bottleneck and how would you mitigate it?'
+                if ctx.language == "en"
+                else f'В вашем дизайне для «{scenario_title}» где возникнет первое узкое место и как вы бы его снимали?'
+            )
+        case "tradeoffs":
+            question = (
+                f'Which trade-off in "{scenario_title}" would you defend most strongly, and why not the main alternative?'
+                if ctx.language == "en"
+                else f'Какой trade-off в «{scenario_title}» вы бы защищали сильнее всего и почему не выбрали главный альтернативный вариант?'
+            )
+        case _:
+            question = (
+                f'Which part of your design for "{scenario_title}" would you revisit first after launch, and why?'
+                if ctx.language == "en"
+                else f'Какую часть вашего дизайна для «{scenario_title}» вы бы пересмотрели первой после запуска и почему?'
+            )
+    return _trim_question(question)
 
 
 # ---------------------------------------------------------------------------
@@ -811,6 +899,21 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
             "если нет новой цели верификации или углубления.\n"
             f"{memory_lines}\n"
         )
+
+    if ctx.module_type == "system_design":
+        prompt += (
+            "\n## Режим модуля: System Design\n"
+            "Ты ведёшь сценарное system design интервью. Держись одного сценария до конца модуля.\n"
+            "Не переключайся обратно на resume-driven вопросы и не уводи разговор в общие карьерные темы.\n"
+        )
+        if ctx.module_scenario_title:
+            prompt += f"Сценарий: {ctx.module_scenario_title}\n"
+        if ctx.module_scenario_prompt:
+            prompt += f"Контекст сценария: {ctx.module_scenario_prompt}\n"
+        if ctx.module_stage_title:
+            prompt += f"Текущий этап: {ctx.module_stage_title}\n"
+        if ctx.module_stage_prompt:
+            prompt += f"Фокус этапа: {ctx.module_stage_prompt}\n"
 
     # Non-main question types — override phase-based instructions and return early
     if ctx.question_type != "main":
@@ -1087,6 +1190,10 @@ class LLMInterviewer:
 
     async def get_next_question(self, ctx: InterviewContext) -> str:
         # First question: always deterministic (faster, no LLM needed)
+        if ctx.module_type == "system_design" and ctx.question_type == "main":
+            system_design_main = _system_design_main_question(ctx)
+            if system_design_main:
+                return system_design_main
         if ctx.question_number == 1 and not ctx.is_followup_mode:
             return _resume_anchored_first_question(ctx)
         if ctx.question_type == "main" and ctx.question_number == 2 and ctx.resume_anchor:
@@ -1245,8 +1352,16 @@ class MockInterviewer:
                 q = get_verification_question(tech, ctx.language)
                 return q or get_fallback_followup("no_depth_indicators", ctx.language)
             case "deep_technical" | "edge_cases":
+                if ctx.module_type == "system_design":
+                    system_design_depth = _system_design_depth_question(ctx)
+                    if system_design_depth:
+                        return system_design_depth
                 return get_depth_escalation_question(ctx.language)
             case _:
+                if ctx.module_type == "system_design":
+                    system_design_main = _system_design_main_question(ctx)
+                    if system_design_main:
+                        return system_design_main
                 if ctx.question_number <= 2 and ctx.resume_anchor:
                     anchored = _resume_anchored_main_question(ctx)
                     if anchored:

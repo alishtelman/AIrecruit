@@ -13,6 +13,7 @@ import { useFaceDetection } from "@/hooks/useFaceDetection";
 import { candidateApi, interviewApi } from "@/lib/api";
 import type {
   InterviewDetail,
+  InterviewModuleSession,
   InterviewMessage,
   InterviewReportStatusResponse,
 } from "@/lib/types";
@@ -32,6 +33,13 @@ type ProctoringEvent = {
   occurred_at?: string;
   source?: string;
   details?: Record<string, unknown>;
+};
+
+type AssessmentProgressLike = {
+  assessment_progress?: {
+    has_remaining_modules: boolean;
+    invite_token: string;
+  } | null;
 };
 
 export default function InterviewPage() {
@@ -61,6 +69,7 @@ export default function InterviewPage() {
   const [answerMode, setAnswerMode] = useState<"text" | "voice">("text");
   const [latestTranscript, setLatestTranscript] = useState("");
   const [recordingUploadState, setRecordingUploadState] = useState<"idle" | "uploading" | "uploaded" | "failed" | "skipped">("idle");
+  const [moduleSession, setModuleSession] = useState<InterviewModuleSession | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const autoRecordingAttemptedRef = useRef(false);
 
@@ -112,6 +121,14 @@ export default function InterviewPage() {
     proctoringEventsRef.current = [...proctoringEventsRef.current, normalized].slice(-200);
   }
 
+  function getAssessmentHubPath(payload: AssessmentProgressLike | null | undefined): string | null {
+    const progress = payload?.assessment_progress;
+    if (!progress?.has_remaining_modules) {
+      return null;
+    }
+    return `/employee/invite/${progress.invite_token}`;
+  }
+
   // Load interview on mount
   useEffect(() => {
     if (!id || authLoading) return;
@@ -122,7 +139,14 @@ export default function InterviewPage() {
         setMessages(data.messages.filter((m) => m.role !== "system"));
         setQuestionCount(data.question_count);
         setMaxQuestions(data.max_questions);
+        setModuleSession(data.module_session ?? null);
         if (data.language) setInterviewLanguage(data.language);
+
+        const hubPath = getAssessmentHubPath(data);
+        if (hubPath && data.status !== "in_progress") {
+          router.replace(hubPath);
+          return;
+        }
 
         if (data.status === "report_generated" && data.report_id) {
           router.replace(`/candidate/reports/${data.report_id}`);
@@ -287,6 +311,7 @@ export default function InterviewPage() {
         interviewApi.getReportStatus(interviewId),
       ]);
       setInterview(detail);
+      setModuleSession(detail.module_session ?? status.module_session ?? null);
       setReportStatus(status);
       return status;
     } catch {
@@ -316,7 +341,7 @@ export default function InterviewPage() {
     return () => window.clearInterval(timerId);
   }, [waitingForReport, reportStatus?.diagnostics?.next_retry_at]);
 
-  async function waitForReport(interviewId: string): Promise<string> {
+  async function waitForReport(interviewId: string): Promise<{ reportId: string | null; hubPath: string | null }> {
     let lastKnownFailure: string | null = null;
     for (let cycle = 0; cycle <= REPORT_SOFT_REFRESH_CYCLES; cycle += 1) {
       setPollRefreshCycle(cycle);
@@ -326,8 +351,13 @@ export default function InterviewPage() {
         try {
           const status = await interviewApi.getReportStatus(interviewId);
           setReportStatus(status);
+          setModuleSession(status.module_session ?? null);
+          const hubPath = getAssessmentHubPath(status);
+          if (hubPath) {
+            return { reportId: null, hubPath };
+          }
           if (status.processing_state === "ready" && status.report_id) {
-            return status.report_id;
+            return { reportId: status.report_id, hubPath: null };
           }
           if (status.processing_state === "failed") {
             throw new Error(getReportFailureMessage(status));
@@ -343,8 +373,12 @@ export default function InterviewPage() {
       }
 
       const refreshed = await refreshReportSnapshot(interviewId);
+      const hubPath = getAssessmentHubPath(refreshed);
+      if (hubPath) {
+        return { reportId: null, hubPath };
+      }
       if (refreshed?.processing_state === "ready" && refreshed.report_id) {
-        return refreshed.report_id;
+        return { reportId: refreshed.report_id, hubPath: null };
       }
       if (refreshed?.processing_state === "failed") {
         throw new Error(getReportFailureMessage(refreshed));
@@ -388,6 +422,7 @@ export default function InterviewPage() {
       setCurrentQuestion(res.current_question);
       setIsFollowup(res.is_followup ?? false);
       setQuestionType(res.question_type ?? "main");
+      setModuleSession(res.module_session ?? null);
 
       if (res.current_question) {
         currentQNumRef.current = res.question_count;
@@ -464,12 +499,23 @@ export default function InterviewPage() {
       }).catch(() => null);
 
       const res = await interviewApi.finish(id);
+      setModuleSession(res.module_session ?? null);
+      const hubPath = getAssessmentHubPath(res);
+      if (hubPath) {
+        router.push(hubPath);
+        return;
+      }
       let reportId: string | null = null;
       if (res.status === "report_generated" && res.report_id) {
         reportId = res.report_id;
       } else {
         setWaitingForReport(true);
-        reportId = await waitForReport(id);
+        const waitResult = await waitForReport(id);
+        if (waitResult.hubPath) {
+          router.push(waitResult.hubPath);
+          return;
+        }
+        reportId = waitResult.reportId;
       }
       const suffix = recordingNotice ? `?notice=${recordingNotice}` : "";
       router.push(`/candidate/reports/${reportId}${suffix}`);
@@ -492,6 +538,12 @@ export default function InterviewPage() {
     try {
       const retryStatus = await interviewApi.retryReport(id);
       setReportStatus(retryStatus);
+      setModuleSession(retryStatus.module_session ?? null);
+      const hubPath = getAssessmentHubPath(retryStatus);
+      if (hubPath) {
+        router.push(hubPath);
+        return;
+      }
       if (retryStatus.processing_state === "ready" && retryStatus.report_id) {
         router.push(`/candidate/reports/${retryStatus.report_id}`);
         return;
@@ -499,8 +551,12 @@ export default function InterviewPage() {
       if (retryStatus.processing_state === "failed") {
         throw new Error(getReportFailureMessage(retryStatus));
       }
-      const reportId = await waitForReport(id);
-      router.push(`/candidate/reports/${reportId}`);
+      const waitResult = await waitForReport(id);
+      if (waitResult.hubPath) {
+        router.push(waitResult.hubPath);
+        return;
+      }
+      router.push(`/candidate/reports/${waitResult.reportId}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : reportGenerationFailedMessage);
     } finally {
@@ -559,6 +615,7 @@ export default function InterviewPage() {
       : recordingUploadState === "skipped"
       ? t("uploadStatus.skipped")
       : null;
+  const systemDesignSession = moduleSession?.module_type === "system_design" ? moduleSession : null;
 
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col">
@@ -687,6 +744,36 @@ export default function InterviewPage() {
       <div className="flex flex-1 overflow-hidden relative">
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4 max-w-2xl w-full mx-auto">
+          {systemDesignSession && (
+            <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-300">
+                  {systemDesignSession.module_title || t("moduleCardEyebrow")}
+                </div>
+                <div className="rounded-full border border-blue-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
+                  {t("stageProgress", {
+                    current: systemDesignSession.stage_index + 1,
+                    total: Math.max(systemDesignSession.stage_count, 1),
+                  })}
+                </div>
+              </div>
+              {systemDesignSession.scenario_title && (
+                <div className="mt-3">
+                  <div className="text-xs uppercase tracking-[0.14em] text-slate-400">{t("scenarioLabel")}</div>
+                  <div className="mt-1 text-sm font-medium text-white">{systemDesignSession.scenario_title}</div>
+                </div>
+              )}
+              {systemDesignSession.stage_title && (
+                <div className="mt-3">
+                  <div className="text-xs uppercase tracking-[0.14em] text-slate-400">{t("stageLabel")}</div>
+                  <div className="mt-1 text-sm text-slate-200">{systemDesignSession.stage_title}</div>
+                </div>
+              )}
+              {systemDesignSession.scenario_prompt && (
+                <p className="mt-3 text-sm leading-6 text-slate-300">{systemDesignSession.scenario_prompt}</p>
+              )}
+            </div>
+          )}
           {messages.map((msg, i) => (
             <MessageBubble
               key={i}

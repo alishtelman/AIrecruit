@@ -39,13 +39,16 @@ from app.models.resume import Resume
 from app.models.skill import CandidateSkill
 from app.models.template import InterviewTemplate
 from app.schemas.interview import (
+    AssessmentProgressResponse,
     FinishInterviewResponse,
     InterviewDetailResponse,
+    InterviewModuleSessionResponse,
     InterviewReportStatusResponse,
     InterviewMessageResponse,
     ProctoringTimelineResponse,
     InterviewReplayResponse,
     ReplayTurn,
+    TranscriptBlockResponse,
     ReportSummary,
     SendMessageResponse,
     StartInterviewResponse,
@@ -112,6 +115,245 @@ async def _get_messages(db: AsyncSession, interview_id: uuid.UUID) -> list[Inter
         .order_by(InterviewMessage.created_at)
     )
     return list(result)
+
+
+async def _get_assessment_progress(
+    db: AsyncSession,
+    interview: Interview,
+) -> AssessmentProgressResponse | None:
+    if not interview.company_assessment_id:
+        return None
+
+    from app.models.company_assessment import CompanyAssessment
+    from app.services.assessment_invite_service import build_assessment_progress_payload
+
+    assessment = await db.scalar(
+        select(CompanyAssessment).where(CompanyAssessment.id == interview.company_assessment_id)
+    )
+    if not assessment:
+        return None
+    return AssessmentProgressResponse(
+        **build_assessment_progress_payload(
+            assessment,
+            interview_id=interview.id,
+        )
+    )
+
+
+_SYSTEM_DESIGN_MODULE_TYPE = "system_design"
+_SYSTEM_DESIGN_STAGE_KEYS = (
+    "requirements",
+    "high_level_design",
+    "tradeoffs",
+)
+_SYSTEM_DESIGN_SCENARIOS: dict[str, dict[str, str]] = {
+    "backend_engineer": {
+        "scenario_id": "multi_tenant_notifications",
+        "title_en": "a multi-tenant notification platform",
+        "title_ru": "multi-tenant платформу уведомлений",
+        "prompt_en": "Design a service that sends email, push, and in-app notifications for multiple products with per-tenant rules, retries, and analytics.",
+        "prompt_ru": "Спроектируйте сервис, который отправляет email, push и in-app уведомления для нескольких продуктов с tenant-правилами, retry и аналитикой.",
+    },
+    "frontend_engineer": {
+        "scenario_id": "realtime_ops_dashboard",
+        "title_en": "a real-time operations dashboard",
+        "title_ru": "real-time operations dashboard",
+        "prompt_en": "Design a browser-based dashboard that shows live metrics, incident timelines, filters, and role-based actions for hundreds of concurrent users.",
+        "prompt_ru": "Спроектируйте browser-based dashboard с live-метриками, incident timeline, фильтрами и role-based actions для сотен одновременных пользователей.",
+    },
+    "qa_engineer": {
+        "scenario_id": "test_orchestration_platform",
+        "title_en": "a distributed test orchestration platform",
+        "title_ru": "распределённую платформу оркестрации тестов",
+        "prompt_en": "Design a platform that schedules automated test suites across parallel workers, stores artifacts, and surfaces flaky test diagnostics.",
+        "prompt_ru": "Спроектируйте платформу, которая распределяет automated test suites по параллельным воркерам, хранит артефакты и показывает диагностику flaky tests.",
+    },
+    "devops_engineer": {
+        "scenario_id": "multi_region_deploy_control_plane",
+        "title_en": "a multi-region deployment control plane",
+        "title_ru": "multi-region control plane для деплоев",
+        "prompt_en": "Design a control plane that deploys services across regions, tracks rollouts, enforces approvals, and supports safe rollback.",
+        "prompt_ru": "Спроектируйте control plane, который выкатывает сервисы по регионам, отслеживает rollout, применяет approvals и поддерживает безопасный rollback.",
+    },
+    "data_scientist": {
+        "scenario_id": "real_time_fraud_scoring",
+        "title_en": "a real-time fraud scoring system",
+        "title_ru": "real-time систему fraud scoring",
+        "prompt_en": "Design a system that scores transactions in real time, combines model outputs with rules, supports feature freshness, and enables analyst review.",
+        "prompt_ru": "Спроектируйте систему, которая в real time оценивает транзакции, объединяет model outputs с правилами, поддерживает свежесть фичей и review аналитиком.",
+    },
+    "product_manager": {
+        "scenario_id": "cross_team_experimentation_platform",
+        "title_en": "a cross-team experimentation platform",
+        "title_ru": "кросс-командную платформу экспериментов",
+        "prompt_en": "Design a platform that lets teams configure experiments, define guardrail metrics, review results, and roll out changes safely.",
+        "prompt_ru": "Спроектируйте платформу, где команды настраивают эксперименты, задают guardrail-метрики, анализируют результаты и безопасно раскатывают изменения.",
+    },
+    "mobile_engineer": {
+        "scenario_id": "offline_first_mobile_sync",
+        "title_en": "an offline-first mobile sync system",
+        "title_ru": "offline-first систему синхронизации для mobile",
+        "prompt_en": "Design a mobile sync architecture that works offline, resolves conflicts, batches updates, and protects battery usage.",
+        "prompt_ru": "Спроектируйте mobile-архитектуру синхронизации, которая работает offline, разрешает конфликты, батчит обновления и бережёт батарею.",
+    },
+    "designer": {
+        "scenario_id": "design_system_delivery_platform",
+        "title_en": "a design system delivery platform",
+        "title_ru": "платформу доставки design system",
+        "prompt_en": "Design a platform that distributes design tokens, component guidance, versioned patterns, and feedback loops across product teams.",
+        "prompt_ru": "Спроектируйте платформу, которая распространяет design tokens, component guidance, versioned patterns и feedback loops между продуктами.",
+    },
+}
+_SYSTEM_DESIGN_DEFAULT_SCENARIO = {
+    "scenario_id": "shared_internal_platform",
+    "title_en": "a shared internal platform",
+    "title_ru": "общую внутреннюю платформу",
+    "prompt_en": "Design a shared platform used by multiple internal teams with role-based access, observability, and reliability constraints.",
+    "prompt_ru": "Спроектируйте общую платформу для нескольких внутренних команд с role-based access, observability и требованиями к надёжности.",
+}
+
+
+def _module_title_fallback(module_type: str) -> str:
+    return module_type.replace("_", " ").strip().title() or "Assessment Module"
+
+
+def _select_system_design_scenario(
+    target_role: str,
+    language: str,
+    module_config: dict[str, Any] | None,
+) -> dict[str, str]:
+    config = module_config if isinstance(module_config, dict) else {}
+    scenario = dict(_SYSTEM_DESIGN_SCENARIOS.get(target_role, _SYSTEM_DESIGN_DEFAULT_SCENARIO))
+    requested_id = str(config.get("scenario_id") or "").strip()
+    if requested_id and requested_id == scenario.get("scenario_id"):
+        pass
+    title_override = str(config.get("scenario_title") or "").strip()
+    prompt_override = str(config.get("scenario_prompt") or "").strip()
+    is_en = language == "en"
+    return {
+        "scenario_id": scenario["scenario_id"],
+        "title": title_override or (scenario["title_en"] if is_en else scenario["title_ru"]),
+        "prompt": prompt_override or (scenario["prompt_en"] if is_en else scenario["prompt_ru"]),
+    }
+
+
+def _build_system_design_topic_plan(
+    *,
+    target_role: str,
+    language: str,
+    module_config: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    scenario = _select_system_design_scenario(target_role, language, module_config)
+    is_en = language == "en"
+    stage_titles = {
+        "requirements": "Requirements & Constraints" if is_en else "Требования и ограничения",
+        "high_level_design": "High-Level Design" if is_en else "High-level дизайн",
+        "tradeoffs": "Trade-Offs & Failure Modes" if is_en else "Trade-offs и failure modes",
+    }
+    stage_prompts = {
+        "requirements": (
+            "Clarify users, traffic, SLAs, consistency needs, integrations, and non-functional constraints before committing to architecture."
+            if is_en
+            else "Уточните пользователей, объёмы трафика, SLA, требования к консистентности, интеграции и нефункциональные ограничения до выбора архитектуры."
+        ),
+        "high_level_design": (
+            "Describe the end-to-end architecture: clients, APIs, core services, async processing, data stores, scaling, and observability."
+            if is_en
+            else "Опишите end-to-end архитектуру: клиенты, API, основные сервисы, async processing, хранилища, масштабирование и observability."
+        ),
+        "tradeoffs": (
+            "Explain the main trade-offs, bottlenecks, reliability choices, cost decisions, and what changes first at 10x scale."
+            if is_en
+            else "Объясните ключевые trade-offs, узкие места, выборы по надёжности и стоимости, а также что меняется первым при росте нагрузки в 10 раз."
+        ),
+    }
+    competencies_by_stage = {
+        "requirements": ["System Design & Architecture", "Technical Communication"],
+        "high_level_design": ["System Design & Architecture", "Database Design & Optimization", "API Design & Protocols"],
+        "tradeoffs": ["System Design & Architecture", "Debugging & Problem Decomposition", "Ownership & Growth Mindset"],
+    }
+    stage_plan = [
+        {
+            "stage_key": stage_key,
+            "stage_title": stage_titles[stage_key],
+            "stage_prompt": stage_prompts[stage_key],
+        }
+        for stage_key in _SYSTEM_DESIGN_STAGE_KEYS
+    ]
+    topic_plan = [
+        {
+            "competencies": competencies_by_stage[item["stage_key"]],
+            "resume_anchor": None,
+            "verification_target": None,
+            "stage_key": item["stage_key"],
+            "stage_title": item["stage_title"],
+            "stage_prompt": item["stage_prompt"],
+            "scenario_id": scenario["scenario_id"],
+            "scenario_title": scenario["title"],
+            "scenario_prompt": scenario["prompt"],
+        }
+        for item in stage_plan
+    ]
+    module_context = {
+        "module_type": _SYSTEM_DESIGN_MODULE_TYPE,
+        "scenario_id": scenario["scenario_id"],
+        "scenario_title": scenario["title"],
+        "scenario_prompt": scenario["prompt"],
+        "stage_plan": stage_plan,
+        "question_history": [
+            {
+                "assistant_turn": 1,
+                "stage_key": stage_plan[0]["stage_key"],
+                "stage_title": stage_plan[0]["stage_title"],
+            }
+        ],
+    }
+    return topic_plan, module_context
+
+
+def _build_interview_module_session_payload(interview: Interview) -> InterviewModuleSessionResponse | None:
+    state = interview.interview_state if isinstance(interview.interview_state, dict) else {}
+    module_type = str(state.get("module_type") or "").strip().lower()
+    if not module_type:
+        return None
+
+    stage_plan_raw = state.get("module_stage_plan")
+    stage_plan = stage_plan_raw if isinstance(stage_plan_raw, list) else []
+    stage_count = len(stage_plan)
+    current_stage_index = min(max(_safe_int(state.get("module_stage_index"), 0), 0), max(stage_count - 1, 0))
+    current_stage = stage_plan[current_stage_index] if stage_plan else {}
+
+    return InterviewModuleSessionResponse(
+        module_type=module_type,
+        module_title=str(state.get("module_title") or _module_title_fallback(module_type)),
+        scenario_id=str(state.get("module_scenario_id") or "") or None,
+        scenario_title=str(state.get("module_scenario_title") or "") or None,
+        scenario_prompt=str(state.get("module_scenario_prompt") or "") or None,
+        stage_key=str(current_stage.get("stage_key") or state.get("module_stage_key") or "") or None,
+        stage_title=str(current_stage.get("stage_title") or state.get("module_stage_title") or "") or None,
+        stage_index=current_stage_index,
+        stage_count=stage_count,
+    )
+
+
+def _build_module_stage_map(interview: Interview) -> dict[int, dict[str, str]]:
+    state = interview.interview_state if isinstance(interview.interview_state, dict) else {}
+    raw_history = state.get("module_question_history")
+    if not isinstance(raw_history, list):
+        return {}
+
+    stage_map: dict[int, dict[str, str]] = {}
+    for item in raw_history:
+        if not isinstance(item, dict):
+            continue
+        assistant_turn = _safe_int(item.get("assistant_turn"), 0)
+        if assistant_turn <= 0:
+            continue
+        stage_map[assistant_turn] = {
+            "stage_key": str(item.get("stage_key") or "") or None,
+            "stage_title": str(item.get("stage_title") or "") or None,
+        }
+    return stage_map
 
 
 def _to_history(messages: list[InterviewMessage]) -> list[dict]:
@@ -1362,6 +1604,9 @@ async def start_interview(
     target_role: str,
     template_id: uuid.UUID | None = None,
     language: str = "ru",
+    module_type: str | None = None,
+    module_title: str | None = None,
+    module_config: dict[str, Any] | None = None,
 ) -> StartInterviewResponse:
     # Guard: active resume required
     active_resume = await db.scalar(
@@ -1380,17 +1625,32 @@ async def start_interview(
             select(InterviewTemplate).where(InterviewTemplate.id == template_id)
         )
 
+    normalized_module_type = str(module_type or "").strip().lower() or None
+    normalized_module_title = str(module_title or "").strip() or None
+    safe_module_config = module_config if isinstance(module_config, dict) else {}
+
     resume_profile = preprocess_resume(active_resume.raw_text, target_role)
-    if template:
-        max_q = len(template.questions)
-        role_max_cap = max_q
-        min_questions_before_early_stop = min(_ADAPTIVE_MIN_QUESTIONS_FLOOR, max_q)
-    else:
-        max_q, role_max_cap, min_questions_before_early_stop = _estimate_dynamic_question_budget(
+    module_context: dict[str, Any] | None = None
+    if normalized_module_type == _SYSTEM_DESIGN_MODULE_TYPE:
+        topic_plan, module_context = _build_system_design_topic_plan(
             target_role=target_role,
-            resume_profile=resume_profile,
+            language=language,
+            module_config=safe_module_config,
         )
-    topic_plan = build_interview_plan(target_role, max_q, resume_profile)
+        max_q = len(topic_plan)
+        role_max_cap = max_q
+        min_questions_before_early_stop = max_q
+    else:
+        if template:
+            max_q = len(template.questions)
+            role_max_cap = max_q
+            min_questions_before_early_stop = min(_ADAPTIVE_MIN_QUESTIONS_FLOOR, max_q)
+        else:
+            max_q, role_max_cap, min_questions_before_early_stop = _estimate_dynamic_question_budget(
+                target_role=target_role,
+                resume_profile=resume_profile,
+            )
+        topic_plan = build_interview_plan(target_role, max_q, resume_profile)
 
     # Create interview — store resume_id snapshot at start time
     interview = Interview(
@@ -1414,6 +1674,7 @@ async def start_interview(
         {
             "topic_plan": topic_plan,
             "resume_profile": resume_profile,
+            "module_context": module_context,
         },
         ensure_ascii=False,
     )
@@ -1437,6 +1698,16 @@ async def start_interview(
         resume_anchor=topic_plan[0].get("resume_anchor") if topic_plan else None,
         verification_target=topic_plan[0].get("verification_target") if topic_plan else None,
         candidate_memory=[],
+        module_type=normalized_module_type,
+        module_title=normalized_module_title,
+        module_scenario_id=topic_plan[0].get("scenario_id") if topic_plan else None,
+        module_scenario_title=topic_plan[0].get("scenario_title") if topic_plan else None,
+        module_scenario_prompt=topic_plan[0].get("scenario_prompt") if topic_plan else None,
+        module_stage_key=topic_plan[0].get("stage_key") if topic_plan else None,
+        module_stage_title=topic_plan[0].get("stage_title") if topic_plan else None,
+        module_stage_prompt=topic_plan[0].get("stage_prompt") if topic_plan else None,
+        module_stage_index=0,
+        module_stage_count=len(module_context.get("stage_plan", [])) if module_context else 0,
     )
     first_question = await _get_next_question_with_dev_fallback(ctx)
     first_question = _sanitize_chat_question(first_question, language=language) or first_question
@@ -1450,7 +1721,7 @@ async def start_interview(
 
     # question_count tracks core interview questions only
     interview.question_count = 1
-    interview.interview_state = {
+    initial_state = {
         "turn_count": 1,
         "question_count": 1,
         "current_topic_index": 0,
@@ -1481,6 +1752,21 @@ async def start_interview(
         "adaptive_role_max_cap": role_max_cap,
         "adaptive_last_decision": None,
     }
+    if normalized_module_type:
+        initial_state.update(
+            {
+                "module_type": normalized_module_type,
+                "module_title": normalized_module_title or _module_title_fallback(normalized_module_type),
+                "module_config": safe_module_config,
+                "module_scenario_id": (module_context or {}).get("scenario_id"),
+                "module_scenario_title": (module_context or {}).get("scenario_title"),
+                "module_scenario_prompt": (module_context or {}).get("scenario_prompt"),
+                "module_stage_plan": list((module_context or {}).get("stage_plan") or []),
+                "module_stage_index": 0,
+                "module_question_history": list((module_context or {}).get("question_history") or []),
+            }
+        )
+    interview.interview_state = initial_state
     interview.status = "in_progress"
     await db.commit()
     await db.refresh(interview)
@@ -1545,6 +1831,7 @@ async def add_candidate_message(
         # Load persisted interview plan from system message
         topic_plan: list[dict] = []
         resume_profile: dict = {}
+        module_context: dict[str, Any] = {}
         import json
         for msg in messages:
             if msg.role == "system":
@@ -1552,6 +1839,8 @@ async def add_candidate_message(
                     plan_data = json.loads(msg.content)
                     topic_plan = plan_data.get("topic_plan", [])
                     resume_profile = plan_data.get("resume_profile", {})
+                    raw_module_context = plan_data.get("module_context")
+                    module_context = raw_module_context if isinstance(raw_module_context, dict) else {}
                     break
                 except (json.JSONDecodeError, KeyError):
                     pass
@@ -1577,6 +1866,24 @@ async def add_candidate_message(
         topic_mastered_flags: list[bool] = list(state.get("topic_mastered_flags", []))
         last_question_type: str = str(state.get("last_question_type", "main"))
         candidate_memory: list[str] = list(state.get("candidate_memory", []))
+        module_type = str(state.get("module_type") or module_context.get("module_type") or "").strip().lower() or None
+        module_title = str(state.get("module_title") or "").strip() or None
+        module_stage_plan = list(
+            state.get("module_stage_plan")
+            if isinstance(state.get("module_stage_plan"), list)
+            else module_context.get("stage_plan", [])
+        )
+        module_stage_index = _safe_int(state.get("module_stage_index"), current_topic_index)
+        module_question_history = list(
+            state.get("module_question_history")
+            if isinstance(state.get("module_question_history"), list)
+            else module_context.get("question_history", [])
+        )
+        module_scenario_id = str(state.get("module_scenario_id") or module_context.get("scenario_id") or "").strip() or None
+        module_scenario_title = str(state.get("module_scenario_title") or module_context.get("scenario_title") or "").strip() or None
+        module_scenario_prompt = str(state.get("module_scenario_prompt") or module_context.get("scenario_prompt") or "").strip() or None
+        if module_type == _SYSTEM_DESIGN_MODULE_TYPE and topic_plan:
+            current_topic_index = min(max(module_stage_index, 0), len(topic_plan) - 1)
         candidate_answers_count = _safe_int(state.get("candidate_answers_count"), 0)
         strong_answers_count = _safe_int(state.get("strong_answers_count"), 0)
         weak_answers_count = _safe_int(state.get("weak_answers_count"), 0)
@@ -1675,29 +1982,34 @@ async def add_candidate_message(
         if is_nonsense_answer:
             nonsense_answers_count += 1
 
-        role_max_cap = max(interview.max_questions, role_max_cap)
-        adapted_max_questions, should_end_now, adaptive_decision = _adapt_question_budget(
-            current_max_questions=interview.max_questions,
-            current_question_count=interview.question_count,
-            answer_count=candidate_answers_count,
-            strong_answers_count=strong_answers_count,
-            weak_answers_count=weak_answers_count,
-            low_relevance_answers_count=low_relevance_answers_count,
-            consecutive_weak_answers=consecutive_weak_answers,
-            min_questions_before_early_stop=max(1, min_questions_before_early_stop),
-            role_max_cap=role_max_cap,
-            nonsense_answers_count=nonsense_answers_count,
-        )
-        interview.max_questions = adapted_max_questions
+        if module_type == _SYSTEM_DESIGN_MODULE_TYPE:
+            should_end_now = False
+            adaptive_decision = None
+            adapted_max_questions = interview.max_questions
+        else:
+            role_max_cap = max(interview.max_questions, role_max_cap)
+            adapted_max_questions, should_end_now, adaptive_decision = _adapt_question_budget(
+                current_max_questions=interview.max_questions,
+                current_question_count=interview.question_count,
+                answer_count=candidate_answers_count,
+                strong_answers_count=strong_answers_count,
+                weak_answers_count=weak_answers_count,
+                low_relevance_answers_count=low_relevance_answers_count,
+                consecutive_weak_answers=consecutive_weak_answers,
+                min_questions_before_early_stop=max(1, min_questions_before_early_stop),
+                role_max_cap=role_max_cap,
+                nonsense_answers_count=nonsense_answers_count,
+            )
+            interview.max_questions = adapted_max_questions
 
-        # ── Contradiction detection ─────────────────────────────────────────
-        # If we asked a verification question and got a shallow answer → flag it
-        if pending_verification and answer_class in {"generic", "evasive", "no_experience_honest"}:
-            contradiction_flags.append(f"possible exaggeration: {pending_verification}")
-            pending_verification = None
-        elif pending_verification and answer_class in {"strong", "partial"} and answer_relevance != "low":
-            verified_skills.add(pending_verification)
-            pending_verification = None
+            # ── Contradiction detection ─────────────────────────────────────
+            # If we asked a verification question and got a shallow answer → flag it
+            if pending_verification and answer_class in {"generic", "evasive", "no_experience_honest"}:
+                contradiction_flags.append(f"possible exaggeration: {pending_verification}")
+                pending_verification = None
+            elif pending_verification and answer_class in {"strong", "partial"} and answer_relevance != "low":
+                verified_skills.add(pending_verification)
+                pending_verification = None
 
         # ── Question type state machine ─────────────────────────────────────
         # One core topic can have at most one extra probing turn.
@@ -1720,90 +2032,113 @@ async def add_candidate_message(
         )
 
         can_probe_current_topic = topic_turns < 1 and interview.question_count < interview.max_questions
+        topic_guard_closure_reason: str | None = None
 
-        can_probe_claim = (
-            bool(claim_target)
-            and claim_target not in probed_claim_targets
-            and claim_target not in verified_skills
-            and can_probe_current_topic
-        )
-        topic_guard_requires_probe, topic_guard_closure_reason = _topic_guard_decision(
-            claim_target=claim_target,
-            verified_skills=verified_skills,
-            probed_claim_targets=probed_claim_targets,
-            can_probe_current_topic=can_probe_current_topic,
-        )
+        if module_type == _SYSTEM_DESIGN_MODULE_TYPE:
+            if last_question_type != "main":
+                question_type = "main"
+                will_advance = True
+            elif answer_class in {"no_experience_honest", "generic", "evasive"} or answer_relevance == "low":
+                if can_probe_current_topic:
+                    question_type = "followup"
+                    will_advance = False
+                else:
+                    question_type = "main"
+                    will_advance = True
+                    forced_closure_reason = forced_closure_reason or "system_design_followup_spent"
+            elif answer_class == "strong" and can_probe_current_topic:
+                question_type = "deep_technical"
+                will_advance = False
+            else:
+                question_type = "main"
+                will_advance = True
+        else:
+            can_probe_claim = (
+                bool(claim_target)
+                and claim_target not in probed_claim_targets
+                and claim_target not in verified_skills
+                and can_probe_current_topic
+            )
+            topic_guard_requires_probe, topic_guard_closure_reason = _topic_guard_decision(
+                claim_target=claim_target,
+                verified_skills=verified_skills,
+                probed_claim_targets=probed_claim_targets,
+                can_probe_current_topic=can_probe_current_topic,
+            )
 
-        ranked_claim_target = _rank_verification_target(
-            current_claim_target=claim_target,
-            new_techs=new_techs,
-            current_question=current_question_text,
-            verified_skills=verified_skills,
-            probed_claim_targets=probed_claim_targets,
-        )
-
-        if should_end_now:
-            question_type = "main"
-            will_advance = True
-            next_pending_verification = None
-            forced_closure_reason = adaptive_decision or "early_stop_low_signal"
-            saturation_reason = None
-        elif force_topic_closure:
-            question_type = "main"
-            will_advance = True
-        elif topic_saturated:
-            question_type = "main"
-            will_advance = True
-        elif topic_guard_requires_probe:
-            normalized_claim_target = str(claim_target or "").strip().lower()
-            question_type = "claim_verification"
-            next_pending_verification = normalized_claim_target
-            probed_claim_targets.add(normalized_claim_target)
-            will_advance = False
-
-        elif can_probe_claim and ranked_claim_target and answer_class in {"generic", "evasive", "no_experience_honest"}:
-            question_type = "claim_verification"
-            next_pending_verification = ranked_claim_target
-            probed_claim_targets.add(ranked_claim_target)
-            will_advance = False
-
-        elif answer_class == "no_experience_honest" and can_probe_current_topic:
-            question_type = "followup"
-            will_advance = False
-
-        elif answer_class in {"generic", "evasive"} and can_probe_current_topic:
-            question_type = "followup"
-            will_advance = False
-
-        elif can_probe_current_topic and answer_class in {"strong", "partial"}:
-            tech_to_verify = _rank_verification_target(
+            ranked_claim_target = _rank_verification_target(
                 current_claim_target=claim_target,
-                new_techs=unverified_techs,
+                new_techs=new_techs,
                 current_question=current_question_text,
                 verified_skills=verified_skills,
                 probed_claim_targets=probed_claim_targets,
             )
-            if tech_to_verify:
-                question_type = "verification"
-                next_pending_verification = tech_to_verify
-                probed_claim_targets.add(tech_to_verify)
+
+            if should_end_now:
+                question_type = "main"
+                will_advance = True
+                next_pending_verification = None
+                forced_closure_reason = adaptive_decision or "early_stop_low_signal"
+                saturation_reason = None
+            elif force_topic_closure:
+                question_type = "main"
+                will_advance = True
+            elif topic_saturated:
+                question_type = "main"
+                will_advance = True
+            elif topic_guard_requires_probe:
+                normalized_claim_target = str(claim_target or "").strip().lower()
+                question_type = "claim_verification"
+                next_pending_verification = normalized_claim_target
+                probed_claim_targets.add(normalized_claim_target)
                 will_advance = False
-            elif answer_class == "strong":
+
+            elif can_probe_claim and ranked_claim_target and answer_class in {"generic", "evasive", "no_experience_honest"}:
+                question_type = "claim_verification"
+                next_pending_verification = ranked_claim_target
+                probed_claim_targets.add(ranked_claim_target)
+                will_advance = False
+
+            elif answer_class == "no_experience_honest" and can_probe_current_topic:
+                question_type = "followup"
+                will_advance = False
+
+            elif answer_class in {"generic", "evasive"} and can_probe_current_topic:
+                question_type = "followup"
+                will_advance = False
+
+            elif can_probe_current_topic and answer_class in {"strong", "partial"}:
+                tech_to_verify = _rank_verification_target(
+                    current_claim_target=claim_target,
+                    new_techs=unverified_techs,
+                    current_question=current_question_text,
+                    verified_skills=verified_skills,
+                    probed_claim_targets=probed_claim_targets,
+                )
+                if tech_to_verify:
+                    question_type = "verification"
+                    next_pending_verification = tech_to_verify
+                    probed_claim_targets.add(tech_to_verify)
+                    will_advance = False
+                elif answer_class == "strong":
+                    question_type = "deep_technical"
+                    will_advance = False
+
+            elif answer_class == "strong" and can_probe_current_topic:
                 question_type = "deep_technical"
                 will_advance = False
 
-        elif answer_class == "strong" and can_probe_current_topic:
-            question_type = "deep_technical"
-            will_advance = False
-
-        else:
-            question_type = "main"
-            will_advance = True
-            if topic_guard_closure_reason:
-                forced_closure_reason = forced_closure_reason or topic_guard_closure_reason
+            else:
+                question_type = "main"
+                will_advance = True
+                if topic_guard_closure_reason:
+                    forced_closure_reason = forced_closure_reason or topic_guard_closure_reason
 
         resolved_next_topic_index: int | None = None
         next_q: str | None = None
+        module_stage_key: str | None = None
+        module_stage_title: str | None = None
+        module_stage_prompt: str | None = None
         if not should_end_now:
             competency_targets = None
             resume_anchor = None
@@ -1814,18 +2149,24 @@ async def add_candidate_message(
                 next_idx = interview.question_count
                 target_idx = next_idx if will_advance else current_idx
                 if will_advance:
-                    resolved_next_topic_index = _resolve_next_topic_index(
-                        topic_plan=topic_plan,
-                        current_topic_index=current_idx,
-                        default_next_index=target_idx,
-                        close_reason=forced_closure_reason or saturation_reason,
-                    )
+                    if module_type == _SYSTEM_DESIGN_MODULE_TYPE:
+                        resolved_next_topic_index = min(current_idx + 1, len(topic_plan) - 1)
+                    else:
+                        resolved_next_topic_index = _resolve_next_topic_index(
+                            topic_plan=topic_plan,
+                            current_topic_index=current_idx,
+                            default_next_index=target_idx,
+                            close_reason=forced_closure_reason or saturation_reason,
+                        )
                     target_idx = resolved_next_topic_index
                 if target_idx < len(topic_plan):
                     target = topic_plan[target_idx]
                     competency_targets = target.get("competencies")
                     resume_anchor = target.get("resume_anchor")
                     verification_target = target.get("verification_target")
+                    module_stage_key = target.get("stage_key")
+                    module_stage_title = target.get("stage_title")
+                    module_stage_prompt = target.get("stage_prompt")
                     if will_advance:
                         diversification_hint = _build_diversification_hint(
                             next_target=target,
@@ -1859,6 +2200,16 @@ async def add_candidate_message(
                 verification_target=verification_target,
                 diversification_hint=diversification_hint,
                 candidate_memory=candidate_memory,
+                module_type=module_type,
+                module_title=module_title,
+                module_scenario_id=module_scenario_id,
+                module_scenario_title=module_scenario_title,
+                module_scenario_prompt=module_scenario_prompt,
+                module_stage_key=module_stage_key,
+                module_stage_title=module_stage_title,
+                module_stage_prompt=module_stage_prompt,
+                module_stage_index=resolved_next_topic_index if resolved_next_topic_index is not None else current_topic_index,
+                module_stage_count=len(module_stage_plan) if module_stage_plan else 0,
             )
             next_q = await _get_next_question_with_dev_fallback(ctx)
             next_q = _sanitize_chat_question(next_q, language=interview.language)
@@ -1898,6 +2249,19 @@ async def add_candidate_message(
 
         turn_count += 1
 
+        if next_q and module_type == _SYSTEM_DESIGN_MODULE_TYPE:
+            assistant_turn = sum(1 for item in messages if item.role == "assistant") + 1
+            history_stage_key = module_stage_key or current_target.get("stage_key")
+            history_stage_title = module_stage_title or current_target.get("stage_title")
+            if history_stage_key or history_stage_title:
+                module_question_history.append(
+                    {
+                        "assistant_turn": assistant_turn,
+                        "stage_key": history_stage_key,
+                        "stage_title": history_stage_title,
+                    }
+                )
+
         interview.interview_state = {
             "turn_count": turn_count,
             "question_count": interview.question_count,
@@ -1932,6 +2296,14 @@ async def add_candidate_message(
             "adaptive_min_questions": max(1, min_questions_before_early_stop),
             "adaptive_role_max_cap": role_max_cap,
             "adaptive_last_decision": adaptive_decision,
+            "module_type": module_type,
+            "module_title": module_title or (_module_title_fallback(module_type) if module_type else None),
+            "module_scenario_id": module_scenario_id,
+            "module_scenario_title": module_scenario_title,
+            "module_scenario_prompt": module_scenario_prompt,
+            "module_stage_plan": module_stage_plan,
+            "module_stage_index": current_topic_index if module_type == _SYSTEM_DESIGN_MODULE_TYPE else module_stage_index,
+            "module_question_history": module_question_history,
         }
         if next_q:
             db.add(InterviewMessage(
@@ -1957,6 +2329,7 @@ async def add_candidate_message(
         current_question=current_question,
         is_followup=response_is_followup,
         question_type=question_type,
+        module_session=_build_interview_module_session_payload(interview),
     )
 
 
@@ -1966,6 +2339,7 @@ async def finish_interview(
     interview_id: uuid.UUID,
 ) -> FinishInterviewResponse:
     interview = await _get_interview(db, interview_id, candidate.id)
+    assessment_progress = await _get_assessment_progress(db, interview)
 
     if interview.status == "report_generated":
         existing_report = await db.scalar(
@@ -1982,6 +2356,8 @@ async def finish_interview(
                 hiring_recommendation=existing_report.hiring_recommendation,
                 interview_summary=existing_report.interview_summary,
             ),
+            assessment_progress=assessment_progress,
+            module_session=_build_interview_module_session_payload(interview),
         )
     if interview.status == "report_processing":
         _schedule_report_generation(interview.id)
@@ -1990,6 +2366,8 @@ async def finish_interview(
             status="report_processing",
             report_id=None,
             summary=None,
+            assessment_progress=assessment_progress,
+            module_session=_build_interview_module_session_payload(interview),
         )
     if interview.status != "in_progress":
         raise InterviewNotActiveError()
@@ -1999,11 +2377,49 @@ async def finish_interview(
 
     # Mark as processing and generate report asynchronously if needed.
     prior_status = interview.status
+    finished_at = datetime.utcnow()
     interview.status = "report_processing"
-    interview.completed_at = datetime.utcnow()
+    interview.completed_at = finished_at
+
+    if interview.company_assessment_id:
+        from app.models.company_assessment import CompanyAssessment
+        from app.services.assessment_invite_service import (
+            build_assessment_progress_payload,
+            get_current_assessment_module_payload,
+            sync_assessment_module_progress,
+        )
+
+        assessment = await db.scalar(
+            select(CompanyAssessment).where(CompanyAssessment.id == interview.company_assessment_id)
+        )
+        if assessment:
+            module_plan, current_module_index, current_module = get_current_assessment_module_payload(assessment)
+            current_interview_id = current_module.get("interview_id") if current_module else None
+            has_next_module = (
+                current_module is not None
+                and current_interview_id == str(interview.id)
+                and current_module_index + 1 < len(module_plan)
+            )
+            if has_next_module:
+                sync_assessment_module_progress(
+                    assessment,
+                    completed_interview_id=interview.id,
+                    completed_at=finished_at,
+                )
+                assessment.status = "in_progress"
+                assessment.interview_id = None
+                assessment.completed_at = None
+                assessment_progress = AssessmentProgressResponse(
+                    **build_assessment_progress_payload(
+                        assessment,
+                        interview_id=interview.id,
+                    )
+                )
+
     _update_report_diagnostics(interview, phase="finish_sync", status="processing")
     await db.commit()
     await db.refresh(interview)
+    assessment_progress = await _get_assessment_progress(db, interview) or assessment_progress
     _increment_report_pipeline_metric("finish_sync_started_total")
     _log_report_pipeline_event(
         "finish_sync_started",
@@ -2034,6 +2450,8 @@ async def finish_interview(
                 hiring_recommendation=report.hiring_recommendation,
                 interview_summary=report.interview_summary,
             ),
+            assessment_progress=await _get_assessment_progress(db, interview) or assessment_progress,
+            module_session=_build_interview_module_session_payload(interview),
         )
     except asyncio.TimeoutError:
         logger.warning(
@@ -2056,6 +2474,8 @@ async def finish_interview(
             status="report_processing",
             report_id=None,
             summary=None,
+            assessment_progress=await _get_assessment_progress(db, interview) or assessment_progress,
+            module_session=_build_interview_module_session_payload(interview),
         )
     except Exception as exc:
         logger.exception("Initial report generation failed for interview %s, switching to async processing", interview.id)
@@ -2082,6 +2502,8 @@ async def finish_interview(
             status="report_processing",
             report_id=None,
             summary=None,
+            assessment_progress=await _get_assessment_progress(db, interview) or assessment_progress,
+            module_session=_build_interview_module_session_payload(interview),
         )
 
 async def _ensure_report_generated(
@@ -2469,6 +2891,7 @@ async def get_interview_report_status(
     interview_id: uuid.UUID,
 ) -> InterviewReportStatusResponse:
     interview = await _get_interview(db, interview_id, candidate.id)
+    assessment_progress = await _get_assessment_progress(db, interview)
     report = await db.scalar(
         select(AssessmentReport).where(AssessmentReport.interview_id == interview.id)
     )
@@ -2492,6 +2915,8 @@ async def get_interview_report_status(
             ),
             failure_reason=None,
             diagnostics=diagnostics,
+            assessment_progress=assessment_progress,
+            module_session=_build_interview_module_session_payload(interview),
         )
 
     if interview.status == "failed":
@@ -2517,6 +2942,8 @@ async def get_interview_report_status(
         summary=None,
         failure_reason=failure_reason,
         diagnostics=diagnostics,
+        assessment_progress=assessment_progress,
+        module_session=_build_interview_module_session_payload(interview),
     )
 
 
@@ -2570,6 +2997,8 @@ async def retry_interview_report_generation(
         summary=None,
         failure_reason=None,
         diagnostics=_read_report_diagnostics(interview),
+        assessment_progress=await _get_assessment_progress(db, interview),
+        module_session=_build_interview_module_session_payload(interview),
     )
 
 
@@ -2579,6 +3008,7 @@ async def get_interview_detail(
     interview_id: uuid.UUID,
 ) -> InterviewDetailResponse:
     interview = await _get_interview(db, interview_id, candidate.id)
+    assessment_progress = await _get_assessment_progress(db, interview)
     messages = await _get_messages(db, interview.id)
 
     report = await db.scalar(
@@ -2606,6 +3036,8 @@ async def get_interview_detail(
         messages=visible,
         has_report=report is not None,
         report_id=report.id if report else None,
+        assessment_progress=assessment_progress,
+        module_session=_build_interview_module_session_payload(interview),
     )
 
 
@@ -2696,7 +3128,7 @@ async def get_interview_replay(
     interview_id: uuid.UUID,
     company_id: uuid.UUID,
 ) -> InterviewReplayResponse | None:
-    """Return a Q&A replay annotated with per-question analysis."""
+    """Return a Q&A replay annotated with per-question analysis and transcript."""
     interview = await db.scalar(select(Interview).where(Interview.id == interview_id))
     if not interview:
         return None
@@ -2725,8 +3157,10 @@ async def get_interview_replay(
 
     # Build turns: pair assistant messages with following candidate messages
     per_q: list[dict] = report.per_question_analysis or [] if report else []
+    module_stage_map = _build_module_stage_map(interview)
 
     turns: list[ReplayTurn] = []
+    transcript_blocks: list[TranscriptBlockResponse] = []
     visible = [m for m in messages if m.role in ("assistant", "candidate")]
     q_num = 0
     i = 0
@@ -2737,6 +3171,7 @@ async def get_interview_replay(
             question_msg = msg
             answer_msg = visible[i + 1] if i + 1 < len(visible) and visible[i + 1].role == "candidate" else None
             analysis = per_q[q_num - 1] if q_num - 1 < len(per_q) else None
+            stage_meta = module_stage_map.get(q_num, {})
             turns.append(ReplayTurn(
                 question_number=q_num,
                 question=question_msg.content,
@@ -2744,10 +3179,43 @@ async def get_interview_replay(
                 question_time=question_msg.created_at,
                 answer_time=answer_msg.created_at if answer_msg else None,
                 analysis=analysis,
+                stage_key=stage_meta.get("stage_key"),
+                stage_title=stage_meta.get("stage_title"),
             ))
+            transcript_blocks.append(
+                TranscriptBlockResponse(
+                    speaker="interviewer",
+                    kind="question",
+                    turn_number=q_num,
+                    text=question_msg.content,
+                    timestamp=question_msg.created_at,
+                )
+            )
+            transcript_blocks.append(
+                TranscriptBlockResponse(
+                    speaker="candidate",
+                    kind="answer",
+                    turn_number=q_num,
+                    text=answer_msg.content if answer_msg else "",
+                    timestamp=answer_msg.created_at if answer_msg else None,
+                )
+            )
             i += 2 if answer_msg else 1
         else:
             i += 1
+
+    transcript_text_parts: list[str] = []
+    for block in transcript_blocks:
+        speaker_label = "Interviewer" if block.speaker == "interviewer" else "Candidate"
+        kind_label = f"Q{block.turn_number}" if block.kind == "question" else f"A{block.turn_number}"
+        header_parts = [kind_label, speaker_label]
+        if block.timestamp:
+            header_parts.append(block.timestamp.isoformat())
+        transcript_text_parts.append(" | ".join(header_parts))
+        transcript_text_parts.append(block.text.strip() or "[no answer captured]")
+        transcript_text_parts.append("")
+
+    transcript_text = "\n".join(transcript_text_parts).strip() if transcript_text_parts else None
 
     return InterviewReplayResponse(
         interview_id=interview.id,
@@ -2756,6 +3224,9 @@ async def get_interview_replay(
         target_role=interview.target_role,
         completed_at=interview.completed_at,
         turns=turns,
+        transcript_blocks=transcript_blocks,
+        transcript_text=transcript_text,
+        module_session=_build_interview_module_session_payload(interview),
     )
 
 

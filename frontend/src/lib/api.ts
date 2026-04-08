@@ -190,6 +190,12 @@ export const companyApi = {
     target_role: string;
     assessment_type?: "employee_internal" | "candidate_external";
     template_id?: string | null;
+    module_plan?: Array<{
+      module_id?: string | null;
+      module_type: string;
+      title?: string | null;
+      config?: Record<string, unknown> | null;
+    }> | null;
     deadline_at?: string | null;
     expires_at?: string | null;
     branding_name?: string | null;

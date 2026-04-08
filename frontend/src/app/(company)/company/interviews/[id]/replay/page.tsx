@@ -3,11 +3,11 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { Link, useRouter } from "@/i18n/navigation";
+import { useRouter } from "@/i18n/navigation";
 import { CompanyWorkspaceHeader } from "@/components/company-workspace-header";
 import { companyApi } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
-import type { InterviewReplay, ReplayTurn } from "@/lib/types";
+import type { InterviewReplay, ReplayTurn, TranscriptBlock } from "@/lib/types";
 
 const DEPTH_COLORS: Record<string, string> = {
   expert: "text-green-400 bg-green-500/10",
@@ -37,6 +37,11 @@ function TurnCard({ turn, expanded, onToggle }: {
         <div className="flex-1 min-w-0 pr-4">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-slate-500 text-xs font-mono shrink-0">Q{turn.question_number}</span>
+            {turn.stage_title && (
+              <span className="text-xs px-2 py-0.5 rounded bg-violet-500/10 text-violet-300 border border-violet-500/20">
+                {turn.stage_title}
+              </span>
+            )}
             {qa?.targeted_competencies && qa.targeted_competencies.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {qa.targeted_competencies.map((c, i) => (
@@ -130,6 +135,66 @@ function TurnCard({ turn, expanded, onToggle }: {
   );
 }
 
+function buildFallbackTranscriptBlocks(turns: ReplayTurn[]): TranscriptBlock[] {
+  return turns.flatMap((turn) => [
+    {
+      speaker: "interviewer",
+      kind: "question",
+      turn_number: turn.question_number,
+      text: turn.question,
+      timestamp: turn.question_time,
+    },
+    {
+      speaker: "candidate",
+      kind: "answer",
+      turn_number: turn.question_number,
+      text: turn.answer,
+      timestamp: turn.answer_time,
+    },
+  ]);
+}
+
+function buildFallbackTranscriptText(blocks: TranscriptBlock[]): string {
+  return blocks
+    .flatMap((block) => {
+      const speakerLabel = block.speaker === "interviewer" ? "Interviewer" : "Candidate";
+      const kindLabel = block.kind === "question" ? `Q${block.turn_number}` : `A${block.turn_number}`;
+      const header = block.timestamp
+        ? `${kindLabel} | ${speakerLabel} | ${block.timestamp}`
+        : `${kindLabel} | ${speakerLabel}`;
+      return [header, block.text.trim() || "[no answer captured]", ""];
+    })
+    .join("\n")
+    .trim();
+}
+
+function TranscriptBlockCard({ block }: { block: TranscriptBlock }) {
+  const t = useTranslations("companyReplay");
+  const isInterviewer = block.speaker === "interviewer";
+  const badgeClass = isInterviewer
+    ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
+    : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+  const text = block.text.trim() || t("emptyAnswer");
+
+  return (
+    <div className="rounded-xl border border-slate-700 bg-slate-800 p-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${badgeClass}`}>
+          {t(`speakers.${block.speaker}`)}
+        </span>
+        <span className="text-xs font-mono text-slate-500">
+          {block.kind === "question" ? `Q${block.turn_number}` : `A${block.turn_number}`}
+        </span>
+        <span className="text-xs text-slate-500">{t(`kinds.${block.kind}`)}</span>
+        {block.timestamp ? (
+          <span className="text-xs text-slate-600">{new Date(block.timestamp).toLocaleTimeString()}</span>
+        ) : null}
+      </div>
+      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-200">{text}</p>
+    </div>
+  );
+}
+
 export default function InterviewReplayPage() {
   const t = useTranslations("companyReplay");
   const startT = useTranslations("interviewStart");
@@ -144,6 +209,8 @@ export default function InterviewReplayPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [expandedTurn, setExpandedTurn] = useState<number | null>(0);
+  const [mode, setMode] = useState<"replay" | "transcript">("replay");
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   useEffect(() => {
     if (!id || authLoading) return;
@@ -172,6 +239,35 @@ export default function InterviewReplayPage() {
     );
   }
 
+  const transcriptBlocks = replay.transcript_blocks && replay.transcript_blocks.length > 0
+    ? replay.transcript_blocks
+    : buildFallbackTranscriptBlocks(replay.turns);
+  const transcriptText = replay.transcript_text?.trim() || buildFallbackTranscriptText(transcriptBlocks);
+
+  async function handleCopyTranscript() {
+    try {
+      await navigator.clipboard.writeText(transcriptText);
+      setCopyState("copied");
+      window.setTimeout(() => setCopyState("idle"), 2000);
+    } catch {
+      setCopyState("failed");
+      window.setTimeout(() => setCopyState("idle"), 2000);
+    }
+  }
+
+  function handleDownloadTranscript() {
+    if (!replay) {
+      return;
+    }
+    const blob = new Blob([transcriptText], { type: "text/plain;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `interview-transcript-${replay.interview_id}.txt`;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="ai-shell min-h-screen px-4 py-10">
       <div className="ai-section max-w-4xl mx-auto">
@@ -196,18 +292,75 @@ export default function InterviewReplayPage() {
             </p>
           )}
           <p className="mt-2 text-xs text-slate-500">{t("questionCount", {count: replay.turns.length})}</p>
+          {replay.module_session?.scenario_title && (
+            <p className="mt-2 text-sm text-slate-300">
+              {replay.module_session.module_title || "Module"} · {replay.module_session.scenario_title}
+            </p>
+          )}
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <div className="inline-flex rounded-xl border border-slate-700 bg-slate-900/80 p-1">
+              <button
+                onClick={() => setMode("replay")}
+                className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${
+                  mode === "replay" ? "bg-slate-700 text-white" : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {t("modes.replay")}
+              </button>
+              <button
+                onClick={() => setMode("transcript")}
+                className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${
+                  mode === "transcript" ? "bg-slate-700 text-white" : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {t("modes.transcript")}
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleCopyTranscript}
+                className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 transition-colors hover:border-slate-500 hover:text-white"
+              >
+                {copyState === "copied"
+                  ? t("actions.copied")
+                  : copyState === "failed"
+                  ? t("actions.copyFailed")
+                  : t("actions.copyTranscript")}
+              </button>
+              <button
+                onClick={handleDownloadTranscript}
+                className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 transition-colors hover:border-slate-500 hover:text-white"
+              >
+                {t("actions.downloadTranscript")}
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div className="space-y-3">
-          {replay.turns.map((turn, i) => (
-            <TurnCard
-              key={turn.question_number}
-              turn={turn}
-              expanded={expandedTurn === i}
-              onToggle={() => setExpandedTurn(expandedTurn === i ? null : i)}
-            />
-          ))}
-        </div>
+        {mode === "replay" ? (
+          <div className="space-y-3">
+            {replay.turns.map((turn, i) => (
+              <TurnCard
+                key={turn.question_number}
+                turn={turn}
+                expanded={expandedTurn === i}
+                onToggle={() => setExpandedTurn(expandedTurn === i ? null : i)}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-slate-700 bg-slate-800/80 p-4 text-sm text-slate-400">
+              {t("transcriptHint")}
+            </div>
+            {transcriptBlocks.map((block, index) => (
+              <TranscriptBlockCard
+                key={`${block.kind}-${block.turn_number}-${index}`}
+                block={block}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

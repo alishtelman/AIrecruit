@@ -107,6 +107,8 @@
     "flow": {
       "questionsPrefix": "The flow contains",
       "questionsCount": "8 structured questions",
+      "systemDesignQuestions": "3 structured design stages",
+      "genericQuestions": "a structured module",
       "questionsSuffix": "and usually takes 15-20 minutes.",
       "visibilityPrefix": "Your answers will be reviewed by AI and the results will remain visible only to ",
       "visibilitySuffix": "."
@@ -115,7 +117,10 @@
       "completedTitle": "Assessment completed",
       "completedBody": "This invite has already been completed. {company} can already access the private report.",
       "expiredTitle": "Invite expired",
-      "expiredBody": "This invite can no longer be started. Contact the company if you need a new campaign link."
+      "expiredBody": "This invite can no longer be started. Contact the company if you need a new campaign link.",
+      "lockedTitle": "{module} is not startable here yet",
+      "lockedBody": "This module is already part of the assessment plan, but its runtime is not available in the candidate flow yet.",
+      "finalizingBody": "The current module is already finishing in the background. Return to the interview tab if it is still open."
     },
     "language": {
       "title": "Interview language",
@@ -125,9 +130,24 @@
     "actions": {
       "starting": "Starting...",
       "start": "Start assessment",
+      "resume": "Resume current module",
       "signInAndStart": "Sign in and start",
+      "signInAndResume": "Sign in and resume",
       "needAccount": "You need a candidate account to continue.",
       "register": "Register here"
+    },
+    "modules": {
+      "title": "Assessment modules",
+      "subtitle": "Complete the current module to unlock the next step in the plan.",
+      "count": "{count} modules",
+      "moduleNumber": "Module {number}",
+      "runtimeReady": "Runtime ready",
+      "runtimePending": "Runtime locked",
+      "status": {
+        "completed": "Completed",
+        "current": "Current",
+        "locked": "Locked"
+      }
     },
     "checklist": {
       "title": "Before you begin",
@@ -295,6 +315,8 @@
     "meta": {
       "role": "Role",
       "template": "Template",
+      "modules": "Modules",
+      "currentModule": "Current module",
       "created": "Created",
       "brand": "Brand",
       "deadline": "Deadline",
@@ -675,6 +697,26 @@
     "title": "Interview replay",
     "completed": "Completed {date}",
     "questionCount": "{count} questions",
+    "transcriptHint": "Transcript view is built from the saved interviewer and candidate messages for this interview.",
+    "emptyAnswer": "[No answer captured]",
+    "modes": {
+      "replay": "Replay",
+      "transcript": "Transcript"
+    },
+    "actions": {
+      "copyTranscript": "Copy transcript",
+      "downloadTranscript": "Download .txt",
+      "copied": "Copied",
+      "copyFailed": "Copy failed"
+    },
+    "speakers": {
+      "interviewer": "Interviewer",
+      "candidate": "Candidate"
+    },
+    "kinds": {
+      "question": "Question",
+      "answer": "Answer"
+    },
     "errors": {
       "load": "Could not load replay",
       "notFound": "Replay not found"
@@ -895,6 +937,10 @@
     "recordingRequired": "Recording is off",
     "enableRecording": "Retry recording",
     "recordingDescription": "Recording starts automatically at interview launch. If screen permission is denied, the interview still continues and camera self-view remains available.",
+    "moduleCardEyebrow": "Current module",
+    "scenarioLabel": "Scenario",
+    "stageLabel": "Current stage",
+    "stageProgress": "Stage {current} of {total}",
     "completeTitle": "Interview complete",
     "completeDescription": "You've answered all {count} questions. Generate your assessment report now.",
     "finish": "Finish and get report",

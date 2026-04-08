@@ -11,6 +11,18 @@ export interface User {
 }
 
 export type AssessmentType = "employee_internal" | "candidate_external";
+export type AssessmentModuleStatus = "pending" | "in_progress" | "completed" | "blocked";
+
+export interface AssessmentModulePlanItem {
+  module_id: string;
+  module_type: string;
+  title: string;
+  status: AssessmentModuleStatus;
+  config: Record<string, unknown> | null;
+  interview_id: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
 
 export interface CompanyAssessment {
   id: string;
@@ -30,10 +42,15 @@ export interface CompanyAssessment {
   completed_at: string | null;
   branding_name: string | null;
   branding_logo_url: string | null;
+  module_plan: AssessmentModulePlanItem[];
+  module_count: number;
+  current_module_index: number;
+  current_module_type: string | null;
   created_at: string;
 }
 
 export interface EmployeeInviteInfo {
+  assessment_id: string;
   employee_name: string;
   employee_email: string;
   assessment_type: AssessmentType;
@@ -46,6 +63,13 @@ export interface EmployeeInviteInfo {
   expires_at: string | null;
   branding_name: string | null;
   branding_logo_url: string | null;
+  module_plan: AssessmentModulePlanItem[];
+  module_count: number;
+  current_module_index: number;
+  current_module_type: string | null;
+  current_module_title: string | null;
+  active_interview_id: string | null;
+  can_start_current_module: boolean;
 }
 
 export interface CompanyMember {
@@ -239,6 +263,7 @@ export interface SendMessageResponse {
   current_question: string | null;
   is_followup: boolean;
   question_type: string;
+  module_session: InterviewModuleSession | null;
 }
 
 export interface InterviewMessage {
@@ -271,6 +296,8 @@ export interface InterviewDetail {
   messages: InterviewMessage[];
   has_report: boolean;
   report_id: string | null;
+  assessment_progress: AssessmentProgress | null;
+  module_session: InterviewModuleSession | null;
 }
 
 export interface ResumeTextResponse {
@@ -290,6 +317,8 @@ export interface FinishInterviewResponse {
   status: InterviewStatus;
   report_id: string | null;
   summary: ReportSummary | null;
+  assessment_progress: AssessmentProgress | null;
+  module_session: InterviewModuleSession | null;
 }
 
 export interface ReportProcessingDiagnostics {
@@ -313,6 +342,31 @@ export interface InterviewReportStatusResponse {
   summary: ReportSummary | null;
   failure_reason?: string | null;
   diagnostics?: ReportProcessingDiagnostics | null;
+  assessment_progress: AssessmentProgress | null;
+  module_session: InterviewModuleSession | null;
+}
+
+export interface AssessmentProgress {
+  assessment_id: string;
+  invite_token: string;
+  assessment_status: CompanyAssessment["status"];
+  has_remaining_modules: boolean;
+  module_count: number;
+  current_module_index: number;
+  current_module_type: string | null;
+  current_module_title: string | null;
+}
+
+export interface InterviewModuleSession {
+  module_type: string;
+  module_title: string | null;
+  scenario_id: string | null;
+  scenario_title: string | null;
+  scenario_prompt: string | null;
+  stage_key: string | null;
+  stage_title: string | null;
+  stage_index: number;
+  stage_count: number;
 }
 
 export interface ProctoringTimelineEvent {
@@ -396,6 +450,16 @@ export interface ReplayTurn {
   question_time: string | null;
   answer_time: string | null;
   analysis: QuestionAnalysis | null;
+  stage_key?: string | null;
+  stage_title?: string | null;
+}
+
+export interface TranscriptBlock {
+  speaker: "interviewer" | "candidate";
+  kind: "question" | "answer";
+  turn_number: number;
+  text: string;
+  timestamp: string | null;
 }
 
 export interface InterviewReplay {
@@ -405,6 +469,9 @@ export interface InterviewReplay {
   target_role: string;
   completed_at: string | null;
   turns: ReplayTurn[];
+  transcript_blocks?: TranscriptBlock[] | null;
+  transcript_text?: string | null;
+  module_session?: InterviewModuleSession | null;
 }
 
 export interface ReportWithRole {

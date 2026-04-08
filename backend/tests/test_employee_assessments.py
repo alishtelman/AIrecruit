@@ -86,16 +86,8 @@ async def _create_assessment(
     return resp.json()
 
 
-async def _complete_employee_assessment(client: AsyncClient, token: str, invite_token: str) -> tuple[str, str]:
-    start_resp = await client.post(
-        f"/api/v1/employee/invite/{invite_token}/start",
-        headers=auth_headers(token),
-        json={"language": "en"},
-    )
-    assert start_resp.status_code == 200, start_resp.text
-    interview_id = start_resp.json()["interview_id"]
-
-    for i in range(8):
+async def _answer_all_questions(client: AsyncClient, token: str, interview_id: str) -> None:
+    for _ in range(16):
         msg_resp = await client.post(
             f"/api/v1/interviews/{interview_id}/message",
             headers=auth_headers(token),
@@ -107,6 +99,43 @@ async def _complete_employee_assessment(client: AsyncClient, token: str, invite_
             },
         )
         assert msg_resp.status_code == 200, msg_resp.text
+        if msg_resp.json()["current_question"] is None:
+            return
+    raise AssertionError(f"Interview {interview_id} did not reach a finishable state")
+
+
+async def _wait_for_report_id(client: AsyncClient, token: str, interview_id: str) -> str:
+    report_id = None
+    failure_reason = None
+    for _ in range(160):
+        status_resp = await client.get(
+            f"/api/v1/interviews/{interview_id}/report-status",
+            headers=auth_headers(token),
+        )
+        assert status_resp.status_code == 200, status_resp.text
+        status_data = status_resp.json()
+        if status_data["processing_state"] == "ready" and status_data["report_id"]:
+            report_id = status_data["report_id"]
+            break
+        if status_data["processing_state"] == "failed":
+            failure_reason = status_data.get("failure_reason")
+            break
+        assert status_data["processing_state"] in {"pending", "processing"}
+        await asyncio.sleep(0.25)
+    assert report_id, failure_reason or f"Report was not ready for interview {interview_id}"
+    return report_id
+
+
+async def _complete_employee_assessment(client: AsyncClient, token: str, invite_token: str) -> tuple[str, str]:
+    start_resp = await client.post(
+        f"/api/v1/employee/invite/{invite_token}/start",
+        headers=auth_headers(token),
+        json={"language": "en"},
+    )
+    assert start_resp.status_code == 200, start_resp.text
+    interview_id = start_resp.json()["interview_id"]
+
+    await _answer_all_questions(client, token, interview_id)
 
     finish_resp = await client.post(
         f"/api/v1/interviews/{interview_id}/finish",
@@ -116,19 +145,7 @@ async def _complete_employee_assessment(client: AsyncClient, token: str, invite_
     finish_data = finish_resp.json()
     report_id = finish_data.get("report_id")
     if not report_id:
-        for _ in range(40):
-            status_resp = await client.get(
-                f"/api/v1/interviews/{interview_id}/report-status",
-                headers=auth_headers(token),
-            )
-            assert status_resp.status_code == 200, status_resp.text
-            status_data = status_resp.json()
-            if status_data["processing_state"] == "ready" and status_data["report_id"]:
-                report_id = status_data["report_id"]
-                break
-            assert status_data["processing_state"] in {"pending", "processing"}
-            await asyncio.sleep(0.1)
-    assert report_id
+        report_id = await _wait_for_report_id(client, token, interview_id)
     return interview_id, report_id
 
 
@@ -179,6 +196,255 @@ async def test_employee_assessment_starts_for_invited_candidate(client: AsyncCli
     assert assessments_resp.status_code == 200
     saved = next(a for a in assessments_resp.json() if a["id"] == assessment["id"])
     assert saved["status"] == "in_progress"
+    assert saved["module_count"] == 1
+    assert saved["current_module_type"] == "adaptive_interview"
+    assert saved["module_plan"][0]["status"] == "in_progress"
+    assert saved["module_plan"][0]["interview_id"] == data["interview_id"]
+
+
+@pytest.mark.asyncio
+async def test_employee_assessment_invite_returns_module_orchestration_payload(
+    client: AsyncClient,
+    company_token: str,
+):
+    employee_email = f"inviteview_{uuid.uuid4().hex[:8]}@example.com"
+    assessment = await _create_assessment(
+        client,
+        company_token,
+        employee_email,
+        "Invite View Candidate",
+        module_plan=[
+            {
+                "module_type": "adaptive_interview",
+                "title": "Core Interview",
+            },
+            {
+                "module_type": "system_design",
+                "title": "System Design",
+            },
+        ],
+    )
+    candidate_token = await _register_candidate(client, employee_email, "Invite View Candidate")
+    await _upload_resume(client, candidate_token)
+
+    invite_resp = await client.get(f"/api/v1/employee/invite/{assessment['invite_token']}")
+    assert invite_resp.status_code == 200, invite_resp.text
+    invite = invite_resp.json()
+    assert invite["assessment_id"] == assessment["id"]
+    assert invite["module_count"] == 2
+    assert invite["current_module_index"] == 0
+    assert invite["current_module_type"] == "adaptive_interview"
+    assert invite["current_module_title"] == "Core Interview"
+    assert invite["active_interview_id"] is None
+    assert invite["can_start_current_module"] is True
+    assert invite["module_plan"][1]["module_type"] == "system_design"
+
+    start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert start_resp.status_code == 200, start_resp.text
+    interview_id = start_resp.json()["interview_id"]
+
+    refreshed_resp = await client.get(f"/api/v1/employee/invite/{assessment['invite_token']}")
+    assert refreshed_resp.status_code == 200, refreshed_resp.text
+    refreshed = refreshed_resp.json()
+    assert refreshed["status"] == "in_progress"
+    assert refreshed["active_interview_id"] == interview_id
+    assert refreshed["can_start_current_module"] is False
+    assert refreshed["module_plan"][0]["status"] == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_employee_assessment_defaults_to_single_adaptive_interview_module(
+    client: AsyncClient,
+    company_token: str,
+):
+    employee_email = f"defaultmod_{uuid.uuid4().hex[:8]}@example.com"
+    assessment = await _create_assessment(client, company_token, employee_email, "Module Candidate")
+
+    assert assessment["module_count"] == 1
+    assert assessment["current_module_index"] == 0
+    assert assessment["current_module_type"] == "adaptive_interview"
+    assert assessment["module_plan"][0]["module_type"] == "adaptive_interview"
+    assert assessment["module_plan"][0]["status"] == "pending"
+    assert assessment["module_plan"][0]["interview_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_employee_assessment_accepts_custom_module_plan_and_advances_to_next_module(
+    client: AsyncClient,
+    company_token: str,
+):
+    employee_email = f"multimod_{uuid.uuid4().hex[:8]}@example.com"
+    assessment = await _create_assessment(
+        client,
+        company_token,
+        employee_email,
+        "Multi Module Candidate",
+        module_plan=[
+            {
+                "module_type": "adaptive_interview",
+                "title": "Core Interview",
+            },
+            {
+                "module_id": "system_design_main",
+                "module_type": "system_design",
+                "title": "Architecture Deep Dive",
+                "config": {"duration_minutes": 45},
+            },
+        ],
+    )
+    assert assessment["module_count"] == 2
+    assert assessment["current_module_index"] == 0
+    assert assessment["current_module_type"] == "adaptive_interview"
+    assert assessment["module_plan"][1]["module_type"] == "system_design"
+    assert assessment["module_plan"][1]["config"]["duration_minutes"] == 45
+    assert assessment["module_plan"][1]["config"]["target_role"] == "backend_engineer"
+
+    candidate_token = await _register_candidate(client, employee_email, "Multi Module Candidate")
+    await _upload_resume(client, candidate_token)
+
+    first_start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert first_start_resp.status_code == 200, first_start_resp.text
+    interview_id = first_start_resp.json()["interview_id"]
+
+    second_start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert second_start_resp.status_code == 200, second_start_resp.text
+    assert second_start_resp.json()["interview_id"] == interview_id
+
+    await _answer_all_questions(client, candidate_token, interview_id)
+
+    finish_resp = await client.post(
+        f"/api/v1/interviews/{interview_id}/finish",
+        headers=auth_headers(candidate_token),
+    )
+    assert finish_resp.status_code == 200, finish_resp.text
+    finish_data = finish_resp.json()
+    assert finish_data["status"] in {"report_processing", "report_generated"}
+    assert finish_data["assessment_progress"] is not None
+    assert finish_data["assessment_progress"]["has_remaining_modules"] is True
+    assert finish_data["assessment_progress"]["invite_token"] == assessment["invite_token"]
+    assert finish_data["assessment_progress"]["current_module_index"] == 1
+    assert finish_data["assessment_progress"]["current_module_type"] == "system_design"
+    assert finish_data["assessment_progress"]["current_module_title"] == "Architecture Deep Dive"
+
+    status_resp = await client.get(
+        f"/api/v1/interviews/{interview_id}/report-status",
+        headers=auth_headers(candidate_token),
+    )
+    assert status_resp.status_code == 200, status_resp.text
+    status_data = status_resp.json()
+    assert status_data["assessment_progress"] is not None
+    assert status_data["assessment_progress"]["has_remaining_modules"] is True
+
+    assessments_resp = await client.get(
+        "/api/v1/company/assessments",
+        headers=auth_headers(company_token),
+    )
+    assert assessments_resp.status_code == 200, assessments_resp.text
+    saved = next(row for row in assessments_resp.json() if row["id"] == assessment["id"])
+    assert saved["status"] == "in_progress"
+    assert saved["interview_id"] is None
+    assert saved["report_id"] is None
+    assert saved["completed_at"] is None
+    assert saved["current_module_index"] == 1
+    assert saved["current_module_type"] == "system_design"
+    assert saved["module_plan"][0]["status"] == "completed"
+    assert saved["module_plan"][0]["interview_id"] == interview_id
+    assert saved["module_plan"][0]["completed_at"] is not None
+    assert saved["module_plan"][1]["module_id"] == "system_design_main"
+    assert saved["module_plan"][1]["title"] == "Architecture Deep Dive"
+    assert saved["module_plan"][1]["status"] == "pending"
+    assert saved["module_plan"][1]["config"]["duration_minutes"] == 45
+
+    invite_resp = await client.get(f"/api/v1/employee/invite/{assessment['invite_token']}")
+    assert invite_resp.status_code == 200, invite_resp.text
+    invite = invite_resp.json()
+    assert invite["active_interview_id"] is None
+    assert invite["can_start_current_module"] is True
+    assert invite["current_module_index"] == 1
+    assert invite["current_module_type"] == "system_design"
+    assert invite["current_module_title"] == "Architecture Deep Dive"
+
+    system_design_start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert system_design_start_resp.status_code == 200, system_design_start_resp.text
+    system_design_interview_id = system_design_start_resp.json()["interview_id"]
+
+    detail_resp = await client.get(
+        f"/api/v1/interviews/{system_design_interview_id}",
+        headers=auth_headers(candidate_token),
+    )
+    assert detail_resp.status_code == 200, detail_resp.text
+    detail = detail_resp.json()
+    assert detail["module_session"] is not None
+    assert detail["module_session"]["module_type"] == "system_design"
+    assert detail["module_session"]["module_title"] == "Architecture Deep Dive"
+    assert detail["module_session"]["scenario_title"]
+    assert detail["module_session"]["stage_key"] == "requirements"
+    assert detail["module_session"]["stage_count"] == 3
+
+    await _answer_all_questions(client, candidate_token, system_design_interview_id)
+
+    final_finish_resp = await client.post(
+        f"/api/v1/interviews/{system_design_interview_id}/finish",
+        headers=auth_headers(candidate_token),
+    )
+    assert final_finish_resp.status_code == 200, final_finish_resp.text
+    final_finish_data = final_finish_resp.json()
+    assert final_finish_data["assessment_progress"] is not None
+    assert final_finish_data["assessment_progress"]["has_remaining_modules"] is False
+    if not final_finish_data.get("report_id"):
+        await _wait_for_report_id(client, candidate_token, system_design_interview_id)
+
+    completed_assessments_resp = await client.get(
+        "/api/v1/company/assessments",
+        headers=auth_headers(company_token),
+    )
+    assert completed_assessments_resp.status_code == 200, completed_assessments_resp.text
+    completed = next(row for row in completed_assessments_resp.json() if row["id"] == assessment["id"])
+    assert completed["status"] == "completed"
+    assert completed["interview_id"] == system_design_interview_id
+    assert completed["module_plan"][1]["status"] == "completed"
+    assert completed["module_plan"][1]["interview_id"] == system_design_interview_id
+
+
+@pytest.mark.asyncio
+async def test_employee_assessment_rejects_module_plan_without_initial_adaptive_interview(
+    client: AsyncClient,
+    company_token: str,
+):
+    employee_email = f"invalidmod_{uuid.uuid4().hex[:8]}@example.com"
+    resp = await client.post(
+        "/api/v1/company/assessments",
+        headers=auth_headers(company_token),
+        json={
+            "employee_email": employee_email,
+            "employee_name": "Invalid Module Candidate",
+            "target_role": "backend_engineer",
+            "module_plan": [
+                {
+                    "module_type": "system_design",
+                    "title": "Architecture First",
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    assert "First module must be adaptive_interview" in resp.text
 
 
 @pytest.mark.asyncio
@@ -227,6 +493,17 @@ async def test_private_employee_assessment_stays_private(client: AsyncClient, co
     assert candidates_resp.status_code == 200
     emails = {row["email"] for row in candidates_resp.json()}
     assert employee_email not in emails
+
+    assessments_resp = await client.get(
+        "/api/v1/company/assessments",
+        headers=auth_headers(company_token),
+    )
+    assert assessments_resp.status_code == 200, assessments_resp.text
+    saved = next(row for row in assessments_resp.json() if row["id"] == assessment["id"])
+    assert saved["status"] == "completed"
+    assert saved["module_plan"][0]["status"] == "completed"
+    assert saved["module_plan"][0]["interview_id"] == interview_id
+    assert saved["module_plan"][0]["completed_at"] is not None
 
 
 @pytest.mark.asyncio

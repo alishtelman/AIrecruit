@@ -212,3 +212,43 @@ async def test_activity_log_tracks_report_and_replay_views(
     activity_types = [item["activity_type"] for item in activity.json()]
     assert "report_viewed" in activity_types
     assert "replay_viewed" in activity_types
+
+
+@pytest.mark.asyncio
+async def test_replay_response_includes_canonical_transcript_payload(
+    client: AsyncClient,
+    company_token: str,
+    candidate_token: str,
+):
+    finish = await _complete_interview(client, candidate_token, role="frontend_engineer")
+    interview_id = finish["interview_id"]
+
+    replay = await client.get(
+        f"/api/v1/company/interviews/{interview_id}/replay",
+        headers=auth_headers(company_token),
+    )
+    assert replay.status_code == 200, replay.text
+    data = replay.json()
+
+    assert len(data["turns"]) == 8
+    assert data["transcript_blocks"] is not None
+    assert len(data["transcript_blocks"]) == 16
+
+    first_question = data["transcript_blocks"][0]
+    first_answer = data["transcript_blocks"][1]
+    assert first_question["speaker"] == "interviewer"
+    assert first_question["kind"] == "question"
+    assert first_question["turn_number"] == 1
+    assert first_question["text"] == data["turns"][0]["question"]
+    assert first_question["timestamp"] == data["turns"][0]["question_time"]
+
+    assert first_answer["speaker"] == "candidate"
+    assert first_answer["kind"] == "answer"
+    assert first_answer["turn_number"] == 1
+    assert first_answer["text"] == INTERVIEW_TEST_ANSWER
+    assert first_answer["timestamp"] == data["turns"][0]["answer_time"]
+
+    assert data["transcript_text"] is not None
+    assert "Q1 | Interviewer" in data["transcript_text"]
+    assert "A1 | Candidate" in data["transcript_text"]
+    assert INTERVIEW_TEST_ANSWER in data["transcript_text"]

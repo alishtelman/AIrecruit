@@ -7,14 +7,18 @@ POST /api/v1/employee/invite/{token}/start  — authenticated candidate, starts 
 from fastapi import APIRouter, Depends, HTTPException, status
 from groq import AuthenticationError as GroqAuthenticationError
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_candidate, get_db
 from app.models.candidate import Candidate
+from app.models.interview import Interview
 from app.models.user import User
 from app.services.assessment_invite_service import (
+    can_start_current_assessment_module_via_interview,
     get_assessment_by_token,
     get_assessment_for_invite_view,
+    get_current_assessment_module_payload,
     link_interview_to_assessment,
 )
 
@@ -33,6 +37,7 @@ _ROLE_LABELS = {
 
 
 class InviteInfoResponse(BaseModel):
+    assessment_id: str
     employee_name: str
     employee_email: str
     assessment_type: str
@@ -45,6 +50,13 @@ class InviteInfoResponse(BaseModel):
     expires_at: str | None = None
     branding_name: str | None = None
     branding_logo_url: str | None = None
+    module_plan: list[dict]
+    module_count: int
+    current_module_index: int
+    current_module_type: str | None = None
+    current_module_title: str | None = None
+    active_interview_id: str | None = None
+    can_start_current_module: bool = False
 
 
 class StartAssessmentRequest(BaseModel):
@@ -64,7 +76,17 @@ async def get_invite_info(token: str, db: AsyncSession = Depends(get_db)):
     if not assessment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invite not found or expired")
 
+    module_plan, current_module_index, current_module = get_current_assessment_module_payload(assessment)
+    active_interview_id: str | None = None
+    has_active_interview = False
+    if assessment.interview_id:
+        interview = await db.scalar(select(Interview).where(Interview.id == assessment.interview_id))
+        if interview and interview.status in {"created", "in_progress"}:
+            active_interview_id = str(interview.id)
+            has_active_interview = True
+
     return InviteInfoResponse(
+        assessment_id=str(assessment.id),
         employee_name=assessment.employee_name,
         employee_email=assessment.employee_email,
         assessment_type=assessment.assessment_type,
@@ -77,6 +99,16 @@ async def get_invite_info(token: str, db: AsyncSession = Depends(get_db)):
         expires_at=assessment.expires_at.isoformat() if assessment.expires_at else None,
         branding_name=assessment.branding_name,
         branding_logo_url=assessment.branding_logo_url,
+        module_plan=module_plan,
+        module_count=len(module_plan),
+        current_module_index=current_module_index,
+        current_module_type=current_module.get("module_type") if current_module else None,
+        current_module_title=current_module.get("title") if current_module else None,
+        active_interview_id=active_interview_id,
+        can_start_current_module=can_start_current_assessment_module_via_interview(
+            assessment,
+            has_active_interview=has_active_interview,
+        ),
     )
 
 

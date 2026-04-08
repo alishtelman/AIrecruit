@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, EmailStr
@@ -59,6 +60,7 @@ from app.services.member_service import (
 from app.services.assessment_invite_service import (
     create_assessment,
     delete_assessment,
+    get_current_assessment_module_payload,
     list_company_assessments,
 )
 from app.services.shortlist_service import (
@@ -518,6 +520,13 @@ async def remove_template(
 
 # ── Employee Assessments ───────────────────────────────────────────────────────
 
+class CreateAssessmentModulePlanItemRequest(BaseModel):
+    module_id: str | None = None
+    module_type: str
+    title: str | None = None
+    config: dict[str, Any] | None = None
+
+
 class CreateAssessmentRequest(BaseModel):
     employee_email: EmailStr
     employee_name: str
@@ -528,6 +537,18 @@ class CreateAssessmentRequest(BaseModel):
     expires_at: datetime | None = None
     branding_name: str | None = None
     branding_logo_url: str | None = None
+    module_plan: list[CreateAssessmentModulePlanItemRequest] | None = None
+
+
+class AssessmentModulePlanItemResponse(BaseModel):
+    module_id: str
+    module_type: str
+    title: str
+    status: str
+    config: dict | None = None
+    interview_id: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
 
 
 class AssessmentResponse(BaseModel):
@@ -548,6 +569,10 @@ class AssessmentResponse(BaseModel):
     completed_at: str | None = None
     branding_name: str | None = None
     branding_logo_url: str | None = None
+    module_plan: list[AssessmentModulePlanItemResponse]
+    module_count: int
+    current_module_index: int
+    current_module_type: str | None = None
     created_at: str
 
 
@@ -577,11 +602,16 @@ async def create_employee_assessment(
         target_role=body.target_role,
         assessment_type=body.assessment_type,
         template_id=body.template_id,
+        module_plan=[
+            item.model_dump(exclude_none=True)
+            for item in body.module_plan
+        ] if body.module_plan is not None else None,
         deadline_at=body.deadline_at,
         expires_at=body.expires_at,
         branding_name=body.branding_name,
         branding_logo_url=body.branding_logo_url,
     )
+    module_plan, current_module_index, current_module = get_current_assessment_module_payload(a)
     return AssessmentResponse(
         id=str(a.id),
         employee_email=a.employee_email,
@@ -600,6 +630,13 @@ async def create_employee_assessment(
         completed_at=a.completed_at.isoformat() if a.completed_at else None,
         branding_name=a.branding_name,
         branding_logo_url=a.branding_logo_url,
+        module_plan=[
+            AssessmentModulePlanItemResponse(**item)
+            for item in module_plan
+        ],
+        module_count=len(module_plan),
+        current_module_index=current_module_index,
+        current_module_type=current_module.get("module_type") if current_module else None,
         created_at=a.created_at.isoformat(),
     )
 
