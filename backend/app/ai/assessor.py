@@ -1074,6 +1074,325 @@ def _compute_answer_metrics(
     }
 
 
+_SYSTEM_DESIGN_STAGE_WEIGHTS = {
+    "requirements": 0.3,
+    "high_level_design": 0.4,
+    "tradeoffs": 0.3,
+}
+
+_SYSTEM_DESIGN_STAGE_KEYWORDS = {
+    "requirements": (
+        "sla",
+        "latency",
+        "throughput",
+        "qps",
+        "rps",
+        "traffic",
+        "consistency",
+        "availability",
+        "retention",
+        "auth",
+        "integration",
+        "constraint",
+        "users",
+        "tenant",
+    ),
+    "high_level_design": (
+        "api",
+        "gateway",
+        "service",
+        "worker",
+        "queue",
+        "kafka",
+        "cache",
+        "redis",
+        "database",
+        "postgres",
+        "shard",
+        "partition",
+        "replica",
+        "load balancer",
+        "cdn",
+        "websocket",
+        "storage",
+    ),
+    "tradeoffs": (
+        "trade-off",
+        "tradeoff",
+        "компром",
+        "latency",
+        "throughput",
+        "consistency",
+        "availability",
+        "cost",
+        "bottleneck",
+        "failure",
+        "retry",
+        "timeout",
+        "circuit breaker",
+        "idempot",
+        "observability",
+        "monitoring",
+        "p95",
+        "p99",
+        "degrad",
+        "scale",
+    ),
+}
+
+_SYSTEM_DESIGN_RELIABILITY_KEYWORDS = (
+    "availability",
+    "consistency",
+    "retry",
+    "timeout",
+    "idempot",
+    "failover",
+    "replica",
+    "replication",
+    "monitoring",
+    "observability",
+    "p95",
+    "p99",
+    "latency",
+    "throughput",
+    "autoscal",
+    "degrad",
+    "backpressure",
+    "bottleneck",
+)
+
+
+def _score_system_design_question_block(
+    questions: list[dict],
+    keyword_hints: tuple[str, ...],
+) -> dict:
+    depth_scale = {
+        "none": 1.0,
+        "surface": 3.5,
+        "adequate": 6.2,
+        "strong": 8.1,
+        "expert": 9.3,
+    }
+    specificity_scale = {
+        "low": 3.5,
+        "medium": 6.7,
+        "high": 9.0,
+    }
+
+    question_numbers: list[int] = []
+    qualities: list[float] = []
+    depth_scores: list[float] = []
+    specificity_scores: list[float] = []
+    evidence_items: list[str] = []
+    all_text_parts: list[str] = []
+    red_flag_count = 0
+
+    for question in questions:
+        try:
+            question_number = int(question.get("question_number") or 0)
+        except (TypeError, ValueError):
+            question_number = 0
+        if question_number > 0:
+            question_numbers.append(question_number)
+
+        qualities.append(_to_float(question.get("answer_quality"), 0.0))
+        depth_scores.append(depth_scale.get(str(question.get("depth", "surface")).lower(), 3.5))
+        specificity_scores.append(
+            specificity_scale.get(str(question.get("specificity", "low")).lower(), 3.5)
+        )
+
+        evidence = str(question.get("evidence") or "").strip()
+        if evidence:
+            evidence_items.append(evidence)
+            all_text_parts.append(evidence.lower())
+
+        for skill in question.get("skills_mentioned", []) or []:
+            skill_name = str(skill.get("skill") or "").strip()
+            if skill_name:
+                all_text_parts.append(skill_name.lower())
+
+        for red_flag in question.get("red_flags", []) or []:
+            if red_flag:
+                red_flag_count += 1
+                all_text_parts.append(str(red_flag).lower())
+
+    if not question_numbers:
+        return {
+            "question_numbers": [],
+            "average_answer_quality": None,
+            "stage_score": None,
+            "evidence_items": [],
+            "keyword_score": None,
+        }
+
+    combined_text = " ".join(all_text_parts)
+    keyword_hits = sum(1 for hint in keyword_hints if hint in combined_text)
+    keyword_score = min(10.0, keyword_hits * 2.0)
+    avg_quality = sum(qualities) / len(qualities)
+    avg_depth = sum(depth_scores) / len(depth_scores)
+    avg_specificity = sum(specificity_scores) / len(specificity_scores)
+    red_flag_penalty = min(1.2, red_flag_count * 0.2)
+    stage_score = round(
+        max(
+            0.0,
+            min(
+                10.0,
+                (avg_quality * 0.55)
+                + (avg_depth * 0.20)
+                + (avg_specificity * 0.15)
+                + (keyword_score * 0.10)
+                - red_flag_penalty,
+            ),
+        ),
+        1,
+    )
+    return {
+        "question_numbers": sorted(question_numbers),
+        "average_answer_quality": round(avg_quality, 2),
+        "stage_score": stage_score,
+        "evidence_items": evidence_items[:3],
+        "keyword_score": round(keyword_score, 1),
+    }
+
+
+def _build_system_design_evaluation(
+    interview_meta: dict | None,
+    per_question_analysis: list[dict],
+) -> dict | None:
+    interview_meta = interview_meta or {}
+    module_type = str(interview_meta.get("module_type") or "").strip().lower()
+    if module_type != "system_design":
+        return None
+
+    stage_plan = (
+        list(interview_meta.get("module_stage_plan", []) or [])
+        if isinstance(interview_meta.get("module_stage_plan"), list)
+        else []
+    )
+    if not stage_plan:
+        return None
+
+    question_history = (
+        list(interview_meta.get("module_question_history", []) or [])
+        if isinstance(interview_meta.get("module_question_history"), list)
+        else []
+    )
+    stage_map: dict[int, dict[str, str | None]] = {}
+    for item in question_history:
+        if not isinstance(item, dict):
+            continue
+        try:
+            assistant_turn = int(item.get("assistant_turn") or 0)
+        except (TypeError, ValueError):
+            assistant_turn = 0
+        if assistant_turn <= 0:
+            continue
+        stage_map[assistant_turn] = {
+            "stage_key": str(item.get("stage_key") or "").strip() or None,
+            "stage_title": str(item.get("stage_title") or "").strip() or None,
+        }
+
+    questions_by_stage: dict[str, list[dict]] = {}
+    for question in per_question_analysis:
+        if not isinstance(question, dict):
+            continue
+        try:
+            question_number = int(question.get("question_number") or 0)
+        except (TypeError, ValueError):
+            question_number = 0
+        if question_number <= 0:
+            continue
+        stage_key = str(stage_map.get(question_number, {}).get("stage_key") or "").strip()
+        if not stage_key:
+            continue
+        questions_by_stage.setdefault(stage_key, []).append(question)
+
+    stages: list[dict] = []
+    stage_scores: dict[str, float | None] = {}
+    for stage in stage_plan:
+        if not isinstance(stage, dict):
+            continue
+        stage_key = str(stage.get("stage_key") or "").strip()
+        stage_title = str(stage.get("stage_title") or "").strip()
+        if not stage_key:
+            continue
+        scored = _score_system_design_question_block(
+            questions_by_stage.get(stage_key, []),
+            _SYSTEM_DESIGN_STAGE_KEYWORDS.get(stage_key, ()),
+        )
+        stage_score = scored["stage_score"] if isinstance(scored["stage_score"], (int, float)) else None
+        stage_scores[stage_key] = stage_score
+        stages.append(
+            {
+                "stage_key": stage_key,
+                "stage_title": stage_title or stage_key.replace("_", " ").title(),
+                "question_numbers": scored["question_numbers"],
+                "average_answer_quality": scored["average_answer_quality"],
+                "stage_score": stage_score,
+                "evidence_items": scored["evidence_items"],
+            }
+        )
+
+    weighted_scores = [
+        (float(score), weight)
+        for stage_key, weight in _SYSTEM_DESIGN_STAGE_WEIGHTS.items()
+        for score in [stage_scores.get(stage_key)]
+        if isinstance(score, (int, float))
+    ]
+    overall_score = None
+    if weighted_scores:
+        total_weight = sum(weight for _, weight in weighted_scores)
+        if total_weight > 0:
+            overall_score = round(
+                sum(score * weight for score, weight in weighted_scores) / total_weight,
+                1,
+            )
+
+    reliability_questions = [
+        *questions_by_stage.get("high_level_design", []),
+        *questions_by_stage.get("tradeoffs", []),
+    ]
+    reliability_scored = _score_system_design_question_block(
+        reliability_questions,
+        _SYSTEM_DESIGN_RELIABILITY_KEYWORDS,
+    )
+    reliability_score = (
+        reliability_scored["stage_score"]
+        if isinstance(reliability_scored["stage_score"], (int, float))
+        else None
+    )
+
+    rubric_scores = [
+        {
+            "rubric_key": "requirements_clarity",
+            "score": stage_scores.get("requirements"),
+        },
+        {
+            "rubric_key": "architecture_quality",
+            "score": stage_scores.get("high_level_design"),
+        },
+        {
+            "rubric_key": "tradeoff_reasoning",
+            "score": stage_scores.get("tradeoffs"),
+        },
+        {
+            "rubric_key": "reliability_scaling",
+            "score": reliability_score,
+        },
+    ]
+
+    return {
+        "module_title": str(interview_meta.get("module_title") or "").strip() or None,
+        "scenario_id": str(interview_meta.get("module_scenario_id") or "").strip() or None,
+        "scenario_title": str(interview_meta.get("module_scenario_title") or "").strip() or None,
+        "scenario_prompt": str(interview_meta.get("module_scenario_prompt") or "").strip() or None,
+        "stage_count": len(stages),
+        "overall_score": overall_score,
+        "rubric_scores": rubric_scores,
+        "stages": stages,
+    }
+
+
 def _apply_score_penalties(
     aggregates: dict[str, float],
     answer_metrics: dict,
@@ -1854,6 +2173,12 @@ class LLMAssessor:
         result.problem_solving_score = adjusted_aggregates["problem_solving_score"]
         result.full_report_json["summary_model"] = summary_model
         result.full_report_json["interview_meta"] = interview_meta or {}
+        system_design_evaluation = _build_system_design_evaluation(
+            interview_meta,
+            result.per_question_analysis,
+        )
+        if system_design_evaluation:
+            result.full_report_json["system_design_evaluation"] = system_design_evaluation
         result.full_report_json["aggregates"] = adjusted_aggregates
         result.full_report_json["score_penalties"] = result.full_report_json.get("score_penalties", []) + summary_penalties
         final_recommendation, gate_reasons = _apply_recommendation_gates(
@@ -2295,6 +2620,9 @@ class MockAssessor:
             "depth_score": answer_metrics["depth_score"],
             "mock": True,
         }
+        system_design_evaluation = _build_system_design_evaluation(interview_meta, per_q)
+        if system_design_evaluation:
+            full_json["system_design_evaluation"] = system_design_evaluation
 
         cheat_risk, cheat_flags = _compute_cheat_risk(behavioral_signals, per_q)
 

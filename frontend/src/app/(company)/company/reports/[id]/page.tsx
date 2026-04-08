@@ -7,7 +7,7 @@ import { useRouter } from "@/i18n/navigation";
 import { CompanyWorkspaceHeader } from "@/components/company-workspace-header";
 import { useAuth } from "@/hooks/useAuth";
 import { companyApi } from "@/lib/api";
-import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ProctoringTimeline, ProctoringTimelineEvent, SystemDesignStageSummary } from "@/lib/types";
+import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ProctoringTimeline, ProctoringTimelineEvent, SystemDesignStageSummary, SystemDesignRubricScore } from "@/lib/types";
 
 const RECOMMENDATION_CONFIG: Record<HiringRecommendation, { color: string; bg: string }> = {
   strong_yes: { color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
@@ -242,9 +242,16 @@ function SystemDesignSummaryPanel({ summary }: { summary: NonNullable<Assessment
           <div className="text-xs uppercase tracking-[0.24em] text-violet-300">{t("systemDesign.eyebrow")}</div>
           <div className="text-sm font-semibold text-white">{summary.module_title || t("systemDesign.title")}</div>
         </div>
-        <span className="rounded-full border border-violet-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
-          {t("systemDesign.stageCount", { count: summary.stage_count })}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full border border-violet-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
+            {t("systemDesign.stageCount", { count: summary.stage_count })}
+          </span>
+          {summary.overall_score != null && (
+            <span className="rounded-full border border-violet-400/20 bg-violet-950/40 px-3 py-1 text-xs font-semibold text-violet-200">
+              {t("systemDesign.overallScore")}: {summary.overall_score.toFixed(1)}/10
+            </span>
+          )}
+        </div>
       </div>
 
       {summary.scenario_title && (
@@ -254,6 +261,14 @@ function SystemDesignSummaryPanel({ summary }: { summary: NonNullable<Assessment
         </div>
       )}
       {summary.scenario_prompt && <p className="mb-4 text-sm leading-6 text-slate-300">{summary.scenario_prompt}</p>}
+
+      {summary.rubric_scores.length > 0 && (
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {summary.rubric_scores.map((rubric) => (
+            <SystemDesignRubricCard key={rubric.rubric_key} rubric={rubric} />
+          ))}
+        </div>
+      )}
 
       <div className="grid gap-3 md:grid-cols-3">
         {summary.stages.map((stage) => (
@@ -271,9 +286,18 @@ function SystemDesignStageCard({ stage }: { stage: SystemDesignStageSummary }) {
     <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="text-sm font-semibold text-white">{stage.stage_title}</div>
-        {stage.average_answer_quality != null && (
-          <div className="text-sm font-bold text-violet-300">{stage.average_answer_quality.toFixed(1)}</div>
-        )}
+        <div className="text-right">
+          {stage.stage_score != null && (
+            <div className="text-sm font-bold text-violet-300">
+              {t("systemDesign.stageScore")}: {stage.stage_score.toFixed(1)}
+            </div>
+          )}
+          {stage.average_answer_quality != null && (
+            <div className="text-[11px] text-slate-500">
+              {t("systemDesign.answerQuality")}: {stage.average_answer_quality.toFixed(1)}
+            </div>
+          )}
+        </div>
       </div>
       {stage.question_numbers.length > 0 && (
         <div className="mt-2 text-xs text-slate-500">
@@ -288,6 +312,21 @@ function SystemDesignStageCard({ stage }: { stage: SystemDesignStageSummary }) {
         )) : (
           <div className="text-sm text-slate-500">{t("systemDesign.noEvidence")}</div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function SystemDesignRubricCard({ rubric }: { rubric: SystemDesignRubricScore }) {
+  const t = useTranslations("report");
+
+  return (
+    <div className="rounded-xl border border-violet-500/15 bg-slate-900/60 px-3 py-3">
+      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+        {t(`systemDesign.rubrics.${rubric.rubric_key}`)}
+      </div>
+      <div className="mt-1 text-xl font-semibold text-white">
+        {rubric.score != null ? `${rubric.score.toFixed(1)}/10` : "—"}
       </div>
     </div>
   );

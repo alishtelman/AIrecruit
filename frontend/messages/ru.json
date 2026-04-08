@@ -1028,8 +1028,17 @@
       "title": "Модуль system design",
       "scenario": "Сценарий",
       "stageCount": "{count} этапа",
+      "overallScore": "Оценка модуля",
+      "stageScore": "Оценка этапа",
+      "answerQuality": "Качество ответа",
       "questionsCovered": "{count} вопроса",
-      "noEvidence": "По этому этапу пока не зафиксировано доказательств."
+      "noEvidence": "По этому этапу пока не зафиксировано доказательств.",
+      "rubrics": {
+        "requirements_clarity": "Ясность требований",
+        "architecture_quality": "Качество архитектуры",
+        "tradeoff_reasoning": "Trade-off мышление",
+        "reliability_scaling": "Надёжность и масштабирование"
+      }
     },
     "summaryModel": {
       "eyebrow": "Структура интервью",

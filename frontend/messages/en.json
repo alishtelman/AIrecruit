@@ -1028,8 +1028,17 @@
       "title": "System design module",
       "scenario": "Scenario",
       "stageCount": "{count} stages",
+      "overallScore": "Module score",
+      "stageScore": "Stage score",
+      "answerQuality": "Evidence quality",
       "questionsCovered": "{count} questions",
-      "noEvidence": "No evidence captured for this stage yet."
+      "noEvidence": "No evidence captured for this stage yet.",
+      "rubrics": {
+        "requirements_clarity": "Requirements clarity",
+        "architecture_quality": "Architecture quality",
+        "tradeoff_reasoning": "Trade-off reasoning",
+        "reliability_scaling": "Reliability and scaling"
+      }
     },
     "summaryModel": {
       "eyebrow": "Interview structure",

@@ -1641,15 +1641,22 @@ async def start_interview(
         role_max_cap = max_q
         min_questions_before_early_stop = max_q
     else:
+        adaptive_max_q, adaptive_role_cap, adaptive_min_questions = _estimate_dynamic_question_budget(
+            target_role=target_role,
+            resume_profile=resume_profile,
+        )
         if template:
-            max_q = len(template.questions)
-            role_max_cap = max_q
-            min_questions_before_early_stop = min(_ADAPTIVE_MIN_QUESTIONS_FLOOR, max_q)
-        else:
-            max_q, role_max_cap, min_questions_before_early_stop = _estimate_dynamic_question_budget(
-                target_role=target_role,
-                resume_profile=resume_profile,
+            template_budget = len(template.questions)
+            role_max_cap = max(adaptive_role_cap, template_budget)
+            max_q = min(role_max_cap, max(adaptive_max_q, template_budget))
+            min_questions_before_early_stop = max(
+                adaptive_min_questions,
+                min(template_budget, max_q),
             )
+        else:
+            max_q = adaptive_max_q
+            role_max_cap = adaptive_role_cap
+            min_questions_before_early_stop = adaptive_min_questions
         topic_plan = build_interview_plan(target_role, max_q, resume_profile)
 
     # Create interview — store resume_id snapshot at start time

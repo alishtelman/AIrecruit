@@ -194,5 +194,6 @@ async def test_interview_with_template(
     )
     assert resp.status_code == 201
     data = resp.json()
-    assert data["max_questions"] == 2  # matches template length
+    assert data["max_questions"] >= 8
+    assert data["max_questions"] > len(["Tell me about APIs.", "Tell me about databases."])
     assert data["current_question"]  # LLM generated, not empty

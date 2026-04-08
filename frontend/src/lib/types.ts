@@ -708,7 +708,13 @@ export interface SystemDesignStageSummary {
   stage_title: string;
   question_numbers: number[];
   average_answer_quality: number | null;
+  stage_score: number | null;
   evidence_items: string[];
+}
+
+export interface SystemDesignRubricScore {
+  rubric_key: string;
+  score: number | null;
 }
 
 export interface SystemDesignSummary {
@@ -717,5 +723,7 @@ export interface SystemDesignSummary {
   scenario_title: string | null;
   scenario_prompt: string | null;
   stage_count: number;
+  overall_score: number | null;
+  rubric_scores: SystemDesignRubricScore[];
   stages: SystemDesignStageSummary[];
 }

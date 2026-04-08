@@ -421,9 +421,14 @@ async def test_employee_assessment_accepts_custom_module_plan_and_advances_to_ne
     assert company_report["module_session"]["module_type"] == "system_design"
     assert company_report["module_session"]["scenario_title"]
     assert company_report["system_design_summary"] is not None
-    assert company_report["system_design_summary"]["stage_count"] == 3
-    assert len(company_report["system_design_summary"]["stages"]) == 3
-    assert all(stage["stage_title"] for stage in company_report["system_design_summary"]["stages"])
+    summary = company_report["system_design_summary"]
+    assert summary["stage_count"] == 3
+    assert summary["overall_score"] is not None
+    assert len(summary["rubric_scores"]) == 4
+    assert all(item["score"] is not None for item in summary["rubric_scores"])
+    assert len(summary["stages"]) == 3
+    assert all(stage["stage_title"] for stage in summary["stages"])
+    assert all(stage["stage_score"] is not None for stage in summary["stages"])
     assert company_report["per_question_analysis"]
     assert any(item.get("stage_title") for item in company_report["per_question_analysis"])
 
