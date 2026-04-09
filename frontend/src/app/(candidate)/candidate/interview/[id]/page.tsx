@@ -616,6 +616,8 @@ export default function InterviewPage() {
       ? t("uploadStatus.skipped")
       : null;
   const systemDesignSession = moduleSession?.module_type === "system_design" ? moduleSession : null;
+  const codingTaskSession = moduleSession?.module_type === "coding_task" ? moduleSession : null;
+  const isCodingTask = Boolean(codingTaskSession);
 
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col">
@@ -744,33 +746,42 @@ export default function InterviewPage() {
       <div className="flex flex-1 overflow-hidden relative">
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4 max-w-2xl w-full mx-auto">
-          {systemDesignSession && (
+          {(systemDesignSession || codingTaskSession) && (
             <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-300">
-                  {systemDesignSession.module_title || t("moduleCardEyebrow")}
+                  {(systemDesignSession || codingTaskSession)?.module_title || t("moduleCardEyebrow")}
                 </div>
                 <div className="rounded-full border border-blue-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
                   {t("stageProgress", {
-                    current: systemDesignSession.stage_index + 1,
-                    total: Math.max(systemDesignSession.stage_count, 1),
+                    current: ((systemDesignSession || codingTaskSession)?.stage_index ?? 0) + 1,
+                    total: Math.max((systemDesignSession || codingTaskSession)?.stage_count ?? 0, 1),
                   })}
                 </div>
               </div>
-              {systemDesignSession.scenario_title && (
+              {(systemDesignSession || codingTaskSession)?.scenario_title && (
                 <div className="mt-3">
-                  <div className="text-xs uppercase tracking-[0.14em] text-slate-400">{t("scenarioLabel")}</div>
-                  <div className="mt-1 text-sm font-medium text-white">{systemDesignSession.scenario_title}</div>
+                  <div className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                    {isCodingTask ? t("taskLabel") : t("scenarioLabel")}
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-white">
+                    {(systemDesignSession || codingTaskSession)?.scenario_title}
+                  </div>
                 </div>
               )}
-              {systemDesignSession.stage_title && (
+              {(systemDesignSession || codingTaskSession)?.stage_title && (
                 <div className="mt-3">
                   <div className="text-xs uppercase tracking-[0.14em] text-slate-400">{t("stageLabel")}</div>
-                  <div className="mt-1 text-sm text-slate-200">{systemDesignSession.stage_title}</div>
+                  <div className="mt-1 text-sm text-slate-200">{(systemDesignSession || codingTaskSession)?.stage_title}</div>
                 </div>
               )}
-              {systemDesignSession.scenario_prompt && (
-                <p className="mt-3 text-sm leading-6 text-slate-300">{systemDesignSession.scenario_prompt}</p>
+              {(systemDesignSession || codingTaskSession)?.scenario_prompt && (
+                <p className="mt-3 text-sm leading-6 text-slate-300">{(systemDesignSession || codingTaskSession)?.scenario_prompt}</p>
+              )}
+              {codingTaskSession && (
+                <div className="mt-3 rounded-xl border border-slate-700/80 bg-slate-950/40 px-4 py-3 text-sm text-slate-300">
+                  {t("codingTaskHint")}
+                </div>
               )}
             </div>
           )}
@@ -976,6 +987,8 @@ export default function InterviewPage() {
               placeholder={
                 sending
                   ? t("placeholderThinking")
+                  : isCodingTask
+                  ? t("placeholderCode")
                   : voiceMode && voiceState === "recording"
                   ? t("placeholderListening")
                   : voiceMode && voiceState === "transcribing"
@@ -984,8 +997,10 @@ export default function InterviewPage() {
                   ? t("placeholderVoice")
                   : t("placeholderText")
               }
-              rows={2}
-              className="flex-1 bg-slate-800 border border-slate-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500 resize-none disabled:opacity-50 disabled:cursor-not-allowed"
+              rows={isCodingTask ? 8 : 2}
+              className={`flex-1 bg-slate-800 border border-slate-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500 disabled:opacity-50 disabled:cursor-not-allowed ${
+                isCodingTask ? "font-mono resize-y leading-6" : "resize-none"
+              }`}
             />
             {voiceMode && (
               <button

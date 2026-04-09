@@ -108,6 +108,7 @@
       "questionsPrefix": "В этой сессии",
       "questionsCount": "8 структурированных вопросов",
       "systemDesignQuestions": "3 структурированных design-этапа",
+      "codingTaskQuestions": "3 этапа coding task",
       "genericQuestions": "структурированный модуль",
       "questionsSuffix": "и обычно она занимает 15-20 минут.",
       "visibilityPrefix": "Ваши ответы будут проанализированы ИИ, а результаты останутся видимыми только для ",
@@ -979,8 +980,10 @@
     "recordingDescription": "Запись запускается автоматически при старте интервью. Если доступ к экрану отклонён, интервью всё равно продолжается, а self-preview камеры остаётся доступным.",
     "moduleCardEyebrow": "Текущий модуль",
     "scenarioLabel": "Сценарий",
+    "taskLabel": "Задача",
     "stageLabel": "Текущий этап",
     "stageProgress": "Этап {current} из {total}",
+    "codingTaskHint": "Вставьте код или короткий псевдокод прямо в поле ответа. В этом же сообщении можно объяснить edge cases, тесты и trade-offs.",
     "completeTitle": "Интервью завершено",
     "completeDescription": "Вы ответили на все {count} вопросов. Теперь можно сгенерировать отчёт.",
     "finish": "Завершить и получить отчёт",
@@ -1021,6 +1024,7 @@
     "placeholderListening": "Слушаем...",
     "placeholderTranscribing": "Расшифровываем...",
     "placeholderVoice": "Предпросмотр расшифровки. Отредактируйте перед отправкой...",
+    "placeholderCode": "Вставьте код или псевдокод, затем опишите ключевые решения и edge cases...",
     "placeholderText": "Введите ответ... (Enter отправляет, Shift+Enter новая строка)",
     "uploadStatus": {
       "uploading": "Загружаем запись...",
@@ -1087,6 +1091,25 @@
         "architecture_quality": "Качество архитектуры",
         "tradeoff_reasoning": "Trade-off мышление",
         "reliability_scaling": "Надёжность и масштабирование"
+      }
+    },
+    "codingTask": {
+      "eyebrow": "Evidence по coding task",
+      "title": "Модуль coding task",
+      "task": "Задача",
+      "stageCount": "{count} этапа",
+      "overallScore": "Оценка модуля",
+      "stageScore": "Оценка этапа",
+      "answerQuality": "Качество evidence",
+      "questionsCovered": "{count} вопроса",
+      "noEvidence": "По этому этапу пока не зафиксировано evidence.",
+      "codeExcerpt": "Фрагмент присланного кода",
+      "codeSignal": "Code signal",
+      "rubrics": {
+        "problem_breakdown": "Декомпозиция задачи",
+        "implementation_quality": "Качество реализации",
+        "correctness_testing": "Корректность и тесты",
+        "code_communication": "Объяснение кода"
       }
     },
     "summaryModel": {

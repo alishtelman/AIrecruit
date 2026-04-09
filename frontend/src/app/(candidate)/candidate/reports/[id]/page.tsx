@@ -6,7 +6,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { reportApi } from "@/lib/api";
-import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ReportSummaryBlock, SystemDesignStageSummary, SystemDesignRubricScore, DevelopmentRoadmapPhase } from "@/lib/types";
+import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ReportSummaryBlock, SystemDesignStageSummary, SystemDesignRubricScore, DevelopmentRoadmapPhase, CodingTaskStageSummary, CodingTaskRubricScore } from "@/lib/types";
 
 const CATEGORY_COLORS: Record<string, string> = {
   technical_core: "bg-blue-500/15 text-blue-400 border-blue-500/30",
@@ -272,6 +272,7 @@ export default function ReportPage() {
 
         {report.summary_model && <InterviewSummaryPanel summaryModel={report.summary_model} />}
         {report.system_design_summary && <SystemDesignSummaryPanel summary={report.system_design_summary} />}
+        {report.coding_task_summary && <CodingTaskSummaryPanel summary={report.coding_task_summary} />}
 
         {/* Recommendation badge */}
         <div className={`inline-flex items-center gap-2 border rounded-full px-4 py-1.5 text-sm font-semibold mb-6 ${rec.bg} ${rec.color}`}>
@@ -467,6 +468,126 @@ function SystemDesignRubricCard({ rubric }: { rubric: SystemDesignRubricScore })
     <div className="rounded-xl border border-violet-500/15 bg-slate-900/60 px-3 py-3">
       <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
         {t(`systemDesign.rubrics.${rubric.rubric_key}`)}
+      </div>
+      <div className="mt-1 text-xl font-semibold text-white">
+        {rubric.score != null ? `${rubric.score.toFixed(1)}/10` : "—"}
+      </div>
+    </div>
+  );
+}
+
+function CodingTaskSummaryPanel({ summary }: { summary: NonNullable<AssessmentReport["coding_task_summary"]> }) {
+  const t = useTranslations("report");
+  const locale = useLocale();
+
+  return (
+    <div className="mb-6 rounded-2xl border border-cyan-500/20 bg-cyan-500/10 p-5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.24em] text-cyan-300">{t("codingTask.eyebrow")}</div>
+          <div className="text-sm font-semibold text-white">{summary.module_title || t("codingTask.title")}</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full border border-cyan-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
+            {t("codingTask.stageCount", { count: summary.stage_count })}
+          </span>
+          {summary.overall_score != null && (
+            <span className="rounded-full border border-cyan-400/20 bg-cyan-950/40 px-3 py-1 text-xs font-semibold text-cyan-200">
+              {t("codingTask.overallScore")}: {summary.overall_score.toFixed(1)}/10
+            </span>
+          )}
+        </div>
+      </div>
+
+      {summary.scenario_title && (
+        <div className="mb-3">
+          <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("codingTask.task")}</div>
+          <div className="mt-1 text-sm font-medium text-white">{localizeFreeformText(summary.scenario_title, locale)}</div>
+        </div>
+      )}
+      {summary.scenario_prompt && (
+        <p className="mb-4 text-sm leading-6 text-slate-300">{localizeFreeformText(summary.scenario_prompt, locale)}</p>
+      )}
+
+      {summary.rubric_scores.length > 0 && (
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {summary.rubric_scores.map((rubric) => (
+            <CodingTaskRubricCard key={rubric.rubric_key} rubric={rubric} />
+          ))}
+        </div>
+      )}
+
+      {summary.implementation_excerpt && (
+        <div className="mb-4 rounded-xl border border-slate-700 bg-slate-950/70 p-4">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("codingTask.codeExcerpt")}</div>
+            {summary.code_signal_score != null && (
+              <div className="text-xs text-cyan-300">
+                {t("codingTask.codeSignal")}: {summary.code_signal_score.toFixed(1)}/10
+              </div>
+            )}
+          </div>
+          <pre className="overflow-x-auto whitespace-pre-wrap text-sm leading-6 text-slate-200">
+            {summary.implementation_excerpt}
+          </pre>
+        </div>
+      )}
+
+      <div className="grid gap-3 md:grid-cols-3">
+        {summary.stages.map((stage) => (
+          <CodingTaskStageCard key={stage.stage_key} stage={stage} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CodingTaskStageCard({ stage }: { stage: CodingTaskStageSummary }) {
+  const t = useTranslations("report");
+  const locale = useLocale();
+
+  return (
+    <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-sm font-semibold text-white">{localizeFreeformText(stage.stage_title, locale)}</div>
+        <div className="text-right">
+          {stage.stage_score != null && (
+            <div className="text-sm font-bold text-cyan-300">
+              {t("codingTask.stageScore")}: {stage.stage_score.toFixed(1)}
+            </div>
+          )}
+          {stage.average_answer_quality != null && (
+            <div className="text-[11px] text-slate-500">
+              {t("codingTask.answerQuality")}: {stage.average_answer_quality.toFixed(1)}
+            </div>
+          )}
+        </div>
+      </div>
+      {stage.question_numbers.length > 0 && (
+        <div className="mt-2 text-xs text-slate-500">
+          {t("codingTask.questionsCovered", { count: stage.question_numbers.length })}: {stage.question_numbers.join(", ")}
+        </div>
+      )}
+      <div className="mt-3 space-y-2">
+        {stage.evidence_items.length > 0 ? stage.evidence_items.map((item, index) => (
+          <div key={index} className="text-sm leading-6 text-slate-300">
+            {localizeFreeformText(item, locale)}
+          </div>
+        )) : (
+          <div className="text-sm text-slate-500">{t("codingTask.noEvidence")}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CodingTaskRubricCard({ rubric }: { rubric: CodingTaskRubricScore }) {
+  const t = useTranslations("report");
+
+  return (
+    <div className="rounded-xl border border-cyan-500/15 bg-slate-900/60 px-3 py-3">
+      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+        {t(`codingTask.rubrics.${rubric.rubric_key}`)}
       </div>
       <div className="mt-1 text-xl font-semibold text-white">
         {rubric.score != null ? `${rubric.score.toFixed(1)}/10` : "—"}

@@ -378,6 +378,13 @@ def _to_float(value: object, default: float = 0.0) -> float:
         return default
 
 
+def _to_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _build_summary_model(
     target_role: str,
     report_language: str,
@@ -1161,6 +1168,76 @@ _SYSTEM_DESIGN_RELIABILITY_KEYWORDS = (
     "bottleneck",
 )
 
+_CODING_TASK_STAGE_WEIGHTS = {
+    "task_brief": 0.25,
+    "implementation": 0.45,
+    "review": 0.30,
+}
+
+_CODING_TASK_STAGE_KEYWORDS = {
+    "task_brief": (
+        "input",
+        "output",
+        "constraint",
+        "edge",
+        "case",
+        "complexity",
+        "latency",
+        "validation",
+        "error",
+        "invalid",
+    ),
+    "implementation": (
+        "function",
+        "return",
+        "class",
+        "loop",
+        "dict",
+        "map",
+        "set",
+        "queue",
+        "cache",
+        "state",
+        "sort",
+        "filter",
+        "async",
+        "await",
+        "if ",
+        "for ",
+        "while ",
+    ),
+    "review": (
+        "test",
+        "assert",
+        "edge",
+        "case",
+        "complexity",
+        "o(",
+        "refactor",
+        "failure",
+        "retry",
+        "timeout",
+        "bug",
+        "coverage",
+    ),
+}
+
+_CODING_TASK_CODE_HINTS = (
+    "def ",
+    "function ",
+    "const ",
+    "let ",
+    "return ",
+    "class ",
+    "=>",
+    "if (",
+    "for (",
+    "while (",
+    "{",
+    "}",
+    "```",
+)
+
 
 def _score_system_design_question_block(
     questions: list[dict],
@@ -1390,6 +1467,226 @@ def _build_system_design_evaluation(
         "overall_score": overall_score,
         "rubric_scores": rubric_scores,
         "stages": stages,
+    }
+
+
+def _build_stage_answer_map(
+    interview_meta: dict | None,
+    message_history: list[dict] | None,
+) -> dict[str, list[str]]:
+    interview_meta = interview_meta or {}
+    question_history = (
+        list(interview_meta.get("module_question_history", []) or [])
+        if isinstance(interview_meta.get("module_question_history"), list)
+        else []
+    )
+    assistant_stage_map: dict[int, str] = {}
+    for item in question_history:
+        if not isinstance(item, dict):
+            continue
+        assistant_turn = _to_int(item.get("assistant_turn"), 0)
+        stage_key = str(item.get("stage_key") or "").strip()
+        if assistant_turn > 0 and stage_key:
+            assistant_stage_map[assistant_turn] = stage_key
+
+    answers_by_stage: dict[str, list[str]] = {}
+    assistant_turn = 0
+    last_stage_key: str | None = None
+    for msg in message_history or []:
+        if not isinstance(msg, dict):
+            continue
+        role = str(msg.get("role") or "").strip().lower()
+        content = str(msg.get("content") or "").strip()
+        if not content:
+            continue
+        if role == "assistant":
+            assistant_turn += 1
+            last_stage_key = assistant_stage_map.get(assistant_turn)
+        elif role == "candidate" and last_stage_key:
+            answers_by_stage.setdefault(last_stage_key, []).append(content)
+    return answers_by_stage
+
+
+def _extract_code_excerpt(texts: list[str]) -> str | None:
+    for text in texts:
+        normalized = str(text or "").strip()
+        if not normalized:
+            continue
+        fenced_blocks = re.findall(r"```(?:[\w#+.-]+)?\n(.*?)```", normalized, flags=re.DOTALL)
+        for block in fenced_blocks:
+            excerpt = str(block or "").strip()
+            if excerpt:
+                return excerpt[:1200]
+        if any(hint in normalized for hint in _CODING_TASK_CODE_HINTS):
+            return normalized[:1200]
+    return None
+
+
+def _build_coding_task_evaluation(
+    interview_meta: dict | None,
+    per_question_analysis: list[dict],
+    message_history: list[dict] | None,
+) -> dict | None:
+    interview_meta = interview_meta or {}
+    module_type = str(interview_meta.get("module_type") or "").strip().lower()
+    if module_type != "coding_task":
+        return None
+
+    stage_plan = (
+        list(interview_meta.get("module_stage_plan", []) or [])
+        if isinstance(interview_meta.get("module_stage_plan"), list)
+        else []
+    )
+    if not stage_plan:
+        return None
+
+    question_history = (
+        list(interview_meta.get("module_question_history", []) or [])
+        if isinstance(interview_meta.get("module_question_history"), list)
+        else []
+    )
+    stage_map: dict[int, dict[str, str | None]] = {}
+    for item in question_history:
+        if not isinstance(item, dict):
+            continue
+        assistant_turn = _to_int(item.get("assistant_turn"), 0)
+        if assistant_turn <= 0:
+            continue
+        stage_map[assistant_turn] = {
+            "stage_key": str(item.get("stage_key") or "").strip() or None,
+            "stage_title": str(item.get("stage_title") or "").strip() or None,
+        }
+
+    questions_by_stage: dict[str, list[dict]] = {}
+    for question in per_question_analysis:
+        if not isinstance(question, dict):
+            continue
+        question_number = _to_int(question.get("question_number"), 0)
+        if question_number <= 0:
+            continue
+        stage_key = str(stage_map.get(question_number, {}).get("stage_key") or "").strip()
+        if stage_key:
+            questions_by_stage.setdefault(stage_key, []).append(question)
+
+    answers_by_stage = _build_stage_answer_map(interview_meta, message_history)
+    stages: list[dict] = []
+    stage_scores: dict[str, float | None] = {}
+    implementation_code_excerpt = _extract_code_excerpt(answers_by_stage.get("implementation", []))
+
+    for stage in stage_plan:
+        if not isinstance(stage, dict):
+            continue
+        stage_key = str(stage.get("stage_key") or "").strip()
+        stage_title = str(stage.get("stage_title") or "").strip()
+        if not stage_key:
+            continue
+        scored = _score_system_design_question_block(
+            questions_by_stage.get(stage_key, []),
+            _CODING_TASK_STAGE_KEYWORDS.get(stage_key, ()),
+        )
+        stage_score = scored["stage_score"] if isinstance(scored["stage_score"], (int, float)) else None
+
+        stage_answers = answers_by_stage.get(stage_key, [])
+        code_signal = 0.0
+        if stage_key == "implementation" and stage_answers:
+            code_hits = sum(
+                1
+                for answer in stage_answers
+                if any(hint in answer for hint in _CODING_TASK_CODE_HINTS)
+            )
+            code_signal = min(10.0, 4.0 + code_hits * 2.0)
+            if stage_score is None:
+                stage_score = round(code_signal, 1)
+            else:
+                stage_score = round(min(10.0, (stage_score * 0.75) + (code_signal * 0.25)), 1)
+
+        stage_scores[stage_key] = stage_score
+        evidence_items = list(scored["evidence_items"])
+        if stage_key == "implementation" and implementation_code_excerpt:
+            evidence_items = [implementation_code_excerpt[:240], *evidence_items]
+        stages.append(
+            {
+                "stage_key": stage_key,
+                "stage_title": stage_title or stage_key.replace("_", " ").title(),
+                "question_numbers": scored["question_numbers"],
+                "average_answer_quality": scored["average_answer_quality"],
+                "stage_score": stage_score,
+                "evidence_items": evidence_items[:3],
+            }
+        )
+
+    weighted_scores = [
+        (float(score), weight)
+        for stage_key, weight in _CODING_TASK_STAGE_WEIGHTS.items()
+        for score in [stage_scores.get(stage_key)]
+        if isinstance(score, (int, float))
+    ]
+    overall_score = None
+    if weighted_scores:
+        total_weight = sum(weight for _, weight in weighted_scores)
+        if total_weight > 0:
+            overall_score = round(
+                sum(score * weight for score, weight in weighted_scores) / total_weight,
+                1,
+            )
+
+    review_questions = [
+        *questions_by_stage.get("task_brief", []),
+        *questions_by_stage.get("review", []),
+    ]
+    correctness_scored = _score_system_design_question_block(
+        review_questions,
+        ("edge", "case", "test", "assert", "invalid", "error"),
+    )
+    correctness_score = (
+        correctness_scored["stage_score"]
+        if isinstance(correctness_scored["stage_score"], (int, float))
+        else None
+    )
+
+    implementation_score = stage_scores.get("implementation")
+    implementation_answers = answers_by_stage.get("implementation", [])
+    has_code_submission = bool(implementation_code_excerpt)
+    code_signal_score = None
+    if implementation_answers:
+        signal_hits = sum(
+            1
+            for answer in implementation_answers
+            if any(hint in answer for hint in _CODING_TASK_CODE_HINTS)
+        )
+        code_signal_score = round(min(10.0, 3.0 + signal_hits * 2.5), 1)
+
+    rubric_scores = [
+        {
+            "rubric_key": "problem_breakdown",
+            "score": stage_scores.get("task_brief"),
+        },
+        {
+            "rubric_key": "implementation_quality",
+            "score": implementation_score,
+        },
+        {
+            "rubric_key": "correctness_testing",
+            "score": correctness_score,
+        },
+        {
+            "rubric_key": "code_communication",
+            "score": stage_scores.get("review"),
+        },
+    ]
+
+    return {
+        "module_title": str(interview_meta.get("module_title") or "").strip() or None,
+        "scenario_id": str(interview_meta.get("module_scenario_id") or "").strip() or None,
+        "scenario_title": str(interview_meta.get("module_scenario_title") or "").strip() or None,
+        "scenario_prompt": str(interview_meta.get("module_scenario_prompt") or "").strip() or None,
+        "stage_count": len(stages),
+        "overall_score": overall_score,
+        "rubric_scores": rubric_scores,
+        "stages": stages,
+        "implementation_excerpt": implementation_code_excerpt,
+        "has_code_submission": has_code_submission,
+        "code_signal_score": code_signal_score,
     }
 
 
@@ -2179,6 +2476,13 @@ class LLMAssessor:
         )
         if system_design_evaluation:
             result.full_report_json["system_design_evaluation"] = system_design_evaluation
+        coding_task_evaluation = _build_coding_task_evaluation(
+            interview_meta,
+            result.per_question_analysis,
+            message_history,
+        )
+        if coding_task_evaluation:
+            result.full_report_json["coding_task_evaluation"] = coding_task_evaluation
         result.full_report_json["aggregates"] = adjusted_aggregates
         result.full_report_json["score_penalties"] = result.full_report_json.get("score_penalties", []) + summary_penalties
         final_recommendation, gate_reasons = _apply_recommendation_gates(
@@ -2623,6 +2927,9 @@ class MockAssessor:
         system_design_evaluation = _build_system_design_evaluation(interview_meta, per_q)
         if system_design_evaluation:
             full_json["system_design_evaluation"] = system_design_evaluation
+        coding_task_evaluation = _build_coding_task_evaluation(interview_meta, per_q, message_history)
+        if coding_task_evaluation:
+            full_json["coding_task_evaluation"] = coding_task_evaluation
 
         cheat_risk, cheat_flags = _compute_cheat_risk(behavioral_signals, per_q)
 

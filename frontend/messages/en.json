@@ -108,6 +108,7 @@
       "questionsPrefix": "The flow contains",
       "questionsCount": "8 structured questions",
       "systemDesignQuestions": "3 structured design stages",
+      "codingTaskQuestions": "3 coding task stages",
       "genericQuestions": "a structured module",
       "questionsSuffix": "and usually takes 15-20 minutes.",
       "visibilityPrefix": "Your answers will be reviewed by AI and the results will remain visible only to ",
@@ -979,8 +980,10 @@
     "recordingDescription": "Recording starts automatically at interview launch. If screen permission is denied, the interview still continues and camera self-view remains available.",
     "moduleCardEyebrow": "Current module",
     "scenarioLabel": "Scenario",
+    "taskLabel": "Task",
     "stageLabel": "Current stage",
     "stageProgress": "Stage {current} of {total}",
+    "codingTaskHint": "Paste code or concise pseudocode directly into the answer box. Explain edge cases, tests, and trade-offs in the same response if needed.",
     "completeTitle": "Interview complete",
     "completeDescription": "You've answered all {count} questions. Generate your assessment report now.",
     "finish": "Finish and get report",
@@ -1021,6 +1024,7 @@
     "placeholderListening": "Listening...",
     "placeholderTranscribing": "Transcribing...",
     "placeholderVoice": "Transcript preview. Edit before sending...",
+    "placeholderCode": "Paste code or pseudocode here, then explain the key decisions and edge cases...",
     "placeholderText": "Type your answer... (Enter to send, Shift+Enter for a new line)",
     "uploadStatus": {
       "uploading": "Uploading recording...",
@@ -1087,6 +1091,25 @@
         "architecture_quality": "Architecture quality",
         "tradeoff_reasoning": "Trade-off reasoning",
         "reliability_scaling": "Reliability and scaling"
+      }
+    },
+    "codingTask": {
+      "eyebrow": "Coding task evidence",
+      "title": "Coding task module",
+      "task": "Task",
+      "stageCount": "{count} stages",
+      "overallScore": "Module score",
+      "stageScore": "Stage score",
+      "answerQuality": "Evidence quality",
+      "questionsCovered": "{count} questions",
+      "noEvidence": "No evidence captured for this stage yet.",
+      "codeExcerpt": "Submitted code excerpt",
+      "codeSignal": "Code signal",
+      "rubrics": {
+        "problem_breakdown": "Problem breakdown",
+        "implementation_quality": "Implementation quality",
+        "correctness_testing": "Correctness and testing",
+        "code_communication": "Code communication"
       }
     },
     "summaryModel": {

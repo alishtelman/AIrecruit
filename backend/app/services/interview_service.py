@@ -141,10 +141,16 @@ async def _get_assessment_progress(
 
 
 _SYSTEM_DESIGN_MODULE_TYPE = "system_design"
+_CODING_TASK_MODULE_TYPE = "coding_task"
 _SYSTEM_DESIGN_STAGE_KEYS = (
     "requirements",
     "high_level_design",
     "tradeoffs",
+)
+_CODING_TASK_STAGE_KEYS = (
+    "task_brief",
+    "implementation",
+    "review",
 )
 _SYSTEM_DESIGN_SCENARIOS: dict[str, dict[str, str]] = {
     "backend_engineer": {
@@ -211,10 +217,79 @@ _SYSTEM_DESIGN_DEFAULT_SCENARIO = {
     "prompt_en": "Design a shared platform used by multiple internal teams with role-based access, observability, and reliability constraints.",
     "prompt_ru": "Спроектируйте общую платформу для нескольких внутренних команд с role-based access, observability и требованиями к надёжности.",
 }
+_CODING_TASK_SCENARIOS: dict[str, dict[str, str]] = {
+    "backend_engineer": {
+        "scenario_id": "rate_limiter_window_counter",
+        "title_en": "a request rate limiter",
+        "title_ru": "лимитер запросов",
+        "prompt_en": "Implement a function that enforces a per-user sliding-window rate limit. Explain edge cases, data structures, and test coverage.",
+        "prompt_ru": "Реализуйте функцию, которая ограничивает запросы пользователя по sliding-window rate limit. Объясните edge cases, структуры данных и покрытие тестами.",
+    },
+    "frontend_engineer": {
+        "scenario_id": "async_search_state_manager",
+        "title_en": "an async search state manager",
+        "title_ru": "менеджер состояния async-поиска",
+        "prompt_en": "Implement the core logic for a debounced async search state manager with cancellation, stale-response protection, and loading/error states.",
+        "prompt_ru": "Реализуйте core logic для debounced async search state manager с cancelation, защитой от stale responses и состояниями loading/error.",
+    },
+    "qa_engineer": {
+        "scenario_id": "flaky_test_classifier",
+        "title_en": "a flaky test classifier",
+        "title_ru": "классификатор flaky-тестов",
+        "prompt_en": "Implement logic that groups repeated test runs, detects flaky failures, and emits a stable summary for CI diagnostics.",
+        "prompt_ru": "Реализуйте логику, которая группирует повторные прогоны тестов, выявляет flaky failures и формирует стабильную сводку для CI-диагностики.",
+    },
+    "devops_engineer": {
+        "scenario_id": "deployment_rollout_guard",
+        "title_en": "a deployment rollout guard",
+        "title_ru": "guard для rollout-деплоя",
+        "prompt_en": "Implement logic that evaluates service rollout health from metrics/events and decides whether to continue, pause, or roll back deployment.",
+        "prompt_ru": "Реализуйте логику, которая по метрикам и событиям rollout оценивает здоровье сервиса и решает: продолжать, поставить на паузу или откатить деплой.",
+    },
+    "data_scientist": {
+        "scenario_id": "feature_freshness_monitor",
+        "title_en": "a feature freshness monitor",
+        "title_ru": "монитор свежести фичей",
+        "prompt_en": "Implement logic that validates feature freshness for scoring requests, applies fallbacks, and explains why a record should be blocked or allowed.",
+        "prompt_ru": "Реализуйте логику, которая проверяет свежесть фичей для scoring-запросов, применяет fallback и объясняет, почему запись нужно заблокировать или пропустить.",
+    },
+    "product_manager": {
+        "scenario_id": "experiment_guardrail_parser",
+        "title_en": "an experiment guardrail parser",
+        "title_ru": "парсер guardrail-метрик эксперимента",
+        "prompt_en": "Implement logic that validates experiment guardrail metrics, flags invalid inputs, and produces a rollout recommendation payload for decision makers.",
+        "prompt_ru": "Реализуйте логику, которая валидирует guardrail-метрики эксперимента, флагирует некорректные входы и формирует payload с рекомендацией по rollout.",
+    },
+    "mobile_engineer": {
+        "scenario_id": "offline_sync_queue",
+        "title_en": "an offline sync queue",
+        "title_ru": "offline sync queue",
+        "prompt_en": "Implement the core queue logic for offline sync with retries, conflict markers, and battery-friendly batching.",
+        "prompt_ru": "Реализуйте core logic очереди offline sync с retry, conflict markers и батчингом, который бережёт батарею.",
+    },
+    "designer": {
+        "scenario_id": "design_token_transformer",
+        "title_en": "a design token transformer",
+        "title_ru": "трансформер design tokens",
+        "prompt_en": "Implement logic that transforms design tokens into platform-specific output, validates required fields, and surfaces actionable errors.",
+        "prompt_ru": "Реализуйте логику, которая преобразует design tokens в platform-specific output, валидирует обязательные поля и возвращает понятные ошибки.",
+    },
+}
+_CODING_TASK_DEFAULT_SCENARIO = {
+    "scenario_id": "structured_business_rule_engine",
+    "title_en": "a structured business-rule evaluator",
+    "title_ru": "структурированный rule evaluator",
+    "prompt_en": "Implement a function that evaluates structured rules, returns deterministic decisions, and explains edge cases and test coverage.",
+    "prompt_ru": "Реализуйте функцию, которая оценивает структурированные правила, возвращает детерминированное решение и объясняет edge cases и покрытие тестами.",
+}
 
 
 def _module_title_fallback(module_type: str) -> str:
     return module_type.replace("_", " ").strip().title() or "Assessment Module"
+
+
+def _is_staged_module_type(module_type: str | None) -> bool:
+    return module_type in {_SYSTEM_DESIGN_MODULE_TYPE, _CODING_TASK_MODULE_TYPE}
 
 
 def _select_system_design_scenario(
@@ -232,6 +307,23 @@ def _select_system_design_scenario(
     is_en = language == "en"
     return {
         "scenario_id": scenario["scenario_id"],
+        "title": title_override or (scenario["title_en"] if is_en else scenario["title_ru"]),
+        "prompt": prompt_override or (scenario["prompt_en"] if is_en else scenario["prompt_ru"]),
+    }
+
+
+def _select_coding_task_scenario(
+    target_role: str,
+    language: str,
+    module_config: dict[str, Any] | None,
+) -> dict[str, str]:
+    config = module_config if isinstance(module_config, dict) else {}
+    scenario = dict(_CODING_TASK_SCENARIOS.get(target_role, _CODING_TASK_DEFAULT_SCENARIO))
+    title_override = str(config.get("scenario_title") or "").strip()
+    prompt_override = str(config.get("scenario_prompt") or "").strip()
+    is_en = language == "en"
+    return {
+        "scenario_id": str(config.get("scenario_id") or scenario["scenario_id"]).strip() or scenario["scenario_id"],
         "title": title_override or (scenario["title_en"] if is_en else scenario["title_ru"]),
         "prompt": prompt_override or (scenario["prompt_en"] if is_en else scenario["prompt_ru"]),
     }
@@ -296,6 +388,80 @@ def _build_system_design_topic_plan(
     ]
     module_context = {
         "module_type": _SYSTEM_DESIGN_MODULE_TYPE,
+        "scenario_id": scenario["scenario_id"],
+        "scenario_title": scenario["title"],
+        "scenario_prompt": scenario["prompt"],
+        "stage_plan": stage_plan,
+        "question_history": [
+            {
+                "assistant_turn": 1,
+                "stage_key": stage_plan[0]["stage_key"],
+                "stage_title": stage_plan[0]["stage_title"],
+            }
+        ],
+    }
+    return topic_plan, module_context
+
+
+def _build_coding_task_topic_plan(
+    *,
+    target_role: str,
+    language: str,
+    module_config: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    scenario = _select_coding_task_scenario(target_role, language, module_config)
+    is_en = language == "en"
+    stage_titles = {
+        "task_brief": "Task Breakdown" if is_en else "Декомпозиция задачи",
+        "implementation": "Implementation" if is_en else "Реализация",
+        "review": "Testing & Review" if is_en else "Проверка и review",
+    }
+    stage_prompts = {
+        "task_brief": (
+            "Clarify inputs, outputs, constraints, edge cases, and the implementation strategy before writing code."
+            if is_en
+            else "Уточните входы, выходы, ограничения, edge cases и стратегию реализации до написания кода."
+        ),
+        "implementation": (
+            "Share the core implementation or concise pseudocode, and explain the important functions or state transitions."
+            if is_en
+            else "Покажите core implementation или компактный псевдокод и объясните ключевые функции или переходы состояния."
+        ),
+        "review": (
+            "Explain time/space complexity, testing strategy, failure cases, and what you would refactor next."
+            if is_en
+            else "Объясните time/space complexity, стратегию тестирования, failure cases и что вы бы рефакторили следующим."
+        ),
+    }
+    competencies_by_stage = {
+        "task_brief": ["Problem Solving", "Debugging & Problem Decomposition"],
+        "implementation": ["Code Quality & Maintainability", "Technical Communication"],
+        "review": ["Testing Strategy", "Ownership & Growth Mindset"],
+    }
+    stage_plan = [
+        {
+            "stage_key": stage_key,
+            "stage_title": stage_titles[stage_key],
+            "stage_prompt": stage_prompts[stage_key],
+        }
+        for stage_key in _CODING_TASK_STAGE_KEYS
+    ]
+    topic_plan = [
+        {
+            "competencies": competencies_by_stage[item["stage_key"]],
+            "resume_anchor": None,
+            "verification_target": None,
+            "stage_key": item["stage_key"],
+            "stage_title": item["stage_title"],
+            "stage_prompt": item["stage_prompt"],
+            "scenario_id": scenario["scenario_id"],
+            "scenario_title": scenario["title"],
+            "scenario_prompt": scenario["prompt"],
+        }
+        for item in stage_plan
+    ]
+    module_context = {
+        "module_type": _CODING_TASK_MODULE_TYPE,
         "scenario_id": scenario["scenario_id"],
         "scenario_title": scenario["title"],
         "scenario_prompt": scenario["prompt"],
@@ -1642,6 +1808,15 @@ async def start_interview(
         max_q = len(topic_plan)
         role_max_cap = max_q
         min_questions_before_early_stop = max_q
+    elif normalized_module_type == _CODING_TASK_MODULE_TYPE:
+        topic_plan, module_context = _build_coding_task_topic_plan(
+            target_role=target_role,
+            language=language,
+            module_config=safe_module_config,
+        )
+        max_q = len(topic_plan)
+        role_max_cap = max_q
+        min_questions_before_early_stop = max_q
     else:
         adaptive_max_q, adaptive_role_cap, adaptive_min_questions = _estimate_dynamic_question_budget(
             target_role=target_role,
@@ -1903,7 +2078,7 @@ async def add_candidate_message(
         module_scenario_id = str(state.get("module_scenario_id") or module_context.get("scenario_id") or "").strip() or None
         module_scenario_title = str(state.get("module_scenario_title") or module_context.get("scenario_title") or "").strip() or None
         module_scenario_prompt = str(state.get("module_scenario_prompt") or module_context.get("scenario_prompt") or "").strip() or None
-        if module_type == _SYSTEM_DESIGN_MODULE_TYPE and topic_plan:
+        if _is_staged_module_type(module_type) and topic_plan:
             current_topic_index = min(max(module_stage_index, 0), len(topic_plan) - 1)
         candidate_answers_count = _safe_int(state.get("candidate_answers_count"), 0)
         strong_answers_count = _safe_int(state.get("strong_answers_count"), 0)
@@ -2004,7 +2179,7 @@ async def add_candidate_message(
         if is_nonsense_answer:
             nonsense_answers_count += 1
 
-        if module_type == _SYSTEM_DESIGN_MODULE_TYPE:
+        if _is_staged_module_type(module_type):
             should_end_now = False
             adaptive_decision = None
             adapted_max_questions = interview.max_questions
@@ -2056,7 +2231,7 @@ async def add_candidate_message(
         can_probe_current_topic = topic_turns < 1 and interview.question_count < interview.max_questions
         topic_guard_closure_reason: str | None = None
 
-        if module_type == _SYSTEM_DESIGN_MODULE_TYPE:
+        if _is_staged_module_type(module_type):
             if last_question_type != "main":
                 question_type = "main"
                 will_advance = True
@@ -2067,7 +2242,7 @@ async def add_candidate_message(
                 else:
                     question_type = "main"
                     will_advance = True
-                    forced_closure_reason = forced_closure_reason or "system_design_followup_spent"
+                    forced_closure_reason = forced_closure_reason or f"{module_type}_followup_spent"
             elif answer_class == "strong" and can_probe_current_topic:
                 question_type = "deep_technical"
                 will_advance = False
@@ -2189,7 +2364,7 @@ async def add_candidate_message(
                 next_idx = interview.question_count
                 target_idx = next_idx if will_advance else current_idx
                 if will_advance:
-                    if module_type == _SYSTEM_DESIGN_MODULE_TYPE:
+                    if _is_staged_module_type(module_type):
                         resolved_next_topic_index = min(current_idx + 1, len(topic_plan) - 1)
                     else:
                         resolved_next_topic_index = _resolve_next_topic_index(
@@ -2291,7 +2466,7 @@ async def add_candidate_message(
 
         turn_count += 1
 
-        if next_q and module_type == _SYSTEM_DESIGN_MODULE_TYPE:
+        if next_q and _is_staged_module_type(module_type):
             assistant_turn = sum(1 for item in messages if item.role == "assistant") + 1
             history_stage_key = module_stage_key or current_target.get("stage_key")
             history_stage_title = module_stage_title or current_target.get("stage_title")
@@ -2344,7 +2519,7 @@ async def add_candidate_message(
             "module_scenario_title": module_scenario_title,
             "module_scenario_prompt": module_scenario_prompt,
             "module_stage_plan": module_stage_plan,
-            "module_stage_index": current_topic_index if module_type == _SYSTEM_DESIGN_MODULE_TYPE else module_stage_index,
+            "module_stage_index": current_topic_index if _is_staged_module_type(module_type) else module_stage_index,
             "module_question_history": module_question_history,
         }
         if next_q:

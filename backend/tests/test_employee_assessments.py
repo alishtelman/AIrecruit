@@ -86,17 +86,22 @@ async def _create_assessment(
     return resp.json()
 
 
-async def _answer_all_questions(client: AsyncClient, token: str, interview_id: str) -> None:
+async def _answer_all_questions(
+    client: AsyncClient,
+    token: str,
+    interview_id: str,
+    *,
+    message: str | None = None,
+) -> None:
+    answer_text = message or (
+        "I solved the task step by step because that reduced risk, "
+        "validated edge cases first, and then moved to implementation."
+    )
     for _ in range(16):
         msg_resp = await client.post(
             f"/api/v1/interviews/{interview_id}/message",
             headers=auth_headers(token),
-            json={
-                "message": (
-                    "I solved the task step by step because that reduced risk, "
-                    "validated edge cases first, and then moved to implementation."
-                )
-            },
+            json={"message": answer_text},
         )
         assert msg_resp.status_code == 200, msg_resp.text
         if msg_resp.json()["current_question"] is None:
@@ -494,6 +499,142 @@ async def test_employee_assessment_accepts_custom_module_plan_and_advances_to_ne
     assert completed["interview_id"] == system_design_interview_id
     assert completed["module_plan"][1]["status"] == "completed"
     assert completed["module_plan"][1]["interview_id"] == system_design_interview_id
+
+
+@pytest.mark.asyncio
+async def test_employee_assessment_supports_coding_task_module_and_report_summary(
+    client: AsyncClient,
+    company_token: str,
+):
+    employee_email = f"codingtask_{uuid.uuid4().hex[:8]}@example.com"
+    assessment = await _create_assessment(
+        client,
+        company_token,
+        employee_email,
+        "Coding Task Candidate",
+        module_plan=[
+            {
+                "module_type": "adaptive_interview",
+                "title": "Core Interview",
+            },
+            {
+                "module_id": "coding_task_main",
+                "module_type": "coding_task",
+                "title": "Coding Task",
+                "config": {"scenario_id": "rate_limiter_window_counter"},
+            },
+        ],
+    )
+    candidate_token = await _register_candidate(client, employee_email, "Coding Task Candidate")
+    await _upload_resume(client, candidate_token)
+
+    first_start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert first_start_resp.status_code == 200, first_start_resp.text
+    first_interview_id = first_start_resp.json()["interview_id"]
+    await _answer_all_questions(client, candidate_token, first_interview_id)
+
+    first_finish_resp = await client.post(
+        f"/api/v1/interviews/{first_interview_id}/finish",
+        headers=auth_headers(candidate_token),
+    )
+    assert first_finish_resp.status_code == 200, first_finish_resp.text
+    first_finish_data = first_finish_resp.json()
+    assert first_finish_data["assessment_progress"] is not None
+    assert first_finish_data["assessment_progress"]["has_remaining_modules"] is True
+    assert first_finish_data["assessment_progress"]["current_module_type"] == "coding_task"
+
+    coding_start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert coding_start_resp.status_code == 200, coding_start_resp.text
+    coding_interview_id = coding_start_resp.json()["interview_id"]
+
+    detail_resp = await client.get(
+        f"/api/v1/interviews/{coding_interview_id}",
+        headers=auth_headers(candidate_token),
+    )
+    assert detail_resp.status_code == 200, detail_resp.text
+    detail = detail_resp.json()
+    assert detail["module_session"] is not None
+    assert detail["module_session"]["module_type"] == "coding_task"
+    assert detail["module_session"]["module_title"] == "Coding Task"
+    assert detail["module_session"]["scenario_title"]
+    assert detail["module_session"]["stage_key"] == "task_brief"
+    assert detail["module_session"]["stage_count"] == 3
+
+    coding_answer = """I would validate user_id and timestamp first, keep a per-user ordered queue, evict old timestamps, then decide.
+
+```python
+from collections import defaultdict, deque
+
+windows = defaultdict(deque)
+
+def allow_request(user_id: str, now: int, limit: int = 5, window_seconds: int = 60) -> bool:
+    queue = windows[user_id]
+    while queue and now - queue[0] >= window_seconds:
+        queue.popleft()
+    if len(queue) >= limit:
+        return False
+    queue.append(now)
+    return True
+```
+
+I would test boundary timestamps, repeated requests in one second, empty users, and complexity staying amortized O(1)."""
+    await _answer_all_questions(
+        client,
+        candidate_token,
+        coding_interview_id,
+        message=coding_answer,
+    )
+
+    final_finish_resp = await client.post(
+        f"/api/v1/interviews/{coding_interview_id}/finish",
+        headers=auth_headers(candidate_token),
+    )
+    assert final_finish_resp.status_code == 200, final_finish_resp.text
+    final_finish_data = final_finish_resp.json()
+    final_report_id = final_finish_data.get("report_id")
+    if not final_report_id:
+        final_report_id = await _wait_for_report_id(client, candidate_token, coding_interview_id)
+
+    company_report_resp = await client.get(
+        f"/api/v1/company/reports/{final_report_id}",
+        headers=auth_headers(company_token),
+    )
+    assert company_report_resp.status_code == 200, company_report_resp.text
+    company_report = company_report_resp.json()
+    assert company_report["module_session"] is not None
+    assert company_report["module_session"]["module_type"] == "coding_task"
+    assert company_report["coding_task_summary"] is not None
+    summary = company_report["coding_task_summary"]
+    assert summary["stage_count"] == 3
+    assert summary["overall_score"] is not None
+    assert len(summary["rubric_scores"]) == 4
+    assert summary["has_code_submission"] is True
+    assert summary["implementation_excerpt"] is not None
+    assert "allow_request" in summary["implementation_excerpt"]
+    assert summary["code_signal_score"] is not None
+    assert len(summary["stages"]) == 3
+    assert all(stage["stage_title"] for stage in summary["stages"])
+    assert company_report["per_question_analysis"]
+    assert any(item.get("stage_title") for item in company_report["per_question_analysis"])
+
+    completed_assessments_resp = await client.get(
+        "/api/v1/company/assessments",
+        headers=auth_headers(company_token),
+    )
+    assert completed_assessments_resp.status_code == 200, completed_assessments_resp.text
+    completed = next(row for row in completed_assessments_resp.json() if row["id"] == assessment["id"])
+    assert completed["status"] == "completed"
+    assert completed["interview_id"] == coding_interview_id
+    assert completed["module_plan"][1]["status"] == "completed"
+    assert completed["module_plan"][1]["interview_id"] == coding_interview_id
 
 
 @pytest.mark.asyncio

@@ -761,11 +761,19 @@ def _fallback_question_for_context(ctx: InterviewContext, *, prefer_secondary_ma
             system_design_depth = _system_design_depth_question(ctx)
             if system_design_depth:
                 return system_design_depth
+        if ctx.module_type == "coding_task":
+            coding_task_depth = _coding_task_depth_question(ctx)
+            if coding_task_depth:
+                return coding_task_depth
         return _trim_question(get_depth_escalation_question(ctx.language))
     if ctx.module_type == "system_design":
         system_design_main = _system_design_main_question(ctx)
         if system_design_main:
             return system_design_main
+    if ctx.module_type == "coding_task":
+        coding_task_main = _coding_task_main_question(ctx)
+        if coding_task_main:
+            return coding_task_main
 
     anchored = _competency_anchored_main_question(ctx, preference_index=1 if prefer_secondary_main_topic else 0)
     if anchored:
@@ -850,6 +858,76 @@ def _system_design_depth_question(ctx: InterviewContext) -> str | None:
     return _trim_question(question)
 
 
+def _coding_task_main_question(ctx: InterviewContext) -> str | None:
+    if ctx.module_type != "coding_task":
+        return None
+
+    scenario_title = ctx.module_scenario_title or (
+        "the coding task" if ctx.language == "en" else "coding task"
+    )
+    match ctx.module_stage_key:
+        case "task_brief":
+            question = (
+                f'For the task "{scenario_title}", how would you break it down: inputs, outputs, edge cases, and implementation plan?'
+                if ctx.language == "en"
+                else f'Для задачи «{scenario_title}» как вы её декомпозируете: входы, выходы, edge cases и план реализации?'
+            )
+        case "implementation":
+            question = (
+                f'Please paste the core implementation for "{scenario_title}" and explain the key function or state flow.'
+                if ctx.language == "en"
+                else f'Пожалуйста, вставьте core implementation для «{scenario_title}» и объясните ключевую функцию или поток состояния.'
+            )
+        case "review":
+            question = (
+                f'How would you test your solution for "{scenario_title}", what is the complexity, and what would you improve next?'
+                if ctx.language == "en"
+                else f'Как бы вы протестировали решение для «{scenario_title}», какая у него сложность и что бы вы улучшили следующим?'
+            )
+        case _:
+            question = (
+                f'Walk me through how you would solve "{scenario_title}" and show the most important code.'
+                if ctx.language == "en"
+                else f'Проведите меня по тому, как вы бы решали «{scenario_title}», и покажите самый важный фрагмент кода.'
+            )
+    return _trim_question(question)
+
+
+def _coding_task_depth_question(ctx: InterviewContext) -> str | None:
+    if ctx.module_type != "coding_task":
+        return None
+
+    scenario_title = ctx.module_scenario_title or (
+        "the coding task" if ctx.language == "en" else "эту coding task задачу"
+    )
+    match ctx.module_stage_key:
+        case "task_brief":
+            question = (
+                f'Which edge case in "{scenario_title}" is easiest to miss, and how would your design catch it early?'
+                if ctx.language == "en"
+                else f'Какой edge case в задаче «{scenario_title}» проще всего пропустить и как ваш дизайн поймает его заранее?'
+            )
+        case "implementation":
+            question = (
+                f'In your code for "{scenario_title}", which branch or data structure matters most, and why did you choose it?'
+                if ctx.language == "en"
+                else f'В вашем коде для «{scenario_title}» какая ветка или структура данных наиболее критична и почему вы выбрали именно её?'
+            )
+        case "review":
+            question = (
+                f'What failure case would still worry you in "{scenario_title}", and which test would you add first?'
+                if ctx.language == "en"
+                else f'Какой failure case в задаче «{scenario_title}» всё ещё вызывает у вас тревогу и какой тест вы бы добавили первым?'
+            )
+        case _:
+            question = (
+                f'Which part of your solution for "{scenario_title}" is the weakest today, and how would you harden it?'
+                if ctx.language == "en"
+                else f'Какая часть вашего решения для «{scenario_title}» сегодня самая слабая и как бы вы её усилили?'
+            )
+    return _trim_question(question)
+
+
 # ---------------------------------------------------------------------------
 # LLM implementation (Groq)
 # ---------------------------------------------------------------------------
@@ -919,6 +997,21 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
             prompt += f"Сценарий: {ctx.module_scenario_title}\n"
         if ctx.module_scenario_prompt:
             prompt += f"Контекст сценария: {ctx.module_scenario_prompt}\n"
+        if ctx.module_stage_title:
+            prompt += f"Текущий этап: {ctx.module_stage_title}\n"
+        if ctx.module_stage_prompt:
+            prompt += f"Фокус этапа: {ctx.module_stage_prompt}\n"
+    if ctx.module_type == "coding_task":
+        prompt += (
+            "\n## Режим модуля: Coding Task\n"
+            "Ты ведёшь coding task интервью. Кандидат может вставлять код, псевдокод или структурированное решение прямо в чат.\n"
+            "Держись одного задания до конца модуля. Не переключайся обратно на resume-driven вопросы и не уводи разговор в общие карьерные темы.\n"
+            "Если кандидат уже показал код, проси объяснить логику, edge cases, тесты и trade-offs, а не переписывать всё заново.\n"
+        )
+        if ctx.module_scenario_title:
+            prompt += f"Задание: {ctx.module_scenario_title}\n"
+        if ctx.module_scenario_prompt:
+            prompt += f"Описание задачи: {ctx.module_scenario_prompt}\n"
         if ctx.module_stage_title:
             prompt += f"Текущий этап: {ctx.module_stage_title}\n"
         if ctx.module_stage_prompt:
@@ -1203,6 +1296,10 @@ class LLMInterviewer:
             system_design_main = _system_design_main_question(ctx)
             if system_design_main:
                 return system_design_main
+        if ctx.module_type == "coding_task" and ctx.question_type == "main":
+            coding_task_main = _coding_task_main_question(ctx)
+            if coding_task_main:
+                return coding_task_main
         if ctx.topic_phase == "intro" and not ctx.is_followup_mode:
             return _resume_anchored_first_question(ctx)
         if ctx.topic_phase == "behavioral_closing" and ctx.question_type == "main":
@@ -1367,12 +1464,20 @@ class MockInterviewer:
                     system_design_depth = _system_design_depth_question(ctx)
                     if system_design_depth:
                         return system_design_depth
+                if ctx.module_type == "coding_task":
+                    coding_task_depth = _coding_task_depth_question(ctx)
+                    if coding_task_depth:
+                        return coding_task_depth
                 return get_depth_escalation_question(ctx.language)
             case _:
                 if ctx.module_type == "system_design":
                     system_design_main = _system_design_main_question(ctx)
                     if system_design_main:
                         return system_design_main
+                if ctx.module_type == "coding_task":
+                    coding_task_main = _coding_task_main_question(ctx)
+                    if coding_task_main:
+                        return coding_task_main
                 if ctx.topic_phase == "intro":
                     return _resume_anchored_first_question(ctx)
                 if ctx.topic_phase == "behavioral_closing":
