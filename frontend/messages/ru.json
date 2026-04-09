@@ -1023,6 +1023,15 @@
     "areasToImprove": "Зоны роста",
     "recommendations": "Рекомендации",
     "perQuestionAnalysis": "Анализ по вопросам",
+    "roadmap": {
+      "eyebrow": "Дорожная карта",
+      "title": "План развития",
+      "phases": {
+        "now": { "label": "Сейчас" },
+        "next": { "label": "Следом" },
+        "later": { "label": "Дальше" }
+      }
+    },
     "systemDesign": {
       "eyebrow": "Доказательства system design",
       "title": "Модуль system design",

@@ -46,6 +46,16 @@ class ReportSummaryBlock(BaseModel):
     top_weaknesses: list[str]
 
 
+class DevelopmentRoadmapPhase(BaseModel):
+    phase_key: str
+    focus: str | None = None
+    actions: list[str] = []
+
+
+class DevelopmentRoadmap(BaseModel):
+    phases: list[DevelopmentRoadmapPhase] = []
+
+
 class InterviewSummaryModel(BaseModel):
     class TopicOutcome(BaseModel):
         slot: int
@@ -138,6 +148,7 @@ class AssessmentReportResponse(BaseModel):
     cheat_risk_score: float | None = None
     cheat_flags: list[str] | None = None
     summary: ReportSummaryBlock | None = None
+    development_roadmap: DevelopmentRoadmap | None = None
     summary_model: InterviewSummaryModel | None = None
     module_session: ReportModuleSession | None = None
     system_design_summary: SystemDesignSummary | None = None
@@ -349,4 +360,69 @@ class AssessmentReportResponse(BaseModel):
             top_strengths=self.strengths[:2],
             top_weaknesses=self.weaknesses[:2],
         )
+        self.development_roadmap = _build_development_roadmap(self)
         return self
+
+
+def _build_development_roadmap(report: AssessmentReportResponse) -> DevelopmentRoadmap | None:
+    def _clean(items: list[str] | None) -> list[str]:
+        if not items:
+            return []
+        seen: set[str] = set()
+        result: list[str] = []
+        for item in items:
+            normalized = str(item or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(normalized)
+        return result
+
+    strengths = _clean(report.strengths)
+    weaknesses = _clean(report.weaknesses)
+    recommendations = _clean(report.recommendations)
+    if not strengths and not weaknesses and not recommendations:
+        return None
+
+    phases = [
+        DevelopmentRoadmapPhase(
+            phase_key="now",
+            focus=weaknesses[0] if weaknesses else (recommendations[0] if recommendations else None),
+            actions=[
+                item
+                for item in [*recommendations[:1], *(weaknesses[:1] if not recommendations else [])]
+                if item
+            ],
+        ),
+        DevelopmentRoadmapPhase(
+            phase_key="next",
+            focus=weaknesses[1] if len(weaknesses) > 1 else (strengths[0] if strengths else None),
+            actions=[
+                item
+                for item in [*recommendations[1:2], *(strengths[:1] if len(recommendations) < 2 else [])]
+                if item
+            ],
+        ),
+        DevelopmentRoadmapPhase(
+            phase_key="later",
+            focus=strengths[0] if strengths else (recommendations[2] if len(recommendations) > 2 else None),
+            actions=[
+                item
+                for item in [*recommendations[2:3], *(strengths[1:2] if len(strengths) > 1 else strengths[:1])]
+                if item
+            ],
+        ),
+    ]
+
+    normalized_phases = [
+        DevelopmentRoadmapPhase(
+            phase_key=phase.phase_key,
+            focus=phase.focus,
+            actions=_clean(phase.actions)[:2],
+        )
+        for phase in phases
+        if phase.focus or phase.actions
+    ]
+    if not normalized_phases:
+        return None
+    return DevelopmentRoadmap(phases=normalized_phases)

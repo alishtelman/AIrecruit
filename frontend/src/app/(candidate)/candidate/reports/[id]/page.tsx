@@ -6,7 +6,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { reportApi } from "@/lib/api";
-import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ReportSummaryBlock, SystemDesignStageSummary, SystemDesignRubricScore } from "@/lib/types";
+import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ReportSummaryBlock, SystemDesignStageSummary, SystemDesignRubricScore, DevelopmentRoadmapPhase } from "@/lib/types";
 
 const CATEGORY_COLORS: Record<string, string> = {
   technical_core: "bg-blue-500/15 text-blue-400 border-blue-500/30",
@@ -342,6 +342,10 @@ export default function ReportPage() {
           </Section>
         )}
 
+        {report.development_roadmap && report.development_roadmap.phases.length > 0 && (
+          <RoadmapPanel phases={report.development_roadmap.phases} />
+        )}
+
         {/* Per-question analysis */}
         {report.per_question_analysis && report.per_question_analysis.length > 0 && (
           <div className="mt-6">
@@ -528,6 +532,43 @@ function SummaryCard({
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function RoadmapPanel({ phases }: { phases: DevelopmentRoadmapPhase[] }) {
+  const t = useTranslations("report");
+  const locale = useLocale();
+
+  return (
+    <div className="mb-6 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-5">
+      <div className="mb-4">
+        <div className="text-xs uppercase tracking-[0.24em] text-emerald-300">{t("roadmap.eyebrow")}</div>
+        <div className="text-sm font-semibold text-white">{t("roadmap.title")}</div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        {phases.map((phase) => (
+          <div key={phase.phase_key} className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+            <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-emerald-300">
+              {t(`roadmap.phases.${phase.phase_key}.label`)}
+            </div>
+            {phase.focus && (
+              <div className="mb-3 text-sm font-medium leading-6 text-white">
+                {localizeFreeformText(phase.focus, locale)}
+              </div>
+            )}
+            <div className="space-y-2">
+              {phase.actions.map((action, index) => (
+                <div key={index} className="flex gap-2 text-sm leading-6 text-slate-300">
+                  <span className="mt-1 shrink-0 text-emerald-400">•</span>
+                  <span>{localizeFreeformText(action, locale)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

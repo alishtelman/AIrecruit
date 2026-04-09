@@ -255,6 +255,8 @@ async def test_full_interview_flow(client: AsyncClient, candidate_token: str):
     assert report["hiring_recommendation"] in ("no", "maybe", "yes", "strong_yes")
     assert report["summary_model"]["core_topics"] == 8
     assert report["summary_model"]["total_turns"] >= 8
+    assert report["development_roadmap"] is not None
+    assert report["development_roadmap"]["phases"]
 
 
 @pytest.mark.asyncio

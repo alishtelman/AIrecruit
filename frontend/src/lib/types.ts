@@ -657,6 +657,16 @@ export interface RedFlag {
   severity: string;
 }
 
+export interface DevelopmentRoadmapPhase {
+  phase_key: string;
+  focus: string | null;
+  actions: string[];
+}
+
+export interface DevelopmentRoadmap {
+  phases: DevelopmentRoadmapPhase[];
+}
+
 export interface AssessmentReport {
   id: string;
   interview_id: string;
@@ -686,6 +696,7 @@ export interface AssessmentReport {
   cheat_risk_score: number | null;
   cheat_flags: string[] | null;
   summary: ReportSummaryBlock | null;
+  development_roadmap: DevelopmentRoadmap | null;
   summary_model: InterviewSummaryModel | null;
   module_session: ReportModuleSession | null;
   system_design_summary: SystemDesignSummary | null;

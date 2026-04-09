@@ -1023,6 +1023,15 @@
     "areasToImprove": "Areas to improve",
     "recommendations": "Recommendations",
     "perQuestionAnalysis": "Per-question analysis",
+    "roadmap": {
+      "eyebrow": "Roadmap",
+      "title": "Development roadmap",
+      "phases": {
+        "now": { "label": "Now" },
+        "next": { "label": "Next" },
+        "later": { "label": "Later" }
+      }
+    },
     "systemDesign": {
       "eyebrow": "System design evidence",
       "title": "System design module",
