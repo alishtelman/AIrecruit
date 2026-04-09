@@ -135,6 +135,50 @@ Priority values:
   - competency confidence is visible
   - evidence coverage and policy version can be inspected
 
+### MS-023 Candidate Report Roadmap
+
+- Status: `todo`
+- Priority: `P1`
+- Goal: add a candidate-facing development roadmap section to the final report
+- Main areas:
+  - `backend/app/ai/assessor.py`
+  - `backend/app/schemas/report.py`
+  - `frontend/src/app/(candidate)/candidate/reports/[id]/page.tsx`
+  - `frontend/src/lib/types.ts`
+- Acceptance criteria:
+  - final report includes a concrete growth roadmap
+  - roadmap ties strengths and weaknesses to next steps
+  - roadmap is visible at least in the candidate report
+
+### MS-024 Interview Structure V2
+
+- Status: `todo`
+- Priority: `P1`
+- Goal: make interview order explicit: self-intro, resume follow-up, technical validation, soft-skill closing
+- Main backend areas:
+  - `backend/app/ai/interviewer.py`
+  - `backend/app/ai/competencies.py`
+  - `backend/app/services/interview_service.py`
+- Acceptance criteria:
+  - first question is a self-introduction / experience summary opener
+  - early turns use resume-grounded follow-up
+  - technical block is asked before behavioral closing
+  - final block covers communication, leadership, stress handling, and collaboration where relevant
+
+### MS-025 Admin LLM Controls
+
+- Status: `todo`
+- Priority: `P1`
+- Goal: provide admin-facing controls for LLM/runtime configuration without code edits
+- Main areas:
+  - backend settings/config service
+  - admin company/workspace settings UI
+  - prompt/runtime configuration storage
+- Acceptance criteria:
+  - admins can select core provider/model settings
+  - prompt or policy versions can be switched safely
+  - retries, timeouts, and feature flags can be tuned through UI
+
 ## P2 Hands-On Expansion
 
 ### MS-030 SQL Sandbox MVP
@@ -152,6 +196,26 @@ Priority values:
   - candidate writes SQL in-browser
   - query executes against sandbox data
   - result correctness is validated
+
+### MS-032 Coding Task Module MVP
+
+- Status: `todo`
+- Priority: `P2`
+- Goal: add code-based technical assignments with solution capture and evaluation
+- Recommended first cut:
+  - take-home style coding prompt or in-browser coding task
+  - recruiter-visible prompt, submission, and scored evidence
+- Main backend areas:
+  - new task/session storage
+  - code submission evaluation service
+  - report schema updates
+- Main frontend areas:
+  - candidate coding task page
+  - recruiter report/review pages
+- Acceptance criteria:
+  - candidate receives a code task inside the assessment flow
+  - code submission is stored with raw artifact and scoring summary
+  - recruiter can inspect the prompt, solution, and evaluation notes
 
 ### MS-031 SQL Task Scoring
 
@@ -184,6 +248,23 @@ Priority values:
   - candidate can request logs/metrics
   - decisions and timeline are stored
   - recruiter sees remediation reasoning
+
+### MS-052 Speech Proctoring Signals
+
+- Status: `todo`
+- Priority: `P2`
+- Goal: extend proctoring with speech-based monitoring signals
+- Main backend areas:
+  - proctoring event normalization
+  - interview/session behavioral signal storage
+  - report timeline payload
+- Main frontend areas:
+  - candidate interview capture flow
+  - company report / replay / proctoring timeline
+- Acceptance criteria:
+  - speech-related events can be captured and stored with consent-aware policy handling
+  - recruiter sees speech-related signals alongside tab, paste, and face events
+  - report can distinguish passive observation from hard risk flags
 
 ## P2 Soft-Skill Expansion
 
@@ -256,6 +337,9 @@ Start here:
 3. `MS-003` Report UI V2 Shell
 4. `MS-010` System Design Module MVP
 5. `MS-022` Confidence And Evidence Presentation
+6. `MS-024` Interview Structure V2
+7. `MS-023` Candidate Report Roadmap
+8. `MS-032` Coding Task Module MVP
 
 Reason:
 

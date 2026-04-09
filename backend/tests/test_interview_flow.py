@@ -9,6 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.ai.competencies import build_interview_plan
 from app.core.config import settings
 from app.services.interview_service import _answer_relevance, _is_cross_topic_reuse
 from tests.conftest import auth_headers
@@ -586,6 +587,68 @@ async def test_dynamic_question_budget_early_stops_weak_session(
     assert terminal_response["max_questions"] == terminal_response["question_count"]
     assert terminal_response["question_count"] <= 10
 
+
+def test_build_interview_plan_marks_intro_and_behavioral_closing_phases():
+    plan = build_interview_plan(
+        "backend_engineer",
+        8,
+        {
+            "project_highlights": ["Migrated a monolith to event-driven services"],
+            "verification_targets": ["postgresql", "kafka"],
+        },
+        structured_flow=True,
+    )
+    assert plan[0]["phase"] == "intro"
+    assert plan[1]["phase"] == "resume_followup"
+    assert all(item["phase"] == "technical" for item in plan[2:-1])
+    assert plan[-1]["phase"] == "behavioral_closing"
+
+
+@pytest.mark.asyncio
+async def test_interview_starts_with_self_intro_and_moves_to_resume_followup(
+    client: AsyncClient,
+    candidate_token: str,
+):
+    await _upload_docx_resume(
+        client,
+        candidate_token,
+        [
+            "Backend engineer with 7 years of experience in high-load systems.",
+            "Led migration from monolith to event-driven services with PostgreSQL and Kafka.",
+            "Owned backend APIs, incident response, and performance improvements for production systems.",
+        ],
+    )
+
+    start_resp = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "backend_engineer", "language": "ru"},
+    )
+    assert start_resp.status_code == 201, start_resp.text
+    start_data = start_resp.json()
+    assert "расскажите о себе" in start_data["current_question"].lower()
+
+    interview_id = start_data["interview_id"]
+    next_resp = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={
+            "message": (
+                "Я backend-инженер, последние годы занимался highload-сервисами, "
+                "отвечал за API, миграцию на event-driven архитектуру и production-стабильность."
+            )
+        },
+    )
+    assert next_resp.status_code == 200, next_resp.text
+    next_data = next_resp.json()
+    assert next_data["question_count"] == 2
+    assert next_data["is_followup"] is False
+    assert next_data["question_type"] == "main"
+    assert any(
+        token in (next_data["current_question"] or "").lower()
+        for token in ("в резюме", "какую роль", "самое сложное техническое решение")
+    )
+
 @pytest.mark.asyncio
 async def test_honest_no_experience_causes_single_reframe_then_moves_on(
     client: AsyncClient, candidate_token: str
@@ -606,8 +669,8 @@ async def test_honest_no_experience_causes_single_reframe_then_moves_on(
     )
     assert first.status_code == 200, first.text
     first_data = first.json()
-    assert first_data["question_count"] == 1
-    assert first_data["is_followup"] is True
+    assert first_data["question_count"] == 2
+    assert first_data["is_followup"] is False
 
     second = await client.post(
         f"/api/v1/interviews/{interview_id}/message",
@@ -621,7 +684,7 @@ async def test_honest_no_experience_causes_single_reframe_then_moves_on(
     )
     assert second.status_code == 200, second.text
     second_data = second.json()
-    assert second_data["question_count"] == 2
+    assert second_data["question_count"] == 3
     assert second_data["is_followup"] is False
 
 
@@ -646,6 +709,14 @@ async def test_resume_claim_verification_branch_triggers_for_weak_answer(
     assert start_resp.status_code == 201, start_resp.text
     interview_id = start_resp.json()["interview_id"]
 
+    intro_answer = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={"message": "Я backend-инженер, строил сервисы и отвечал за production API."},
+    )
+    assert intro_answer.status_code == 200, intro_answer.text
+    assert intro_answer.json()["question_count"] == 2
+
     weak_answer = await client.post(
         f"/api/v1/interviews/{interview_id}/message",
         headers=auth_headers(candidate_token),
@@ -655,7 +726,7 @@ async def test_resume_claim_verification_branch_triggers_for_weak_answer(
     weak_data = weak_answer.json()
     assert weak_data["question_type"] == "claim_verification"
     assert weak_data["is_followup"] is True
-    assert weak_data["question_count"] == 1
+    assert weak_data["question_count"] == 2
     assert any(
         tech in (weak_data["current_question"] or "").lower()
         for tech in ("kafka", "postgresql", "docker")
@@ -720,21 +791,31 @@ async def test_low_relevance_after_claim_verification_closes_topic(
     first = await client.post(
         f"/api/v1/interviews/{interview_id}/message",
         headers=auth_headers(candidate_token),
-        json={"message": "Я использовал PostgreSQL, настраивал индексы и смотрел планы запросов через EXPLAIN ANALYZE."},
+        json={"message": "Я backend-инженер, много работал с production API и data-intensive сервисами."},
     )
     assert first.status_code == 200, first.text
     first_data = first.json()
-    assert first_data["question_type"] in {"verification", "claim_verification", "deep_technical"}
+    assert first_data["question_count"] == 2
+    assert first_data["question_type"] == "main"
 
     second = await client.post(
         f"/api/v1/interviews/{interview_id}/message",
         headers=auth_headers(candidate_token),
-        json={"message": "Мы строили event-driven сервисы на Kafka и использовали outbox pattern."},
+        json={"message": "Я использовал PostgreSQL, настраивал индексы и смотрел планы запросов через EXPLAIN ANALYZE."},
     )
     assert second.status_code == 200, second.text
     second_data = second.json()
-    assert second_data["question_count"] == 2
-    assert second_data["is_followup"] is False
+    assert second_data["question_type"] in {"verification", "claim_verification", "deep_technical"}
+
+    third = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={"message": "Мы строили event-driven сервисы на Kafka и использовали outbox pattern."},
+    )
+    assert third.status_code == 200, third.text
+    third_data = third.json()
+    assert third_data["question_count"] == 3
+    assert third_data["is_followup"] is False
 
 
 @pytest.mark.asyncio

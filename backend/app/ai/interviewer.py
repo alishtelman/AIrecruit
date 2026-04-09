@@ -89,6 +89,7 @@ class InterviewContext:
     verified_skills: list[str] = field(default_factory=list)
     contradiction_flags: list[str] = field(default_factory=list)
     pending_verification: str | None = None  # technology currently being asked about
+    topic_phase: str | None = None
     module_type: str | None = None
     module_title: str | None = None
     module_scenario_id: str | None = None
@@ -635,7 +636,7 @@ def _normalize_question_output(raw: str, ctx: InterviewContext) -> str:
 
 
 def _resume_anchored_first_question(ctx: InterviewContext) -> str:
-    """Deterministic first question anchored to resume context."""
+    """Deterministic first question for self-intro plus resume context."""
     anchor = ctx.resume_anchor
     if ctx.resume_text:
         if not anchor:
@@ -656,22 +657,20 @@ def _resume_anchored_first_question(ctx: InterviewContext) -> str:
     if ctx.language == "en":
         if anchor:
             return _trim_question(
-                f"In your resume you mention '{anchor}'. Walk me through that project: "
-                "your role, one key technical decision, and measurable impact?"
+                f"To start, briefly tell me about yourself, your experience, and how '{anchor}' reflects your background: "
+                "what was your role and what did you own?"
             )
         return (
-            "Based on your resume, walk me through your most recent relevant project: "
-            "your role, one key technical decision, and measurable impact?"
+            "To start, briefly tell me about yourself, your experience, and the kind of work that best represents your background."
         )
 
     if anchor:
         return _trim_question(
-            f"В резюме вы указали «{anchor}». Расскажите про этот проект: "
-            "вашу роль, одно ключевое техническое решение и измеримый результат?"
+            f"Для начала кратко расскажите о себе, своём опыте и о том, как опыт «{anchor}» вас лучше всего характеризует: "
+            "какая у вас была роль и за что вы отвечали?"
         )
     return (
-        "Опираясь на ваше резюме, расскажите про самый свежий релевантный проект: "
-        "вашу роль, одно ключевое техническое решение и измеримый результат?"
+        "Для начала кратко расскажите о себе, своём опыте и о том, какой тип задач лучше всего отражает ваш профессиональный путь."
     )
 
 
@@ -694,6 +693,16 @@ def _resume_anchored_main_question(ctx: InterviewContext) -> str | None:
         )
     return _trim_question(
         f"В резюме у вас указан опыт «{ctx.resume_anchor}». Какое самое сложное техническое решение вы там принимали и почему?"
+    )
+
+
+def _behavioral_closing_question(ctx: InterviewContext) -> str:
+    if ctx.language == "en":
+        return _trim_question(
+            "To close, tell me about a difficult work situation: how you communicated, handled pressure, and influenced the outcome for the team."
+        )
+    return _trim_question(
+        "В завершение расскажите о сложной рабочей ситуации: как вы коммуницировали, справлялись со стрессом и повлияли на итог для команды?"
     )
 
 
@@ -1194,9 +1203,11 @@ class LLMInterviewer:
             system_design_main = _system_design_main_question(ctx)
             if system_design_main:
                 return system_design_main
-        if ctx.question_number == 1 and not ctx.is_followup_mode:
+        if ctx.topic_phase == "intro" and not ctx.is_followup_mode:
             return _resume_anchored_first_question(ctx)
-        if ctx.question_type == "main" and ctx.question_number == 2 and ctx.resume_anchor:
+        if ctx.topic_phase == "behavioral_closing" and ctx.question_type == "main":
+            return _behavioral_closing_question(ctx)
+        if ctx.question_type == "main" and ctx.topic_phase == "resume_followup" and ctx.resume_anchor:
             anchored = _resume_anchored_main_question(ctx)
             if anchored and not _question_is_repeated(anchored, ctx.message_history):
                 return anchored
@@ -1362,7 +1373,11 @@ class MockInterviewer:
                     system_design_main = _system_design_main_question(ctx)
                     if system_design_main:
                         return system_design_main
-                if ctx.question_number <= 2 and ctx.resume_anchor:
+                if ctx.topic_phase == "intro":
+                    return _resume_anchored_first_question(ctx)
+                if ctx.topic_phase == "behavioral_closing":
+                    return _behavioral_closing_question(ctx)
+                if ctx.topic_phase == "resume_followup" and ctx.resume_anchor:
                     anchored = _resume_anchored_main_question(ctx)
                     if anchored:
                         return anchored

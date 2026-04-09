@@ -243,7 +243,12 @@ def get_category_weights(role: str) -> dict[str, float]:
     return weights
 
 
-def build_question_plan(role: str, max_questions: int) -> list[list[str]]:
+def build_question_plan(
+    role: str,
+    max_questions: int,
+    *,
+    structured_flow: bool = True,
+) -> list[list[str]]:
     """
     Map each question slot to 1-2 competency names to target.
 
@@ -255,19 +260,58 @@ def build_question_plan(role: str, max_questions: int) -> list[list[str]]:
 
     plan: list[list[str]] = [[] for _ in range(max_questions)]
 
-    # Phases:
-    # Q1 (intro): highest-weight competency (resume-grounded opener)
-    # Q2 to Q(max-3): technical core competencies
-    # Q(max-2) to Q(max-1): problem_solving + technical_breadth
-    # Q(max): behavioral + closing
+    if not structured_flow:
+        # Legacy ordering for template-guided flows.
+        assigned: set[str] = set()
+
+        plan[0] = [sorted_comps[0].name]
+        assigned.add(sorted_comps[0].name)
+
+        behavioral = [c for c in sorted_comps if c.category == "behavioral" and c.name not in assigned]
+        if behavioral:
+            plan[max_questions - 1] = [behavioral[0].name]
+            assigned.add(behavioral[0].name)
+            if len(behavioral) > 1:
+                plan[max_questions - 1].append(behavioral[1].name)
+                assigned.add(behavioral[1].name)
+
+        ps_and_breadth = [
+            c for c in sorted_comps
+            if c.category in ("problem_solving", "technical_breadth") and c.name not in assigned
+        ]
+        for i, slot_idx in enumerate(range(max(1, max_questions - 3), max_questions - 1)):
+            if i < len(ps_and_breadth):
+                plan[slot_idx].append(ps_and_breadth[i].name)
+                assigned.add(ps_and_breadth[i].name)
+
+        remaining = [c for c in sorted_comps if c.name not in assigned]
+        empty_slots = [i for i in range(1, max_questions) if not plan[i]]
+
+        for i, slot_idx in enumerate(empty_slots):
+            if i < len(remaining):
+                plan[slot_idx].append(remaining[i].name)
+                assigned.add(remaining[i].name)
+
+        still_unassigned = [c for c in sorted_comps if c.name not in assigned]
+        for comp in still_unassigned:
+            min_slot = min(range(1, max_questions), key=lambda s: len(plan[s]))
+            plan[min_slot].append(comp.name)
+
+        return plan
+
+    # Structured flow V2:
+    # Q1: self-intro / experience summary led by communication
+    # Q2: resume-driven clarification
+    # Q3..Q(max-1): technical and problem-solving block
+    # Q(max): behavioral closing
+    communication = [c for c in sorted_comps if c.category == "communication"]
+    intro_competency = communication[0] if communication else sorted_comps[0]
 
     assigned: set[str] = set()
 
-    # Q1: highest weight (intro)
-    plan[0] = [sorted_comps[0].name]
-    assigned.add(sorted_comps[0].name)
+    plan[0] = [intro_competency.name]
+    assigned.add(intro_competency.name)
 
-    # Last question: behavioral competencies
     behavioral = [c for c in sorted_comps if c.category == "behavioral" and c.name not in assigned]
     if behavioral:
         plan[max_questions - 1] = [behavioral[0].name]
@@ -276,15 +320,15 @@ def build_question_plan(role: str, max_questions: int) -> list[list[str]]:
             plan[max_questions - 1].append(behavioral[1].name)
             assigned.add(behavioral[1].name)
 
-    # Q(max-2) and Q(max-1): problem_solving + technical_breadth
-    ps_and_breadth = [c for c in sorted_comps
-                      if c.category in ("problem_solving", "technical_breadth") and c.name not in assigned]
-    for i, slot_idx in enumerate(range(max(1, max_questions - 3), max_questions - 1)):
+    ps_and_breadth = [
+        c for c in sorted_comps
+        if c.category in ("problem_solving", "technical_breadth") and c.name not in assigned
+    ]
+    for i, slot_idx in enumerate(range(max(2, max_questions - 3), max_questions - 1)):
         if i < len(ps_and_breadth):
             plan[slot_idx].append(ps_and_breadth[i].name)
             assigned.add(ps_and_breadth[i].name)
 
-    # Remaining slots Q2..Q(max-4): fill with unassigned competencies by weight
     remaining = [c for c in sorted_comps if c.name not in assigned]
     empty_slots = [i for i in range(1, max_questions) if not plan[i]]
 
@@ -293,23 +337,27 @@ def build_question_plan(role: str, max_questions: int) -> list[list[str]]:
             plan[slot_idx].append(remaining[i].name)
             assigned.add(remaining[i].name)
 
-    # Any unassigned competencies: double up on least-loaded slots
     still_unassigned = [c for c in sorted_comps if c.name not in assigned]
     for comp in still_unassigned:
-        # Find slot with fewest competencies
         min_slot = min(range(1, max_questions), key=lambda s: len(plan[s]))
         plan[min_slot].append(comp.name)
 
     return plan
 
 
-def build_interview_plan(role: str, max_questions: int, resume_profile: dict | None = None) -> list[dict]:
+def build_interview_plan(
+    role: str,
+    max_questions: int,
+    resume_profile: dict | None = None,
+    *,
+    structured_flow: bool = True,
+) -> list[dict]:
     """Return a richer plan for each core interview topic.
 
     Each item includes competency targets plus optional resume anchor and
     verification target derived from the uploaded resume.
     """
-    base_plan = build_question_plan(role, max_questions)
+    base_plan = build_question_plan(role, max_questions, structured_flow=structured_flow)
     anchors = list((resume_profile or {}).get("project_highlights", []))
     verification_targets = list((resume_profile or {}).get("verification_targets", []))
 
@@ -323,6 +371,17 @@ def build_interview_plan(role: str, max_questions: int, resume_profile: dict | N
             "competencies": competencies,
             "resume_anchor": None,
             "verification_target": None,
+            "phase": (
+                "intro"
+                if structured_flow and idx == 0
+                else "resume_followup"
+                if structured_flow and idx == 1
+                else "behavioral_closing"
+                if structured_flow and idx == max_questions - 1
+                else "technical"
+                if structured_flow
+                else None
+            ),
         }
 
         if anchor_idx < len(anchors) and (idx == 0 or idx < max_questions - 1):

@@ -1657,7 +1657,12 @@ async def start_interview(
             max_q = adaptive_max_q
             role_max_cap = adaptive_role_cap
             min_questions_before_early_stop = adaptive_min_questions
-        topic_plan = build_interview_plan(target_role, max_q, resume_profile)
+        topic_plan = build_interview_plan(
+            target_role,
+            max_q,
+            resume_profile,
+            structured_flow=template is None,
+        )
 
     # Create interview — store resume_id snapshot at start time
     interview = Interview(
@@ -1704,6 +1709,7 @@ async def start_interview(
         language=language,
         resume_anchor=topic_plan[0].get("resume_anchor") if topic_plan else None,
         verification_target=topic_plan[0].get("verification_target") if topic_plan else None,
+        topic_phase=topic_plan[0].get("phase") if topic_plan else None,
         candidate_memory=[],
         module_type=normalized_module_type,
         module_title=normalized_module_title,
@@ -1916,6 +1922,7 @@ async def add_candidate_message(
         unverified_techs = new_techs - verified_skills
 
         current_target = topic_plan[current_topic_index] if current_topic_index < len(topic_plan) else {}
+        current_topic_phase = str(current_target.get("phase") or "").strip().lower()
         claim_target = current_target.get("verification_target")
         current_question_text = next(
             (msg.content for msg in reversed(messages) if msg.role == "assistant"),
@@ -2059,6 +2066,23 @@ async def add_candidate_message(
             else:
                 question_type = "main"
                 will_advance = True
+        elif current_topic_phase == "intro":
+            question_type = "main"
+            will_advance = True
+            next_pending_verification = None
+            forced_closure_reason = forced_closure_reason or "intro_completed"
+            saturation_reason = None
+        elif current_topic_phase == "behavioral_closing":
+            if last_question_type != "main":
+                question_type = "main"
+                will_advance = True
+            elif answer_class in {"no_experience_honest", "generic", "evasive"} and can_probe_current_topic:
+                question_type = "followup"
+                will_advance = False
+            else:
+                question_type = "main"
+                will_advance = True
+                next_pending_verification = None
         else:
             can_probe_claim = (
                 bool(claim_target)
@@ -2151,6 +2175,7 @@ async def add_candidate_message(
             resume_anchor = None
             verification_target = None
             diversification_hint = None
+            topic_phase = None
             if topic_plan:
                 current_idx = max(current_topic_index, 0)
                 next_idx = interview.question_count
@@ -2171,6 +2196,7 @@ async def add_candidate_message(
                     competency_targets = target.get("competencies")
                     resume_anchor = target.get("resume_anchor")
                     verification_target = target.get("verification_target")
+                    topic_phase = target.get("phase")
                     module_stage_key = target.get("stage_key")
                     module_stage_title = target.get("stage_title")
                     module_stage_prompt = target.get("stage_prompt")
@@ -2203,6 +2229,7 @@ async def add_candidate_message(
                 verified_skills=sorted(verified_skills),
                 contradiction_flags=contradiction_flags,
                 pending_verification=next_pending_verification,
+                topic_phase=topic_phase,
                 resume_anchor=resume_anchor,
                 verification_target=verification_target,
                 diversification_hint=diversification_hint,

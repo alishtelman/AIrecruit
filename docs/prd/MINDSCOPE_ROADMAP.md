@@ -59,6 +59,13 @@ Scope:
 - behavioral interview module MVP
 - written communication task MVP
 - richer company report UI
+- candidate-facing report roadmap block
+- interview structure V2:
+  - opening self-introduction + experience summary
+  - resume-driven follow-up
+  - technical skill validation block
+  - soft-skill closing block
+- admin controls for LLM providers, prompts, retries, and feature flags
 
 Exit criteria:
 
@@ -66,6 +73,9 @@ Exit criteria:
 - system design has a dedicated flow
 - writing output is stored and scored
 - report UI exposes module sections, confidence, and evidence more clearly
+- candidate report includes a concrete development roadmap
+- interview order is explicit and role-consistent instead of purely adaptive from the first turn
+- admins can tune core LLM/runtime settings without code edits
 
 ## Phase 2: Hands-On Skill Modules
 
@@ -74,15 +84,19 @@ Add real task environments for technical evaluation.
 
 Scope:
 
+- coding task / code review module MVP
 - SQL sandbox
 - data analysis challenge
 - DevOps simulation or IaC lab
+- proctoring expansion with speech monitoring / speech-anomaly signals
 
 Exit criteria:
 
 - candidates complete at least one real task in-browser
 - outputs are automatically persisted and scored
 - recruiter can inspect raw task evidence
+- platform supports at least one code-based technical assignment
+- proctoring can correlate suspicious speech patterns with other session signals
 
 ## Phase 3: Judgment And Scenario Modules
 
@@ -165,3 +179,5 @@ Recommended non-goals for MVP:
 - if module orchestration is skipped, later modules will be bolted onto the interview flow and become hard to maintain
 - if psychometrics start before evidence capture stabilizes, the scoring layer will be fragile
 - if hands-on labs are attempted before Phase 0, product complexity will spike too early
+- if speech monitoring is added without clear consent/privacy handling, it will create legal and product risk
+- if interview structure stays fully implicit, recruiter expectations and candidate experience will remain inconsistent
