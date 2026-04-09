@@ -146,6 +146,10 @@ class BehavioralSignalsRequest(BaseModel):
     paste_count: int = 0
     tab_switches: int = 0
     face_away_pct: float | None = None
+    speech_activity_pct: float | None = None
+    silence_pct: float | None = None
+    long_silence_count: int = 0
+    speech_segment_count: int = 0
     events: list[dict[str, Any]] = []
     policy_mode: Literal["observe_only", "strict_flagging"] | None = None
 
@@ -196,6 +200,10 @@ class ProctoringTimelineResponse(BaseModel):
     risk_level: Literal["low", "medium", "high"] = "low"
     total_events: int = 0
     high_severity_count: int = 0
+    speech_activity_pct: float | None = None
+    silence_pct: float | None = None
+    long_silence_count: int = 0
+    speech_segment_count: int = 0
     events: list[ProctoringTimelineEventResponse] = []
 
 

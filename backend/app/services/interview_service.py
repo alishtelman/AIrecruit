@@ -991,6 +991,10 @@ def _synthesize_events_from_counters(signals: dict[str, Any]) -> list[dict[str, 
     tab_switches = _safe_int(signals.get("tab_switches"), 0)
     paste_count = _safe_int(signals.get("paste_count"), 0)
     face_away_pct = signals.get("face_away_pct")
+    speech_activity_pct = signals.get("speech_activity_pct")
+    silence_pct = signals.get("silence_pct")
+    long_silence_count = _safe_int(signals.get("long_silence_count"), 0)
+    speech_segment_count = _safe_int(signals.get("speech_segment_count"), 0)
     response_times = signals.get("response_times")
 
     if tab_switches > 0:
@@ -1026,6 +1030,35 @@ def _synthesize_events_from_counters(signals: dict[str, Any]) -> list[dict[str, 
             }
         )
 
+    if isinstance(speech_activity_pct, (int, float)) and speech_activity_pct < 0.08:
+        events.append(
+            {
+                "event_type": "speech_activity_low",
+                "severity": "medium" if speech_activity_pct < 0.04 else "info",
+                "occurred_at": None,
+                "source": "client",
+                "details": {
+                    "speech_activity_pct": round(float(speech_activity_pct), 3),
+                    "silence_pct": round(_safe_float(silence_pct, 0.0), 3) if silence_pct is not None else None,
+                    "speech_segment_count": speech_segment_count,
+                },
+            }
+        )
+
+    if long_silence_count > 0:
+        events.append(
+            {
+                "event_type": "long_silence",
+                "severity": "medium" if long_silence_count >= 2 else "info",
+                "occurred_at": None,
+                "source": "client",
+                "details": {
+                    "count": long_silence_count,
+                    "silence_pct": round(_safe_float(silence_pct, 0.0), 3) if silence_pct is not None else None,
+                },
+            }
+        )
+
     if isinstance(response_times, list):
         suspicious_fast = [item for item in response_times if isinstance(item, dict) and float(item.get("seconds") or 0) <= 1.5]
         if suspicious_fast:
@@ -1053,12 +1086,15 @@ def normalize_behavioral_signals(signals: dict | None) -> dict[str, Any]:
             if isinstance(item, dict):
                 normalized_events.append(_normalize_event(item, index=idx, policy_mode=policy_mode))
 
-    if not normalized_events:
-        synthesized = _synthesize_events_from_counters(payload)
-        normalized_events = [
-            _normalize_event(item, index=idx, policy_mode=policy_mode)
-            for idx, item in enumerate(synthesized)
-        ]
+    synthesized = _synthesize_events_from_counters(payload)
+    existing_types = {str(item.get("event_type") or "") for item in normalized_events}
+    for idx, item in enumerate(synthesized):
+        normalized = _normalize_event(item, index=len(normalized_events) + idx, policy_mode=policy_mode)
+        event_type = str(normalized.get("event_type") or "")
+        if event_type in existing_types:
+            continue
+        normalized_events.append(normalized)
+        existing_types.add(event_type)
 
     payload["policy_mode"] = policy_mode
     payload["events"] = normalized_events
@@ -1071,6 +1107,10 @@ def get_proctoring_timeline_payload(signals: dict | None) -> dict[str, Any]:
     events = list(normalized.get("events", []))
     high_count = sum(1 for event in events if event.get("severity") == "high")
     medium_count = sum(1 for event in events if event.get("severity") == "medium")
+    speech_activity_pct = normalized.get("speech_activity_pct")
+    silence_pct = normalized.get("silence_pct")
+    long_silence_count = _safe_int(normalized.get("long_silence_count"), 0)
+    speech_segment_count = _safe_int(normalized.get("speech_segment_count"), 0)
 
     if high_count > 0:
         risk_level = "high"
@@ -1084,6 +1124,10 @@ def get_proctoring_timeline_payload(signals: dict | None) -> dict[str, Any]:
         "risk_level": risk_level,
         "total_events": len(events),
         "high_severity_count": high_count,
+        "speech_activity_pct": round(_safe_float(speech_activity_pct), 3) if speech_activity_pct is not None else None,
+        "silence_pct": round(_safe_float(silence_pct), 3) if silence_pct is not None else None,
+        "long_silence_count": long_silence_count,
+        "speech_segment_count": speech_segment_count,
         "events": events,
     }
 
@@ -3344,6 +3388,10 @@ def build_proctoring_timeline_response(
         risk_level=payload["risk_level"],
         total_events=payload["total_events"],
         high_severity_count=payload["high_severity_count"],
+        speech_activity_pct=payload["speech_activity_pct"],
+        silence_pct=payload["silence_pct"],
+        long_silence_count=payload["long_silence_count"],
+        speech_segment_count=payload["speech_segment_count"],
         events=payload["events"],
     )
 

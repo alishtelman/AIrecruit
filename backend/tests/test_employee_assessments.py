@@ -745,6 +745,10 @@ async def test_company_report_proctoring_timeline_returns_company_scoped_events(
             "paste_count": 1,
             "tab_switches": 2,
             "face_away_pct": 0.41,
+            "speech_activity_pct": 0.04,
+            "silence_pct": 0.96,
+            "long_silence_count": 2,
+            "speech_segment_count": 1,
             "policy_mode": "strict_flagging",
             "events": [
                 {
@@ -775,8 +779,75 @@ async def test_company_report_proctoring_timeline_returns_company_scoped_events(
     assert data["report_id"] == report_id
     assert data["policy_mode"] == "strict_flagging"
     assert data["risk_level"] in {"medium", "high"}
-    assert data["total_events"] >= 2
+    assert data["speech_activity_pct"] == 0.04
+    assert data["silence_pct"] == 0.96
+    assert data["long_silence_count"] == 2
+    assert data["speech_segment_count"] == 1
+    assert data["total_events"] >= 4
     assert any(event["event_type"] == "tab_switch" for event in data["events"])
+    assert any(event["event_type"] == "speech_activity_low" for event in data["events"])
+    assert any(event["event_type"] == "long_silence" for event in data["events"])
+
+
+@pytest.mark.asyncio
+async def test_company_report_cheat_risk_includes_speech_signal_patterns(
+    client: AsyncClient,
+    company_token: str,
+):
+    employee_email = f"speechrisk_{uuid.uuid4().hex[:8]}@example.com"
+    assessment = await _create_assessment(client, company_token, employee_email, "Speech Risk Candidate")
+    candidate_token = await _register_candidate(client, employee_email, "Speech Risk Candidate")
+    await _upload_resume(client, candidate_token)
+
+    start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert start_resp.status_code == 200, start_resp.text
+    interview_id = start_resp.json()["interview_id"]
+
+    await _answer_all_questions(client, candidate_token, interview_id)
+
+    submit_signals = await client.post(
+        f"/api/v1/interviews/{interview_id}/signals",
+        headers=auth_headers(candidate_token),
+        json={
+            "response_times": [{"q": 1, "seconds": 6.5}, {"q": 2, "seconds": 7.1}],
+            "paste_count": 2,
+            "tab_switches": 2,
+            "speech_activity_pct": 0.03,
+            "silence_pct": 0.97,
+            "long_silence_count": 2,
+            "speech_segment_count": 1,
+            "policy_mode": "strict_flagging",
+        },
+    )
+    assert submit_signals.status_code == 204, submit_signals.text
+
+    finish_resp = await client.post(
+        f"/api/v1/interviews/{interview_id}/finish",
+        headers=auth_headers(candidate_token),
+    )
+    assert finish_resp.status_code == 200, finish_resp.text
+    finish_data = finish_resp.json()
+    report_id = finish_data.get("report_id")
+    if not report_id:
+        report_id = await _wait_for_report_id(client, candidate_token, interview_id)
+
+    company_report_resp = await client.get(
+        f"/api/v1/company/reports/{report_id}",
+        headers=auth_headers(company_token),
+    )
+    assert company_report_resp.status_code == 200, company_report_resp.text
+    company_report = company_report_resp.json()
+    assert company_report["cheat_risk_score"] is not None
+    assert company_report["cheat_risk_score"] >= 0.4
+    assert company_report["cheat_flags"]
+    assert any(
+        "speech" in flag.lower() or "silence" in flag.lower()
+        for flag in company_report["cheat_flags"]
+    )
 
 
 @pytest.mark.asyncio

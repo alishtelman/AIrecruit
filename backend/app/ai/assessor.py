@@ -2047,6 +2047,10 @@ def _compute_cheat_risk(
         paste_count: int = signals.get("paste_count", 0)
         tab_switches: int = signals.get("tab_switches", 0)
         face_away_pct: float | None = signals.get("face_away_pct")
+        speech_activity_pct: float | None = signals.get("speech_activity_pct")
+        silence_pct: float | None = signals.get("silence_pct")
+        long_silence_count: int = _to_int(signals.get("long_silence_count"), 0)
+        speech_segment_count: int = _to_int(signals.get("speech_segment_count"), 0)
         response_times: list[dict] = signals.get("response_times", [])
 
         if paste_count >= 3:
@@ -2076,6 +2080,27 @@ def _compute_cheat_risk(
             if len(fast) >= 2:
                 flags.append(f"{len(fast)} answers submitted under 10 seconds with paste activity")
                 score += 0.2
+
+        if speech_activity_pct is not None and _to_float(speech_activity_pct) <= 0.05 and paste_count >= 1:
+            flags.append(
+                f"Low speech activity ({int(_to_float(speech_activity_pct) * 100)}%) with paste activity"
+            )
+            score += 0.1
+
+        if long_silence_count >= 2 and tab_switches >= 2:
+            flags.append(
+                f"Long silence periods ({long_silence_count}) with tab/window switching"
+            )
+            score += 0.1
+
+        if (
+            silence_pct is not None
+            and _to_float(silence_pct) >= 0.9
+            and speech_segment_count <= 1
+            and paste_count >= 2
+        ):
+            flags.append("Mostly silent response capture with repeated paste activity")
+            score += 0.1
 
     # ── AI-generated text detection (from Pass 1 per-question analysis) ───────
     if per_question_analysis:

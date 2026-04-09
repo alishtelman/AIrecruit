@@ -10,6 +10,7 @@ import { useTTS } from "@/hooks/useTTS";
 import { useMediaRecorder } from "@/hooks/useMediaRecorder";
 import { useVoiceInput } from "@/hooks/useVoiceInput";
 import { useFaceDetection } from "@/hooks/useFaceDetection";
+import { useSpeechActivity } from "@/hooks/useSpeechActivity";
 import { candidateApi, interviewApi } from "@/lib/api";
 import type {
   InterviewDetail,
@@ -81,6 +82,7 @@ export default function InterviewPage() {
   const currentQNumRef = useRef(1);
   const proctoringEventsRef = useRef<ProctoringEvent[]>([]);
   const faceAwayLoggedRef = useRef(false);
+  const loggedLongSilenceCountRef = useRef(0);
 
   // Resume panel
   const [resumeText, setResumeText] = useState<string | null>(null);
@@ -99,10 +101,19 @@ export default function InterviewPage() {
     stopRecording,
     getBlob,
     clearRecording,
+    getWebcamStream,
     errorMessage: recordingError,
     errorCode: recordingErrorCode,
   } = useMediaRecorder();
   const { faceAwayPct, isModelLoaded: faceModelLoaded } = useFaceDetection(previewRef, isRecording);
+  const {
+    speechActivityPct,
+    silencePct,
+    longSilenceCount,
+    speechSegmentCount,
+    isSpeechActive,
+    isMonitoringSupported: speechMonitoringSupported,
+  } = useSpeechActivity(getWebcamStream, isRecording);
   const { state: voiceState, start: startVoice, stop: stopVoice, errorMessage: voiceError, clearError: clearVoiceError } = useVoiceInput({
     onTranscript: (text) => {
       setLatestTranscript(text);
@@ -276,6 +287,28 @@ export default function InterviewPage() {
       faceAwayLoggedRef.current = false;
     }
   }, [faceAwayPct]);
+
+  useEffect(() => {
+    if (!isRecording) {
+      loggedLongSilenceCountRef.current = 0;
+    }
+  }, [isRecording]);
+
+  useEffect(() => {
+    if (longSilenceCount <= loggedLongSilenceCountRef.current) return;
+    loggedLongSilenceCountRef.current = longSilenceCount;
+    trackProctoringEvent({
+      event_type: "long_silence",
+      severity:
+        PROCTORING_POLICY_MODE === "strict_flagging" && longSilenceCount >= 2
+          ? "medium"
+          : "info",
+      details: {
+        count: longSilenceCount,
+        silence_pct: silencePct,
+      },
+    });
+  }, [longSilenceCount, silencePct]);
 
   function getReportFailureMessage(status: InterviewReportStatusResponse): string {
     const reason =
@@ -494,6 +527,10 @@ export default function InterviewPage() {
         paste_count: pasteCountRef.current,
         tab_switches: tabSwitchCountRef.current,
         face_away_pct: faceAwayPct,
+        speech_activity_pct: speechActivityPct,
+        silence_pct: silencePct,
+        long_silence_count: longSilenceCount,
+        speech_segment_count: speechSegmentCount,
         events: proctoringEventsRef.current,
         policy_mode: PROCTORING_POLICY_MODE,
       }).catch(() => null);
@@ -688,6 +725,19 @@ export default function InterviewPage() {
                   })}
                 >
                   {faceAwayPct !== null && faceAwayPct > 0.3 ? t("lookAtCamera") : t("face")}
+                </span>
+              )}
+              {speechMonitoringSupported && (
+                <span
+                  className={`text-xs font-medium ${
+                    isSpeechActive ? "text-emerald-400" : "text-slate-400"
+                  }`}
+                  title={t("tooltips.speechMonitoring", {
+                    activity:
+                      speechActivityPct !== null ? `${Math.round(speechActivityPct * 100)}%` : t("tooltips.detecting"),
+                  })}
+                >
+                  {isSpeechActive ? t("speechDetected") : t("speechMonitoring")}
                 </span>
               )}
             </span>

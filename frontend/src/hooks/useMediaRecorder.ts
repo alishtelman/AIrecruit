@@ -298,6 +298,10 @@ export function useMediaRecorder() {
     chunksRef.current = [];
   }, []);
 
+  const getWebcamStream = useCallback((): MediaStream | null => {
+    return webcamStreamRef.current;
+  }, []);
+
   useEffect(() => {
     return () => {
       cleanupStreams();
@@ -330,6 +334,7 @@ export function useMediaRecorder() {
     stopRecording,
     getBlob,
     clearRecording,
+    getWebcamStream,
     errorMessage,
     errorCode,
   };

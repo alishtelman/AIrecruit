@@ -208,6 +208,26 @@ export default function CompanyReportPage() {
                 <span className="rounded-full border border-slate-600 px-2.5 py-1 text-slate-300">
                   {t("proctoringHighSeverity")}: {timeline.high_severity_count}
                 </span>
+                {timeline.speech_activity_pct != null && (
+                  <span className="rounded-full border border-slate-600 px-2.5 py-1 text-slate-300">
+                    {t("proctoringSpeechActivity")}: {Math.round(timeline.speech_activity_pct * 100)}%
+                  </span>
+                )}
+                {timeline.silence_pct != null && (
+                  <span className="rounded-full border border-slate-600 px-2.5 py-1 text-slate-300">
+                    {t("proctoringSilence")}: {Math.round(timeline.silence_pct * 100)}%
+                  </span>
+                )}
+                {timeline.long_silence_count > 0 && (
+                  <span className="rounded-full border border-slate-600 px-2.5 py-1 text-slate-300">
+                    {t("proctoringLongSilence")}: {timeline.long_silence_count}
+                  </span>
+                )}
+                {timeline.speech_segment_count > 0 && (
+                  <span className="rounded-full border border-slate-600 px-2.5 py-1 text-slate-300">
+                    {t("proctoringSpeechSegments")}: {timeline.speech_segment_count}
+                  </span>
+                )}
               </div>
 
               {timeline.events.length === 0 ? (
@@ -568,6 +588,7 @@ function TimelineEventRow({ event }: { event: ProctoringTimelineEvent }) {
   const severityStyle = SEVERITY_COLORS[event.severity] ?? SEVERITY_COLORS.low;
   const eventLabel = event.event_type.replace(/_/g, " ");
   const timeLabel = event.occurred_at ? new Date(event.occurred_at).toLocaleTimeString() : "—";
+  const detailEntries = formatProctoringEventDetails(event.details);
 
   return (
     <div className={`rounded-lg border px-3 py-2 text-sm ${severityStyle}`}>
@@ -580,8 +601,29 @@ function TimelineEventRow({ event }: { event: ProctoringTimelineEvent }) {
       <div className="mt-1 text-xs opacity-80">
         {t("proctoringEventSource")}: {event.source || "client"}
       </div>
+      {detailEntries.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2 text-[11px] opacity-80">
+          {detailEntries.map((item) => (
+            <span key={item} className="rounded-full border border-current/20 px-2 py-0.5">
+              {item}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
+}
+
+function formatProctoringEventDetails(details: Record<string, unknown>): string[] {
+  return Object.entries(details)
+    .map(([key, value]) => {
+      if (value == null) return null;
+      if (typeof value === "number" && key.endsWith("_pct")) {
+        return `${key.replace(/_/g, " ")}: ${Math.round(value * 100)}%`;
+      }
+      return `${key.replace(/_/g, " ")}: ${String(value)}`;
+    })
+    .filter((item): item is string => Boolean(item));
 }
 
 function QuestionAccordion({ qa, expanded, onToggle }: { qa: QuestionAnalysis; expanded: boolean; onToggle: () => void }) {

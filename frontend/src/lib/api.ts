@@ -420,6 +420,10 @@ export const interviewApi = {
       paste_count: number;
       tab_switches: number;
       face_away_pct: number | null;
+      speech_activity_pct?: number | null;
+      silence_pct?: number | null;
+      long_silence_count?: number;
+      speech_segment_count?: number;
       events?: { event_type: string; severity?: "info" | "medium" | "high"; occurred_at?: string; source?: string; details?: Record<string, unknown> }[];
       policy_mode?: "observe_only" | "strict_flagging";
     },

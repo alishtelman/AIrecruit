@@ -399,6 +399,10 @@ export interface ProctoringTimeline {
   risk_level: "low" | "medium" | "high";
   total_events: number;
   high_severity_count: number;
+  speech_activity_pct: number | null;
+  silence_pct: number | null;
+  long_silence_count: number;
+  speech_segment_count: number;
   events: ProctoringTimelineEvent[];
 }
 
