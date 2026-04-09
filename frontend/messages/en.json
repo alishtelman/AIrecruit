@@ -418,6 +418,46 @@
       "minLength": "New password must be at least 8 characters",
       "failed": "Failed"
     },
+    "ai": {
+      "title": "AI workspace controls",
+      "subtitle": "Review the active runtime stack and set workspace preferences for future interviews and reports.",
+      "loading": "Loading AI settings...",
+      "success": "AI workspace settings saved.",
+      "saving": "Saving AI settings...",
+      "submit": "Save AI settings",
+      "readonly": "Only the company admin can edit AI workspace controls.",
+      "fields": {
+        "proctoringPolicy": "Proctoring policy",
+        "interviewerModel": "Interviewer model preference",
+        "assessorModel": "Assessor model preference"
+      },
+      "policy": {
+        "observeOnly": "Observe only",
+        "strictFlagging": "Strict flagging"
+      },
+      "placeholders": {
+        "model": "llama-3.3-70b-versatile"
+      },
+      "hints": {
+        "proctoringPolicy": "This policy is applied immediately to new company assessment interviews when client signals are normalized.",
+        "interviewerModel": "Stored as a workspace preference for model-aware interview runtimes.",
+        "assessorModel": "Stored as a workspace preference for model-aware report scoring runtimes."
+      },
+      "runtime": {
+        "interviewer": "Interviewer runtime",
+        "assessor": "Assessor runtime",
+        "tts": "Voice runtime chain",
+        "mock": "Mock AI fallback",
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "appliedNote": "Today this panel actively controls proctoring policy for new company assessment interviews. Model preferences are stored now and can be wired into later module runtimes without losing admin intent."
+      },
+      "errors": {
+        "loadFailed": "Failed to load AI settings",
+        "saveFailed": "Failed to save AI settings",
+        "adminOnly": "Only the company admin can manage AI settings"
+      }
+    },
     "roles": {
       "admin": "Administrator",
       "recruiter": "Recruiter",

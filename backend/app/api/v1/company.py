@@ -16,6 +16,8 @@ from app.schemas.company import (
     AnalyticsOverviewResponse,
     AnalyticsSalaryResponse,
     CandidateActivityResponse,
+    CompanyAISettingsResponse,
+    CompanyAISettingsUpdateRequest,
     CandidateDetailResponse,
     CandidateListItemResponse,
     CandidateNoteCreateRequest,
@@ -36,6 +38,10 @@ from app.services.company_service import (
     get_company_report,
     get_salary_analytics,
     list_verified_candidates,
+)
+from app.services.company_settings_service import (
+    get_company_ai_settings_response,
+    update_company_ai_settings,
 )
 from app.services.candidate_access_service import (
     create_share_link_access_request,
@@ -383,6 +389,30 @@ async def company_analytics_salary(
 ):
     _, company = user_and_company
     return await get_salary_analytics(db, company.id, role=role, shortlist_id=shortlist_id)
+
+
+@router.get("/settings/ai", response_model=CompanyAISettingsResponse)
+async def get_company_ai_settings(
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    _, company = user_and_company
+    return get_company_ai_settings_response(company)
+
+
+@router.put("/settings/ai", response_model=CompanyAISettingsResponse)
+async def put_company_ai_settings(
+    body: CompanyAISettingsUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    context: tuple[User, Company, str] = Depends(get_current_company_recruiter),
+):
+    _, company, role = context
+    if role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the company admin can manage AI settings")
+    return await update_company_ai_settings(
+        db,
+        company=company,
+        updates=body.model_dump(exclude_unset=True),
+    )
 
 
 # ── Team Members ───────────────────────────────────────────────────────────────

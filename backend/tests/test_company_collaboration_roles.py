@@ -79,6 +79,46 @@ async def _invite_and_login_member(
 
 
 @pytest.mark.asyncio
+async def test_company_ai_settings_are_admin_managed(
+    client: AsyncClient,
+    company_token: str,
+):
+    initial = await client.get(
+        "/api/v1/company/settings/ai",
+        headers=auth_headers(company_token),
+    )
+    assert initial.status_code == 200, initial.text
+    initial_data = initial.json()
+    assert initial_data["proctoring_policy_mode"] in {"observe_only", "strict_flagging"}
+    assert "proctoring_policy_mode" in initial_data["runtime_applied_fields"]
+
+    updated = await client.put(
+        "/api/v1/company/settings/ai",
+        headers=auth_headers(company_token),
+        json={
+            "proctoring_policy_mode": "strict_flagging",
+            "interviewer_model_preference": "llama-3.3-70b-versatile",
+            "assessor_model_preference": "llama-3.3-70b-versatile",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    data = updated.json()
+    assert data["proctoring_policy_mode"] == "strict_flagging"
+    assert data["interviewer_model_preference"] == "llama-3.3-70b-versatile"
+    assert data["assessor_model_preference"] == "llama-3.3-70b-versatile"
+    assert "interviewer_model_preference" in data["stored_preference_fields"]
+    assert "assessor_model_preference" in data["stored_preference_fields"]
+
+    _viewer_email, viewer_token = await _invite_and_login_member(client, company_token, "viewer")
+    viewer_update = await client.put(
+        "/api/v1/company/settings/ai",
+        headers=auth_headers(viewer_token),
+        json={"proctoring_policy_mode": "observe_only"},
+    )
+    assert viewer_update.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_recruiter_and_viewer_roles_are_enforced(
     client: AsyncClient,
     company_token: str,

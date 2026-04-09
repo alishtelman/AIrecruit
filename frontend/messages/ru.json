@@ -418,6 +418,46 @@
       "minLength": "Новый пароль должен быть не короче 8 символов",
       "failed": "Не удалось выполнить действие"
     },
+    "ai": {
+      "title": "AI и runtime-настройки",
+      "subtitle": "Просматривайте текущий runtime stack и задавайте workspace preferences для следующих интервью и отчётов.",
+      "loading": "Загружаем AI-настройки...",
+      "success": "AI-настройки компании сохранены.",
+      "saving": "Сохраняем AI-настройки...",
+      "submit": "Сохранить AI-настройки",
+      "readonly": "Редактировать AI-настройки может только администратор компании.",
+      "fields": {
+        "proctoringPolicy": "Политика прокторинга",
+        "interviewerModel": "Предпочтительная модель интервьюера",
+        "assessorModel": "Предпочтительная модель ассессора"
+      },
+      "policy": {
+        "observeOnly": "Только наблюдение",
+        "strictFlagging": "Строгая флагизация"
+      },
+      "placeholders": {
+        "model": "llama-3.3-70b-versatile"
+      },
+      "hints": {
+        "proctoringPolicy": "Эта политика применяется сразу для новых company assessment interviews при нормализации клиентских сигналов.",
+        "interviewerModel": "Сохраняется как workspace preference для model-aware runtime интервью.",
+        "assessorModel": "Сохраняется как workspace preference для model-aware runtime скоринга и отчётов."
+      },
+      "runtime": {
+        "interviewer": "Runtime интервьюера",
+        "assessor": "Runtime ассессора",
+        "tts": "Цепочка voice runtime",
+        "mock": "Резервный Mock AI",
+        "enabled": "Включён",
+        "disabled": "Выключен",
+        "appliedNote": "Сейчас эта панель реально управляет политикой прокторинга для новых company assessment interviews. Model preferences уже сохраняются и могут быть подключены к следующим module runtime без потери намерения администратора."
+      },
+      "errors": {
+        "loadFailed": "Не удалось загрузить AI-настройки",
+        "saveFailed": "Не удалось сохранить AI-настройки",
+        "adminOnly": "Только администратор компании может управлять AI-настройками"
+      }
+    },
     "roles": {
       "admin": "Администратор",
       "recruiter": "Рекрутер",

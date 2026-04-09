@@ -15,6 +15,7 @@ import type {
   CandidateWithUser,
   CompanyShortlist,
   CompanyAssessment,
+  CompanyAISettings,
   CompanyMember,
   CompanyRegisterRequest,
   CompanyRegisterResponse,
@@ -165,6 +166,19 @@ export const companyApi = {
 
   listMembers: () =>
     request<CompanyMember[]>("/api/v1/company/members"),
+
+  getAISettings: () =>
+    request<CompanyAISettings>("/api/v1/company/settings/ai"),
+
+  updateAISettings: (data: {
+    proctoring_policy_mode?: "observe_only" | "strict_flagging" | null;
+    interviewer_model_preference?: string | null;
+    assessor_model_preference?: string | null;
+  }) =>
+    request<CompanyAISettings>("/api/v1/company/settings/ai", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
 
   inviteMember: (email: string) =>
     request<{ member: CompanyMember; temp_password: string | null }>("/api/v1/company/members/invite", {

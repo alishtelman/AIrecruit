@@ -33,6 +33,49 @@ class CompanyRegisterResponse(BaseModel):
     company_name: str
 
 
+class CompanyAISettingsUpdateRequest(BaseModel):
+    proctoring_policy_mode: str | None = None
+    interviewer_model_preference: str | None = None
+    assessor_model_preference: str | None = None
+
+    @field_validator("proctoring_policy_mode")
+    @classmethod
+    def normalize_proctoring_policy_mode(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        normalized = v.strip().lower()
+        if normalized not in {"observe_only", "strict_flagging"}:
+            raise ValueError("Unsupported proctoring_policy_mode")
+        return normalized
+
+    @field_validator("interviewer_model_preference", "assessor_model_preference")
+    @classmethod
+    def normalize_model_preference(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        normalized = v.strip()
+        if not normalized:
+            return None
+        if len(normalized) > 120:
+            raise ValueError("Model preference must be 120 characters or fewer")
+        return normalized
+
+
+class CompanyAISettingsResponse(BaseModel):
+    proctoring_policy_mode: str
+    interviewer_provider: str
+    interviewer_runtime_model: str
+    interviewer_model_preference: str | None = None
+    assessor_provider: str
+    assessor_runtime_model: str
+    assessor_model_preference: str | None = None
+    tts_provider: str
+    tts_fallback_provider: str
+    mock_ai_available: bool = False
+    runtime_applied_fields: list[str] = Field(default_factory=list)
+    stored_preference_fields: list[str] = Field(default_factory=list)
+
+
 class ShortlistMembershipResponse(BaseModel):
     shortlist_id: uuid.UUID
     name: str

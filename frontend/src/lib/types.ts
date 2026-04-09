@@ -80,6 +80,21 @@ export interface CompanyMember {
   created_at: string;
 }
 
+export interface CompanyAISettings {
+  proctoring_policy_mode: "observe_only" | "strict_flagging";
+  interviewer_provider: string;
+  interviewer_runtime_model: string;
+  interviewer_model_preference: string | null;
+  assessor_provider: string;
+  assessor_runtime_model: string;
+  assessor_model_preference: string | null;
+  tts_provider: string;
+  tts_fallback_provider: string;
+  mock_ai_available: boolean;
+  runtime_applied_fields: string[];
+  stored_preference_fields: string[];
+}
+
 export interface CandidateNote {
   note_id: string;
   body: string;

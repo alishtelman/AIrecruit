@@ -17,6 +17,7 @@ from app.models.company_assessment import CompanyAssessment
 from app.models.interview import Interview
 from app.models.report import AssessmentReport
 from app.models.template import InterviewTemplate
+from app.services.company_settings_service import get_company_ai_settings_response
 
 _ACTIVE_INVITE_STATUSES = {"pending", "opened"}
 _DEFAULT_ASSESSMENT_MODULE_TYPE = "adaptive_interview"
@@ -504,6 +505,7 @@ async def link_interview_to_assessment(
     module_title = str(current_module.get("title")) if current_module else _module_title(module_type)
     module_config = current_module.get("config") if current_module and isinstance(current_module.get("config"), dict) else {}
     template_id = assessment.template_id if module_type == _DEFAULT_ASSESSMENT_MODULE_TYPE else None
+    workspace_ai_settings = get_company_ai_settings_response(assessment.company)
 
     start_response = await start_interview(
         db,
@@ -514,6 +516,7 @@ async def link_interview_to_assessment(
         module_type=module_type,
         module_title=module_title,
         module_config=module_config,
+        workspace_ai_settings=workspace_ai_settings,
     )
     interview = await db.scalar(select(Interview).where(Interview.id == start_response.interview_id))
     if interview is None:

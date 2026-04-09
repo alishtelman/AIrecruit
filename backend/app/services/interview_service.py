@@ -1607,6 +1607,7 @@ async def start_interview(
     module_type: str | None = None,
     module_title: str | None = None,
     module_config: dict[str, Any] | None = None,
+    workspace_ai_settings: dict[str, Any] | None = None,
 ) -> StartInterviewResponse:
     # Guard: active resume required
     active_resume = await db.scalar(
@@ -1628,6 +1629,7 @@ async def start_interview(
     normalized_module_type = str(module_type or "").strip().lower() or None
     normalized_module_title = str(module_title or "").strip() or None
     safe_module_config = module_config if isinstance(module_config, dict) else {}
+    safe_workspace_ai_settings = workspace_ai_settings if isinstance(workspace_ai_settings, dict) else {}
 
     resume_profile = preprocess_resume(active_resume.raw_text, target_role)
     module_context: dict[str, Any] | None = None
@@ -1765,6 +1767,12 @@ async def start_interview(
         "adaptive_role_max_cap": role_max_cap,
         "adaptive_last_decision": None,
     }
+    if safe_workspace_ai_settings:
+        initial_state["workspace_ai_settings"] = {
+            "proctoring_policy_mode": safe_workspace_ai_settings.get("proctoring_policy_mode"),
+            "interviewer_model_preference": safe_workspace_ai_settings.get("interviewer_model_preference"),
+            "assessor_model_preference": safe_workspace_ai_settings.get("assessor_model_preference"),
+        }
     if normalized_module_type:
         initial_state.update(
             {
@@ -3135,7 +3143,15 @@ async def save_behavioral_signals(
 ) -> None:
     """Persist behavioral signals captured during the interview."""
     interview = await _get_interview(db, interview_id, candidate_id)
-    interview.behavioral_signals = normalize_behavioral_signals(signals)
+    payload = dict(signals or {})
+    workspace_ai_settings = (
+        interview.interview_state.get("workspace_ai_settings")
+        if isinstance(interview.interview_state, dict)
+        else None
+    )
+    if payload.get("policy_mode") in (None, "") and isinstance(workspace_ai_settings, dict):
+        payload["policy_mode"] = workspace_ai_settings.get("proctoring_policy_mode")
+    interview.behavioral_signals = normalize_behavioral_signals(payload)
     await db.commit()
 
 
