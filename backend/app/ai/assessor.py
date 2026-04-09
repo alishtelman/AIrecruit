@@ -1238,6 +1238,70 @@ _CODING_TASK_CODE_HINTS = (
     "```",
 )
 
+_CODING_TASK_DEFAULT_COVERAGE_CHECKS = (
+    {
+        "check_key": "core_state_logic",
+        "title_en": "Defines explicit state or data-flow logic",
+        "title_ru": "Определяет явную state/data-flow логику",
+        "stage_key": "implementation",
+        "patterns": ("dict", "map", "queue", "state", "class", "cache", "return"),
+        "required_hits": 2,
+    },
+    {
+        "check_key": "decision_branching",
+        "title_en": "Implements clear decision branches",
+        "title_ru": "Реализует явные ветки принятия решения",
+        "stage_key": "implementation",
+        "patterns": ("if ", "else", "invalid", "error", "allow", "reject", "return false"),
+        "required_hits": 2,
+    },
+    {
+        "check_key": "test_edge_cases",
+        "title_en": "Covers tests and edge cases",
+        "title_ru": "Покрывает тесты и edge cases",
+        "stage_key": "review",
+        "patterns": ("test", "assert", "edge", "case", "boundary", "coverage", "complexity"),
+        "required_hits": 2,
+    },
+)
+
+_CODING_TASK_SCENARIO_COVERAGE_CHECKS = {
+    "rate_limiter_window_counter": (
+        {
+            "check_key": "input_validation",
+            "title_en": "Handles input and timestamp validation",
+            "title_ru": "Обрабатывает валидацию входов и timestamp",
+            "stage_key": "task_brief",
+            "patterns": ("validate", "user_id", "timestamp", "invalid", "empty"),
+            "required_hits": 2,
+        },
+        {
+            "check_key": "expired_window_cleanup",
+            "title_en": "Evicts expired entries from the active window",
+            "title_ru": "Удаляет истёкшие элементы из активного окна",
+            "stage_key": "implementation",
+            "patterns": ("popleft", "queue[0]", "window", "expire", "while queue"),
+            "required_hits": 2,
+        },
+        {
+            "check_key": "limit_enforcement",
+            "title_en": "Rejects requests when the limit is reached",
+            "title_ru": "Отклоняет запросы при достижении лимита",
+            "stage_key": "implementation",
+            "patterns": ("limit", "len(queue)", "return false", ">= limit", "allow_request"),
+            "required_hits": 2,
+        },
+        {
+            "check_key": "test_boundary_cases",
+            "title_en": "Mentions boundary and repeated-request tests",
+            "title_ru": "Упоминает boundary- и repeated-request тесты",
+            "stage_key": "review",
+            "patterns": ("boundary", "timestamp", "repeated", "same second", "test"),
+            "required_hits": 2,
+        },
+    ),
+}
+
 
 def _score_system_design_question_block(
     questions: list[dict],
@@ -1522,10 +1586,82 @@ def _extract_code_excerpt(texts: list[str]) -> str | None:
     return None
 
 
+def _find_matching_evidence(
+    texts: list[str],
+    patterns: tuple[str, ...],
+) -> str | None:
+    lowered_patterns = [pattern.lower() for pattern in patterns if pattern]
+    for text in texts:
+        raw = str(text or "").strip()
+        lowered = raw.lower()
+        if raw and any(pattern in lowered for pattern in lowered_patterns):
+            return raw[:240]
+    return None
+
+
+def _build_coding_task_coverage_checks(
+    *,
+    scenario_id: str | None,
+    answers_by_stage: dict[str, list[str]],
+    implementation_excerpt: str | None,
+    report_language: str,
+) -> tuple[list[dict], float | None]:
+    normalized_language = _normalized_report_language(report_language)
+    check_bank = _CODING_TASK_SCENARIO_COVERAGE_CHECKS.get(
+        str(scenario_id or "").strip(),
+        _CODING_TASK_DEFAULT_COVERAGE_CHECKS,
+    )
+    coverage_checks: list[dict] = []
+    scores: list[float] = []
+
+    implementation_texts = list(answers_by_stage.get("implementation", []))
+    if implementation_excerpt:
+        implementation_texts = [implementation_excerpt, *implementation_texts]
+
+    for raw_check in check_bank:
+        stage_key = str(raw_check.get("stage_key") or "").strip() or "implementation"
+        stage_texts = implementation_texts if stage_key == "implementation" else list(answers_by_stage.get(stage_key, []))
+        patterns = tuple(str(item).lower() for item in raw_check.get("patterns", ()) if str(item).strip())
+        required_hits = max(_to_int(raw_check.get("required_hits"), 1), 1)
+        searchable = "\n".join(text.lower() for text in stage_texts if str(text).strip())
+        hits = sum(1 for pattern in patterns if pattern in searchable)
+
+        if hits >= required_hits:
+            status = "passed"
+            score = 10.0
+        elif hits > 0:
+            status = "partial"
+            score = 5.0
+        else:
+            status = "missed"
+            score = 0.0
+
+        title = (
+            str(raw_check.get("title_ru") or "").strip()
+            if normalized_language == "ru"
+            else str(raw_check.get("title_en") or "").strip()
+        ) or str(raw_check.get("check_key") or "").strip()
+        evidence = _find_matching_evidence(stage_texts, patterns)
+        coverage_checks.append(
+            {
+                "check_key": str(raw_check.get("check_key") or "").strip(),
+                "title": title,
+                "status": status,
+                "score": score,
+                "evidence": evidence,
+            }
+        )
+        scores.append(score)
+
+    coverage_score = round(sum(scores) / len(scores), 1) if scores else None
+    return coverage_checks, coverage_score
+
+
 def _build_coding_task_evaluation(
     interview_meta: dict | None,
     per_question_analysis: list[dict],
     message_history: list[dict] | None,
+    report_language: str = "ru",
 ) -> dict | None:
     interview_meta = interview_meta or {}
     module_type = str(interview_meta.get("module_type") or "").strip().lower()
@@ -1656,6 +1792,14 @@ def _build_coding_task_evaluation(
         )
         code_signal_score = round(min(10.0, 3.0 + signal_hits * 2.5), 1)
 
+    scenario_id = str(interview_meta.get("module_scenario_id") or "").strip() or None
+    coverage_checks, coverage_score = _build_coding_task_coverage_checks(
+        scenario_id=scenario_id,
+        answers_by_stage=answers_by_stage,
+        implementation_excerpt=implementation_code_excerpt,
+        report_language=report_language,
+    )
+
     rubric_scores = [
         {
             "rubric_key": "problem_breakdown",
@@ -1673,11 +1817,18 @@ def _build_coding_task_evaluation(
             "rubric_key": "code_communication",
             "score": stage_scores.get("review"),
         },
+        {
+            "rubric_key": "functional_coverage",
+            "score": coverage_score,
+        },
     ]
+
+    if overall_score is not None and coverage_score is not None:
+        overall_score = round((overall_score * 0.85) + (coverage_score * 0.15), 1)
 
     return {
         "module_title": str(interview_meta.get("module_title") or "").strip() or None,
-        "scenario_id": str(interview_meta.get("module_scenario_id") or "").strip() or None,
+        "scenario_id": scenario_id,
         "scenario_title": str(interview_meta.get("module_scenario_title") or "").strip() or None,
         "scenario_prompt": str(interview_meta.get("module_scenario_prompt") or "").strip() or None,
         "stage_count": len(stages),
@@ -1687,6 +1838,8 @@ def _build_coding_task_evaluation(
         "implementation_excerpt": implementation_code_excerpt,
         "has_code_submission": has_code_submission,
         "code_signal_score": code_signal_score,
+        "coverage_score": coverage_score,
+        "coverage_checks": coverage_checks,
     }
 
 
@@ -2505,6 +2658,7 @@ class LLMAssessor:
             interview_meta,
             result.per_question_analysis,
             message_history,
+            report_language,
         )
         if coding_task_evaluation:
             result.full_report_json["coding_task_evaluation"] = coding_task_evaluation
@@ -2952,7 +3106,12 @@ class MockAssessor:
         system_design_evaluation = _build_system_design_evaluation(interview_meta, per_q)
         if system_design_evaluation:
             full_json["system_design_evaluation"] = system_design_evaluation
-        coding_task_evaluation = _build_coding_task_evaluation(interview_meta, per_q, message_history)
+        coding_task_evaluation = _build_coding_task_evaluation(
+            interview_meta,
+            per_q,
+            message_history,
+            report_language,
+        )
         if coding_task_evaluation:
             full_json["coding_task_evaluation"] = coding_task_evaluation
 

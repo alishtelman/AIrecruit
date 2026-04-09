@@ -773,6 +773,14 @@ export interface CodingTaskRubricScore {
   score: number | null;
 }
 
+export interface CodingTaskCoverageCheck {
+  check_key: string;
+  title: string;
+  status: "passed" | "partial" | "missed" | string;
+  score: number | null;
+  evidence: string | null;
+}
+
 export interface CodingTaskSummary {
   module_title: string | null;
   scenario_id: string | null;
@@ -780,7 +788,9 @@ export interface CodingTaskSummary {
   scenario_prompt: string | null;
   stage_count: number;
   overall_score: number | null;
+  coverage_score: number | null;
   rubric_scores: CodingTaskRubricScore[];
+  coverage_checks: CodingTaskCoverageCheck[];
   stages: CodingTaskStageSummary[];
   implementation_excerpt: string | null;
   has_code_submission: boolean;

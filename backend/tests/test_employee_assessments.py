@@ -615,11 +615,15 @@ I would test boundary timestamps, repeated requests in one second, empty users, 
     summary = company_report["coding_task_summary"]
     assert summary["stage_count"] == 3
     assert summary["overall_score"] is not None
-    assert len(summary["rubric_scores"]) == 4
+    assert len(summary["rubric_scores"]) == 5
+    assert summary["coverage_score"] is not None
+    assert summary["coverage_checks"]
     assert summary["has_code_submission"] is True
     assert summary["implementation_excerpt"] is not None
     assert "allow_request" in summary["implementation_excerpt"]
     assert summary["code_signal_score"] is not None
+    assert any(check["status"] == "passed" for check in summary["coverage_checks"])
+    assert any(check["check_key"] == "expired_window_cleanup" for check in summary["coverage_checks"])
     assert len(summary["stages"]) == 3
     assert all(stage["stage_title"] for stage in summary["stages"])
     assert company_report["per_question_analysis"]

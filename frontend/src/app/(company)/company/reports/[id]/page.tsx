@@ -7,7 +7,7 @@ import { useRouter } from "@/i18n/navigation";
 import { CompanyWorkspaceHeader } from "@/components/company-workspace-header";
 import { useAuth } from "@/hooks/useAuth";
 import { companyApi } from "@/lib/api";
-import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ProctoringTimeline, ProctoringTimelineEvent, SystemDesignStageSummary, SystemDesignRubricScore, CodingTaskStageSummary, CodingTaskRubricScore } from "@/lib/types";
+import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ProctoringTimeline, ProctoringTimelineEvent, SystemDesignStageSummary, SystemDesignRubricScore, CodingTaskStageSummary, CodingTaskRubricScore, CodingTaskCoverageCheck } from "@/lib/types";
 
 const RECOMMENDATION_CONFIG: Record<HiringRecommendation, { color: string; bg: string }> = {
   strong_yes: { color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
@@ -272,6 +272,11 @@ function CodingTaskSummaryPanel({ summary }: { summary: NonNullable<AssessmentRe
               {t("codingTask.overallScore")}: {summary.overall_score.toFixed(1)}/10
             </span>
           )}
+          {summary.coverage_score != null && (
+            <span className="rounded-full border border-emerald-400/20 bg-emerald-950/40 px-3 py-1 text-xs font-semibold text-emerald-200">
+              {t("codingTask.coverageScore")}: {summary.coverage_score.toFixed(1)}/10
+            </span>
+          )}
         </div>
       </div>
 
@@ -302,6 +307,17 @@ function CodingTaskSummaryPanel({ summary }: { summary: NonNullable<AssessmentRe
             )}
           </div>
           <pre className="overflow-x-auto whitespace-pre-wrap text-sm leading-6 text-slate-200">{summary.implementation_excerpt}</pre>
+        </div>
+      )}
+
+      {summary.coverage_checks.length > 0 && (
+        <div className="mb-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">{t("codingTask.coverageChecks")}</div>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {summary.coverage_checks.map((check) => (
+              <CodingTaskCoverageCheckCard key={check.check_key} check={check} />
+            ))}
+          </div>
         </div>
       )}
 
@@ -363,6 +379,31 @@ function CodingTaskRubricCard({ rubric }: { rubric: CodingTaskRubricScore }) {
       <div className="mt-1 text-xl font-semibold text-white">
         {rubric.score != null ? `${rubric.score.toFixed(1)}/10` : "—"}
       </div>
+    </div>
+  );
+}
+
+function CodingTaskCoverageCheckCard({ check }: { check: CodingTaskCoverageCheck }) {
+  const t = useTranslations("report");
+  const statusStyles: Record<string, string> = {
+    passed: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+    partial: "border-yellow-500/30 bg-yellow-500/10 text-yellow-200",
+    missed: "border-slate-700 bg-slate-900/60 text-slate-300",
+  };
+  const style = statusStyles[check.status] ?? statusStyles.missed;
+
+  return (
+    <div className={`rounded-xl border p-4 ${style}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-sm font-medium">{check.title}</div>
+        <div className="text-right">
+          <div className="text-[11px] uppercase tracking-[0.16em]">
+            {t(`codingTask.checkStatus.${check.status}`)}
+          </div>
+          {check.score != null && <div className="mt-1 text-sm font-semibold">{check.score.toFixed(1)}/10</div>}
+        </div>
+      </div>
+      {check.evidence && <div className="mt-3 text-sm leading-6 opacity-90">{check.evidence}</div>}
     </div>
   );
 }

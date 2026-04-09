@@ -1102,17 +1102,25 @@
       "task": "Задача",
       "stageCount": "{count} этапа",
       "overallScore": "Оценка модуля",
+      "coverageScore": "Оценка покрытия",
+      "coverageChecks": "Проверочные критерии",
       "stageScore": "Оценка этапа",
       "answerQuality": "Качество evidence",
       "questionsCovered": "{count} вопроса",
       "noEvidence": "По этому этапу пока не зафиксировано evidence.",
       "codeExcerpt": "Фрагмент присланного кода",
       "codeSignal": "Code signal",
+      "checkStatus": {
+        "passed": "Пройдено",
+        "partial": "Частично",
+        "missed": "Не покрыто"
+      },
       "rubrics": {
         "problem_breakdown": "Декомпозиция задачи",
         "implementation_quality": "Качество реализации",
         "correctness_testing": "Корректность и тесты",
-        "code_communication": "Объяснение кода"
+        "code_communication": "Объяснение кода",
+        "functional_coverage": "Функциональное покрытие"
       }
     },
     "summaryModel": {

@@ -131,6 +131,14 @@ class CodingTaskRubricScore(BaseModel):
     score: float | None = None
 
 
+class CodingTaskCoverageCheck(BaseModel):
+    check_key: str
+    title: str
+    status: str
+    score: float | None = None
+    evidence: str | None = None
+
+
 class CodingTaskSummary(BaseModel):
     module_title: str | None = None
     scenario_id: str | None = None
@@ -138,7 +146,9 @@ class CodingTaskSummary(BaseModel):
     scenario_prompt: str | None = None
     stage_count: int = 0
     overall_score: float | None = None
+    coverage_score: float | None = None
     rubric_scores: list[CodingTaskRubricScore] = []
+    coverage_checks: list[CodingTaskCoverageCheck] = []
     stages: list[CodingTaskStageSummary] = []
     implementation_excerpt: str | None = None
     has_code_submission: bool = False
@@ -425,7 +435,9 @@ class AssessmentReportResponse(BaseModel):
                     )
                     stages: list[dict] = []
                     rubric_scores = []
+                    coverage_checks = []
                     overall_score = None
+                    coverage_score = None
                     implementation_excerpt = None
                     has_code_submission = False
                     code_signal_score = None
@@ -463,7 +475,21 @@ class AssessmentReportResponse(BaseModel):
                                 for item in explicit_rubrics
                                 if isinstance(item, dict) and str(item.get("rubric_key") or "").strip()
                             ]
+                        explicit_checks = explicit_evaluation.get("coverage_checks")
+                        if isinstance(explicit_checks, list):
+                            coverage_checks = [
+                                {
+                                    "check_key": str(item.get("check_key") or "").strip(),
+                                    "title": str(item.get("title") or "").strip(),
+                                    "status": str(item.get("status") or "missed").strip(),
+                                    "score": item.get("score"),
+                                    "evidence": str(item.get("evidence") or "").strip() or None,
+                                }
+                                for item in explicit_checks
+                                if isinstance(item, dict) and str(item.get("check_key") or "").strip()
+                            ]
                         overall_score = explicit_evaluation.get("overall_score")
+                        coverage_score = explicit_evaluation.get("coverage_score")
                         implementation_excerpt = (
                             str(explicit_evaluation.get("implementation_excerpt") or "").strip() or None
                         )
@@ -532,7 +558,9 @@ class AssessmentReportResponse(BaseModel):
                             ),
                             "stage_count": int(explicit_evaluation.get("stage_count") or len(stage_plan)) if explicit_evaluation else len(stage_plan),
                             "overall_score": overall_score,
+                            "coverage_score": coverage_score,
                             "rubric_scores": rubric_scores,
+                            "coverage_checks": coverage_checks,
                             "stages": stages,
                             "implementation_excerpt": implementation_excerpt,
                             "has_code_submission": has_code_submission,
