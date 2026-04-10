@@ -796,8 +796,10 @@ export interface CodingTaskSummary {
   stage_count: number;
   overall_score: number | null;
   coverage_score: number | null;
+  runner_score: number | null;
   rubric_scores: CodingTaskRubricScore[];
   coverage_checks: CodingTaskCoverageCheck[];
+  runner_checks: CodingTaskCoverageCheck[];
   stages: CodingTaskStageSummary[];
   implementation_excerpt: string | null;
   has_code_submission: boolean;

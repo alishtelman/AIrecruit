@@ -9,7 +9,12 @@ otherwise falls back to MockAssessor.
 """
 import json
 import logging
+import os
 import re
+import subprocess
+import sys
+import tempfile
+import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -1307,6 +1312,33 @@ _CODING_TASK_SCENARIO_COVERAGE_CHECKS = {
     ),
 }
 
+_CODING_TASK_RUNNER_TIMEOUT_SECONDS = 2.0
+
+_CODING_TASK_RUNNER_CHECK_DEFS = {
+    "rate_limiter_window_counter": (
+        {
+            "check_key": "runner_allows_within_limit",
+            "title_en": "Allows requests while the user stays within the limit",
+            "title_ru": "Разрешает запросы, пока пользователь не превысил лимит",
+        },
+        {
+            "check_key": "runner_blocks_over_limit",
+            "title_en": "Blocks the request after the sliding-window limit is reached",
+            "title_ru": "Блокирует запрос после достижения лимита в sliding window",
+        },
+        {
+            "check_key": "runner_expires_old_entries",
+            "title_en": "Expires old entries so the user can recover after the window moves",
+            "title_ru": "Удаляет старые события и снова разрешает запрос после сдвига окна",
+        },
+        {
+            "check_key": "runner_isolates_users",
+            "title_en": "Keeps per-user state isolated",
+            "title_ru": "Сохраняет изоляцию состояния между пользователями",
+        },
+    ),
+}
+
 
 def _score_system_design_question_block(
     questions: list[dict],
@@ -1662,6 +1694,259 @@ def _build_coding_task_coverage_checks(
     return coverage_checks, coverage_score
 
 
+def _coding_task_runner_title(
+    *,
+    scenario_id: str | None,
+    check_key: str,
+    report_language: str,
+) -> str:
+    normalized_language = _normalized_report_language(report_language)
+    for item in _CODING_TASK_RUNNER_CHECK_DEFS.get(str(scenario_id or "").strip(), ()):
+        if str(item.get("check_key") or "").strip() != check_key:
+            continue
+        if normalized_language == "ru":
+            return str(item.get("title_ru") or check_key).strip()
+        return str(item.get("title_en") or check_key).strip()
+    if check_key == "runner_execution_timeout":
+        return "Runner timed out" if normalized_language == "en" else "Runner превысил лимит времени"
+    if check_key == "runner_execution_failed":
+        return "Runner execution failed" if normalized_language == "en" else "Runner завершился с ошибкой"
+    return check_key
+
+
+def _build_coding_task_runner_checks(
+    *,
+    scenario_id: str | None,
+    artifact_code: str | None,
+    artifact_language: str | None,
+    report_language: str,
+) -> tuple[list[dict], float | None]:
+    normalized_scenario_id = str(scenario_id or "").strip()
+    normalized_language = str(artifact_language or "").strip().lower()
+    if not artifact_code or normalized_language not in {"python", "py"}:
+        return [], None
+    if normalized_scenario_id not in _CODING_TASK_RUNNER_CHECK_DEFS:
+        return [], None
+
+    wrapper = textwrap.dedent(
+        """
+        import ast
+        import json
+        import sys
+        from collections import defaultdict, deque
+
+        ALLOWED_MODULES = {"collections", "typing"}
+        DISALLOWED_CALLS = {
+            "open", "exec", "eval", "compile", "input", "globals",
+            "locals", "vars", "dir", "getattr", "setattr", "delattr", "breakpoint"
+        }
+
+        def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+            root = str(name or "").split(".")[0]
+            if root not in ALLOWED_MODULES:
+                raise ImportError(f"import '{name}' is not allowed")
+            return __import__(name, globals, locals, fromlist, level)
+
+        def validate_tree(tree):
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if str(alias.name or "").split(".")[0] not in ALLOWED_MODULES:
+                            raise ValueError(f"disallowed import: {alias.name}")
+                elif isinstance(node, ast.ImportFrom):
+                    module = str(node.module or "").split(".")[0]
+                    if module not in ALLOWED_MODULES:
+                        raise ValueError(f"disallowed import: {node.module}")
+                elif isinstance(node, ast.Attribute):
+                    if str(getattr(node, "attr", "")).startswith("__"):
+                        raise ValueError("dunder attribute access is not allowed")
+                elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                    if node.func.id in DISALLOWED_CALLS:
+                        raise ValueError(f"disallowed call: {node.func.id}")
+
+        def safe_globals():
+            return {
+                "__builtins__": {
+                    "len": len,
+                    "range": range,
+                    "min": min,
+                    "max": max,
+                    "sum": sum,
+                    "abs": abs,
+                    "enumerate": enumerate,
+                    "list": list,
+                    "dict": dict,
+                    "set": set,
+                    "tuple": tuple,
+                    "int": int,
+                    "float": float,
+                    "str": str,
+                    "bool": bool,
+                    "any": any,
+                    "all": all,
+                    "zip": zip,
+                    "sorted": sorted,
+                    "reversed": reversed,
+                    "Exception": Exception,
+                    "ValueError": ValueError,
+                    "TypeError": TypeError,
+                    "KeyError": KeyError,
+                    "__import__": safe_import,
+                },
+                "defaultdict": defaultdict,
+                "deque": deque,
+            }
+
+        def run_rate_limiter_checks(ns):
+            fn = ns.get("allow_request")
+            if not callable(fn):
+                raise ValueError("allow_request function was not found")
+
+            def reset_state():
+                if "windows" in ns:
+                    ns["windows"] = defaultdict(deque)
+
+            results = []
+
+            reset_state()
+            within_limit = [bool(fn("user-a", ts)) for ts in (0, 1, 2, 3, 4)]
+            results.append({
+                "check_key": "runner_allows_within_limit",
+                "passed": all(within_limit),
+                "details": f"sequence={within_limit}",
+            })
+
+            reset_state()
+            for ts in (0, 1, 2, 3, 4):
+                fn("user-a", ts)
+            blocked = bool(fn("user-a", 5)) is False
+            results.append({
+                "check_key": "runner_blocks_over_limit",
+                "passed": blocked,
+                "details": f"sixth_request_blocked={blocked}",
+            })
+
+            reset_state()
+            for ts in (0, 1, 2, 3, 4):
+                fn("user-a", ts)
+            expired_ok = bool(fn("user-a", 60)) is True
+            results.append({
+                "check_key": "runner_expires_old_entries",
+                "passed": expired_ok,
+                "details": f"request_after_window={expired_ok}",
+            })
+
+            reset_state()
+            for ts in (0, 1, 2, 3, 4):
+                fn("user-a", ts)
+            other_user_ok = bool(fn("user-b", 5)) is True
+            results.append({
+                "check_key": "runner_isolates_users",
+                "passed": other_user_ok,
+                "details": f"other_user_allowed={other_user_ok}",
+            })
+            return results
+
+        payload = json.loads(sys.stdin.read())
+        source = str(payload.get("code") or "")
+        scenario_id = str(payload.get("scenario_id") or "")
+
+        tree = ast.parse(source, mode="exec")
+        validate_tree(tree)
+        ns = safe_globals()
+        exec(compile(tree, "<candidate_code>", "exec"), ns, ns)
+
+        if scenario_id == "rate_limiter_window_counter":
+            results = run_rate_limiter_checks(ns)
+        else:
+            results = []
+
+        runner_score = round(
+            sum(10.0 if item.get("passed") else 0.0 for item in results) / len(results),
+            1,
+        ) if results else None
+        print(json.dumps({"runner_score": runner_score, "runner_checks": results}))
+        """
+    )
+
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix="_coding_runner.py", delete=False) as handle:
+            handle.write(wrapper)
+            temp_path = handle.name
+
+        completed = subprocess.run(
+            [sys.executable, temp_path],
+            input=json.dumps(
+                {
+                    "scenario_id": normalized_scenario_id,
+                    "code": artifact_code,
+                }
+            ),
+            text=True,
+            capture_output=True,
+            timeout=_CODING_TASK_RUNNER_TIMEOUT_SECONDS,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError((completed.stderr or completed.stdout or "runner failed").strip()[:400])
+        payload = json.loads(completed.stdout or "{}")
+        raw_checks = payload.get("runner_checks")
+        if not isinstance(raw_checks, list):
+            return [], None
+        runner_checks = [
+            {
+                "check_key": str(item.get("check_key") or "").strip(),
+                "title": _coding_task_runner_title(
+                    scenario_id=normalized_scenario_id,
+                    check_key=str(item.get("check_key") or "").strip(),
+                    report_language=report_language,
+                ),
+                "status": "passed" if item.get("passed") else "missed",
+                "score": 10.0 if item.get("passed") else 0.0,
+                "evidence": str(item.get("details") or "").strip() or None,
+            }
+            for item in raw_checks
+            if isinstance(item, dict) and str(item.get("check_key") or "").strip()
+        ]
+        runner_score = payload.get("runner_score")
+        return runner_checks, round(float(runner_score), 1) if isinstance(runner_score, (int, float)) else None
+    except subprocess.TimeoutExpired:
+        return [
+            {
+                "check_key": "runner_execution_timeout",
+                "title": _coding_task_runner_title(
+                    scenario_id=normalized_scenario_id,
+                    check_key="runner_execution_timeout",
+                    report_language=report_language,
+                ),
+                "status": "missed",
+                "score": 0.0,
+                "evidence": "timeout",
+            }
+        ], 0.0
+    except Exception as exc:
+        return [
+            {
+                "check_key": "runner_execution_failed",
+                "title": _coding_task_runner_title(
+                    scenario_id=normalized_scenario_id,
+                    check_key="runner_execution_failed",
+                    report_language=report_language,
+                ),
+                "status": "missed",
+                "score": 0.0,
+                "evidence": str(exc)[:240] or None,
+            }
+        ], 0.0
+    finally:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+
 def _build_coding_task_evaluation(
     interview_meta: dict | None,
     per_question_analysis: list[dict],
@@ -1718,6 +2003,7 @@ def _build_coding_task_evaluation(
         else {}
     )
     artifact_code = str(artifact_payload.get("code") or "").strip() or None
+    artifact_language = str(artifact_payload.get("language") or "").strip() or None
     implementation_answers = list(answers_by_stage.get("implementation", []))
     if artifact_code:
         implementation_answers = [artifact_code, *implementation_answers]
@@ -1812,6 +2098,12 @@ def _build_coding_task_evaluation(
         implementation_excerpt=implementation_code_excerpt,
         report_language=report_language,
     )
+    runner_checks, runner_score = _build_coding_task_runner_checks(
+        scenario_id=scenario_id,
+        artifact_code=artifact_code,
+        artifact_language=artifact_language,
+        report_language=report_language,
+    )
 
     rubric_scores = [
         {
@@ -1835,9 +2127,20 @@ def _build_coding_task_evaluation(
             "score": coverage_score,
         },
     ]
+    if runner_score is not None:
+        rubric_scores.append(
+            {
+                "rubric_key": "hidden_test_execution",
+                "score": runner_score,
+            }
+        )
 
-    if overall_score is not None and coverage_score is not None:
+    if overall_score is not None and coverage_score is not None and runner_score is not None:
+        overall_score = round((overall_score * 0.75) + (coverage_score * 0.15) + (runner_score * 0.10), 1)
+    elif overall_score is not None and coverage_score is not None:
         overall_score = round((overall_score * 0.85) + (coverage_score * 0.15), 1)
+    elif overall_score is not None and runner_score is not None:
+        overall_score = round((overall_score * 0.9) + (runner_score * 0.1), 1)
 
     return {
         "module_title": str(interview_meta.get("module_title") or "").strip() or None,
@@ -1853,6 +2156,8 @@ def _build_coding_task_evaluation(
         "code_signal_score": code_signal_score,
         "coverage_score": coverage_score,
         "coverage_checks": coverage_checks,
+        "runner_score": runner_score,
+        "runner_checks": runner_checks,
     }
 
 

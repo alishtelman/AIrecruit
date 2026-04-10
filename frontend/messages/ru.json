@@ -1116,7 +1116,9 @@
       "stageCount": "{count} этапа",
       "overallScore": "Оценка модуля",
       "coverageScore": "Оценка покрытия",
+      "runnerScore": "Оценка runner",
       "coverageChecks": "Проверочные критерии",
+      "runnerChecks": "Скрытые тесты",
       "stageScore": "Оценка этапа",
       "answerQuality": "Качество evidence",
       "questionsCovered": "{count} вопроса",
@@ -1133,7 +1135,8 @@
         "implementation_quality": "Качество реализации",
         "correctness_testing": "Корректность и тесты",
         "code_communication": "Объяснение кода",
-        "functional_coverage": "Функциональное покрытие"
+        "functional_coverage": "Функциональное покрытие",
+        "hidden_test_execution": "Скрытые тесты"
       }
     },
     "summaryModel": {

@@ -1116,7 +1116,9 @@
       "stageCount": "{count} stages",
       "overallScore": "Module score",
       "coverageScore": "Coverage score",
+      "runnerScore": "Runner score",
       "coverageChecks": "Evaluation checks",
+      "runnerChecks": "Hidden test checks",
       "stageScore": "Stage score",
       "answerQuality": "Evidence quality",
       "questionsCovered": "{count} questions",
@@ -1133,7 +1135,8 @@
         "implementation_quality": "Implementation quality",
         "correctness_testing": "Correctness and testing",
         "code_communication": "Code communication",
-        "functional_coverage": "Functional coverage"
+        "functional_coverage": "Functional coverage",
+        "hidden_test_execution": "Hidden test execution"
       }
     },
     "summaryModel": {

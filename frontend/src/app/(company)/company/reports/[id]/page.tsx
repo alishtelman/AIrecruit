@@ -277,6 +277,11 @@ function CodingTaskSummaryPanel({ summary }: { summary: NonNullable<AssessmentRe
               {t("codingTask.coverageScore")}: {summary.coverage_score.toFixed(1)}/10
             </span>
           )}
+          {summary.runner_score != null && (
+            <span className="rounded-full border border-fuchsia-400/20 bg-fuchsia-950/40 px-3 py-1 text-xs font-semibold text-fuchsia-200">
+              {t("codingTask.runnerScore")}: {summary.runner_score.toFixed(1)}/10
+            </span>
+          )}
         </div>
       </div>
 
@@ -315,6 +320,17 @@ function CodingTaskSummaryPanel({ summary }: { summary: NonNullable<AssessmentRe
           <div className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">{t("codingTask.coverageChecks")}</div>
           <div className="grid gap-3 lg:grid-cols-2">
             {summary.coverage_checks.map((check) => (
+              <CodingTaskCoverageCheckCard key={check.check_key} check={check} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {summary.runner_checks.length > 0 && (
+        <div className="mb-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">{t("codingTask.runnerChecks")}</div>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {summary.runner_checks.map((check) => (
               <CodingTaskCoverageCheckCard key={check.check_key} check={check} />
             ))}
           </div>
