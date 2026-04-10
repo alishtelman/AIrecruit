@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from groq import AsyncGroq
 
+from app.ai.model_preferences import DEFAULT_LLM_MODEL, resolve_llm_runtime_model
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -1290,7 +1291,7 @@ class LLMInterviewer:
     def __init__(self, client: AsyncGroq) -> None:
         self._client = client
 
-    async def get_next_question(self, ctx: InterviewContext) -> str:
+    async def get_next_question(self, ctx: InterviewContext, model_override: str | None = None) -> str:
         # First question: always deterministic (faster, no LLM needed)
         if ctx.module_type == "system_design" and ctx.question_type == "main":
             system_design_main = _system_design_main_question(ctx)
@@ -1336,12 +1337,25 @@ class LLMInterviewer:
         temperature = 0.65 if is_non_main else 0.5
 
         try:
-            response = await self._client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                max_tokens=max_tokens,
-                temperature=temperature,
-                messages=messages,
-            )
+            resolved_model = resolve_llm_runtime_model(model_override)
+            try:
+                response = await self._client.chat.completions.create(
+                    model=resolved_model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    messages=messages,
+                )
+            except Exception:
+                if resolved_model != DEFAULT_LLM_MODEL:
+                    logger.exception("Preferred interviewer model failed, retrying with default model")
+                    response = await self._client.chat.completions.create(
+                        model=DEFAULT_LLM_MODEL,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        messages=messages,
+                    )
+                else:
+                    raise
             raw = response.choices[0].message.content.strip()
             normalized = _normalize_question_output(raw, ctx)
             if _question_is_repeated(normalized, ctx.message_history):
@@ -1352,7 +1366,7 @@ class LLMInterviewer:
         except Exception:
             if settings.allow_mock_ai:
                 logger.exception("Interviewer LLM failed, using deterministic fallback question")
-                return await MockInterviewer().get_next_question(ctx)
+                return await MockInterviewer().get_next_question(ctx, model_override=model_override)
             logger.exception("Interviewer LLM failed")
             raise RuntimeError("AI interviewer request failed")
 
@@ -1448,7 +1462,7 @@ _DEFAULT_ROLE = "backend_engineer"
 
 
 class MockInterviewer:
-    async def get_next_question(self, ctx: InterviewContext) -> str:
+    async def get_next_question(self, ctx: InterviewContext, model_override: str | None = None) -> str:
         match ctx.question_type:
             case "followup":
                 return get_fallback_followup(ctx.shallow_reason or "no_depth_indicators", ctx.language)
@@ -1497,7 +1511,7 @@ class MockInterviewer:
 
 
 class DisabledInterviewer:
-    async def get_next_question(self, ctx: InterviewContext) -> str:
+    async def get_next_question(self, ctx: InterviewContext, model_override: str | None = None) -> str:
         raise RuntimeError("AI interviewer is not configured")
 
 

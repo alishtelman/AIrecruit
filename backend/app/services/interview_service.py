@@ -1718,16 +1718,19 @@ def _validate_assessment_result(result: Any) -> AssessmentResult:
     return result
 
 
-async def _get_next_question_with_dev_fallback(ctx: InterviewContext) -> str:
+async def _get_next_question_with_dev_fallback(
+    ctx: InterviewContext,
+    model_preference: str | None = None,
+) -> str:
     try:
-        return await interviewer.get_next_question(ctx)
+        return await interviewer.get_next_question(ctx, model_override=model_preference)
     except Exception as exc:
         if settings.is_local_or_test:
             logger.exception(
                 "Interviewer generation failed in local/test mode; using deterministic fallback",
             )
             try:
-                return await MockInterviewer().get_next_question(ctx)
+                return await MockInterviewer().get_next_question(ctx, model_override=model_preference)
             except Exception:
                 logger.exception("Deterministic interviewer fallback also failed")
         raise RuntimeError("AI interviewer request failed") from exc
@@ -1742,6 +1745,10 @@ async def _assess_with_dev_fallback(
     language: str,
     interview_meta: dict | None,
 ) -> AssessmentResult:
+    workspace_ai_settings = interview_meta.get("workspace_ai_settings") if isinstance(interview_meta, dict) else {}
+    assessor_model_preference = None
+    if isinstance(workspace_ai_settings, dict):
+        assessor_model_preference = workspace_ai_settings.get("assessor_model_preference")
     try:
         result = await asyncio.wait_for(
             assessor.assess(
@@ -1751,6 +1758,7 @@ async def _assess_with_dev_fallback(
                 behavioral_signals=behavioral_signals,
                 language=language,
                 interview_meta=interview_meta,
+                model_override=assessor_model_preference,
             ),
             timeout=_assessment_timeout_seconds(),
         )
@@ -1768,6 +1776,7 @@ async def _assess_with_dev_fallback(
                     behavioral_signals=behavioral_signals,
                     language=language,
                     interview_meta=interview_meta,
+                    model_override=assessor_model_preference,
                 )
                 return _validate_assessment_result(fallback_result)
             except Exception:
@@ -1943,7 +1952,11 @@ async def start_interview(
         module_stage_index=0,
         module_stage_count=len(module_context.get("stage_plan", [])) if module_context else 0,
     )
-    first_question = await _get_next_question_with_dev_fallback(ctx)
+    interviewer_model_preference = safe_workspace_ai_settings.get("interviewer_model_preference")
+    first_question = await _get_next_question_with_dev_fallback(
+        ctx,
+        model_preference=interviewer_model_preference,
+    )
     first_question = _sanitize_chat_question(first_question, language=language) or first_question
 
     db.add(InterviewMessage(
@@ -2397,6 +2410,7 @@ async def add_candidate_message(
         module_stage_key: str | None = None
         module_stage_title: str | None = None
         module_stage_prompt: str | None = None
+        workspace_ai_settings = state.get("workspace_ai_settings")
         if not should_end_now:
             competency_targets = None
             resume_anchor = None
@@ -2472,7 +2486,13 @@ async def add_candidate_message(
                 module_stage_index=resolved_next_topic_index if resolved_next_topic_index is not None else current_topic_index,
                 module_stage_count=len(module_stage_plan) if module_stage_plan else 0,
             )
-            next_q = await _get_next_question_with_dev_fallback(ctx)
+            interviewer_model_preference = None
+            if isinstance(workspace_ai_settings, dict):
+                interviewer_model_preference = workspace_ai_settings.get("interviewer_model_preference")
+            next_q = await _get_next_question_with_dev_fallback(
+                ctx,
+                model_preference=interviewer_model_preference,
+            )
             next_q = _sanitize_chat_question(next_q, language=interview.language)
 
         # ── Update DB state ─────────────────────────────────────────────────
@@ -2566,6 +2586,12 @@ async def add_candidate_message(
             "module_stage_index": current_topic_index if _is_staged_module_type(module_type) else module_stage_index,
             "module_question_history": module_question_history,
         }
+        if isinstance(workspace_ai_settings, dict) and workspace_ai_settings:
+            interview.interview_state["workspace_ai_settings"] = {
+                "proctoring_policy_mode": workspace_ai_settings.get("proctoring_policy_mode"),
+                "interviewer_model_preference": workspace_ai_settings.get("interviewer_model_preference"),
+                "assessor_model_preference": workspace_ai_settings.get("assessor_model_preference"),
+            }
         if next_q:
             db.add(InterviewMessage(
                 id=uuid.uuid4(),

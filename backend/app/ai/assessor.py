@@ -18,6 +18,11 @@ from groq import AsyncGroq
 from app.ai.calibration import build_calibration_prompt
 from app.ai.competencies import get_competencies, get_category_weights
 from app.ai.interviewer import classify_answer, extract_mentioned_technologies
+from app.ai.model_preferences import (
+    DEFAULT_LLM_MODEL,
+    is_allowed_llm_model_preference,
+    resolve_llm_runtime_model,
+)
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -2589,6 +2594,24 @@ class LLMAssessor:
     def __init__(self, client: AsyncGroq) -> None:
         self._client = client
 
+    async def _create_completion_with_model_fallback(self, *, model_override: str | None = None, **kwargs):
+        resolved_model = resolve_llm_runtime_model(model_override)
+        try:
+            response = await self._client.chat.completions.create(
+                model=resolved_model,
+                **kwargs,
+            )
+            return response, resolved_model
+        except Exception:
+            if resolved_model == DEFAULT_LLM_MODEL:
+                raise
+            logger.exception("Preferred assessor model failed, retrying with default model")
+            response = await self._client.chat.completions.create(
+                model=DEFAULT_LLM_MODEL,
+                **kwargs,
+            )
+            return response, DEFAULT_LLM_MODEL
+
     async def assess(
         self,
         target_role: str,
@@ -2597,6 +2620,7 @@ class LLMAssessor:
         behavioral_signals: dict | None = None,
         language: str = "ru",
         interview_meta: dict | None = None,
+        model_override: str | None = None,
     ) -> AssessmentResult:
         report_language = _normalized_report_language(language)
         role_label = _role_label(target_role, report_language)
@@ -2620,14 +2644,26 @@ class LLMAssessor:
         )
 
         # Pass 1: Per-question evidence extraction
-        pass1_data = await self._pass1_question_analysis(
-            role_label, transcript, comp_ref, report_language
+        pass1_data, resolved_model = await self._pass1_question_analysis(
+            role_label,
+            transcript,
+            comp_ref,
+            report_language,
+            model_override=model_override,
         )
 
         # Pass 2: Competency scoring (message_history needed for word-count penalization)
         result = await self._pass2_competency_scoring(
-            role_label, transcript, comp_ref, pass1_data, target_role, message_history, report_language
+            role_label,
+            transcript,
+            comp_ref,
+            pass1_data,
+            target_role,
+            message_history,
+            report_language,
+            model_override=model_override,
         )
+        result.model_version = resolved_model
 
         summary_model = _build_summary_model(target_role, report_language, interview_meta, pass1_data)
         adjusted_aggregates, summary_penalties = _apply_summary_penalties(
@@ -2714,7 +2750,8 @@ class LLMAssessor:
         transcript: str,
         comp_ref: str,
         report_language: str,
-    ) -> list[dict]:
+        model_override: str | None = None,
+    ) -> tuple[list[dict], str]:
         """Pass 1: Extract per-question evidence, skills, red flags."""
         output_language = "русском" if report_language == "ru" else "English"
         system = (
@@ -2772,8 +2809,8 @@ class LLMAssessor:
         )
 
         try:
-            response = await self._client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+            response, resolved_model = await self._create_completion_with_model_fallback(
+                model_override=model_override,
                 max_tokens=2048,
                 messages=[
                     {"role": "system", "content": system},
@@ -2784,10 +2821,10 @@ class LLMAssessor:
             )
             tool_call = response.choices[0].message.tool_calls[0]
             data = json.loads(tool_call.function.arguments)
-            return data.get("questions", [])
+            return data.get("questions", []), resolved_model
         except Exception:
             logger.exception("Pass 1 (question analysis) failed, continuing with empty analysis")
-            return []
+            return [], resolve_llm_runtime_model(model_override)
 
     async def _pass2_competency_scoring(
         self,
@@ -2798,6 +2835,7 @@ class LLMAssessor:
         target_role: str,
         message_history: list[dict] | None = None,
         report_language: str = "ru",
+        model_override: str | None = None,
     ) -> AssessmentResult:
         """Pass 2: Score each competency using Pass 1 evidence + BARS calibration."""
         pass1_summary = json.dumps(pass1_data, ensure_ascii=False, indent=2) if pass1_data else "Анализ вопросов недоступен."
@@ -2852,8 +2890,8 @@ class LLMAssessor:
         )
 
         try:
-            response = await self._client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+            response, resolved_model = await self._create_completion_with_model_fallback(
+                model_override=model_override,
                 max_tokens=2048,
                 messages=[
                     {"role": "system", "content": system},
@@ -2867,7 +2905,12 @@ class LLMAssessor:
         except Exception:
             logger.exception("Pass 2 (competency scoring) failed, falling back to legacy assessment")
             try:
-                return await self._legacy_assess(target_role, transcript, report_language)
+                return await self._legacy_assess(
+                    target_role,
+                    transcript,
+                    report_language,
+                    model_override=model_override,
+                )
             except Exception:
                 logger.exception("Legacy assessment failed, falling back to deterministic mock assessment")
                 return await MockAssessor().assess(
@@ -2877,6 +2920,7 @@ class LLMAssessor:
                     behavioral_signals=None,
                     language=report_language,
                     interview_meta=None,
+                    model_override=model_override,
                 )
 
         comp_scores = data.get("competency_scores", [])
@@ -2943,7 +2987,7 @@ class LLMAssessor:
             recommendations=data.get("recommendations", []),
             hiring_recommendation=hiring_rec,
             interview_summary=data.get("interview_summary"),
-            model_version="llama-3.3-70b-versatile",
+            model_version=resolved_model,
             full_report_json=full_json,
             competency_scores=comp_scores,
             per_question_analysis=pass1_data,
@@ -2961,7 +3005,13 @@ class LLMAssessor:
             score_penalties=penalties,
         )
 
-    async def _legacy_assess(self, target_role: str, transcript: str, report_language: str = "ru") -> AssessmentResult:
+    async def _legacy_assess(
+        self,
+        target_role: str,
+        transcript: str,
+        report_language: str = "ru",
+        model_override: str | None = None,
+    ) -> AssessmentResult:
         """Fallback single-pass assessment (backward compat)."""
         role_label = _role_label(target_role, report_language)
         system = (
@@ -2970,8 +3020,8 @@ class LLMAssessor:
             f"{'русском' if report_language == 'ru' else 'English'}."
         )
 
-        response = await self._client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response, resolved_model = await self._create_completion_with_model_fallback(
+            model_override=model_override,
             max_tokens=1024,
             messages=[
                 {"role": "system", "content": system},
@@ -3000,7 +3050,7 @@ class LLMAssessor:
             recommendations=data["recommendations"],
             hiring_recommendation=data["hiring_recommendation"],
             interview_summary=data.get("interview_summary"),
-            model_version="llama-3.3-70b-versatile",
+            model_version=resolved_model,
             full_report_json=data,
             overall_confidence=confidence_metrics["overall_confidence"],
             competency_confidence=confidence_metrics["competency_confidence"],
@@ -3023,8 +3073,13 @@ class MockAssessor:
         behavioral_signals: dict | None = None,
         language: str = "ru",
         interview_meta: dict | None = None,
+        model_override: str | None = None,
     ) -> AssessmentResult:
         report_language = _normalized_report_language(language)
+        resolved_model = resolve_llm_runtime_model(model_override)
+        model_version = "mock-v2-evidence-aware"
+        if is_allowed_llm_model_preference(model_override):
+            model_version = f"{model_version}[{resolved_model}]"
         per_q = _build_mock_question_analysis(
             message_history=message_history,
             target_role=target_role,
@@ -3133,7 +3188,7 @@ class MockAssessor:
                 summary_model,
                 overall,
             ),
-            model_version="mock-v2-evidence-aware",
+            model_version=model_version,
             full_report_json=full_json,
             competency_scores=comp_scores,
             per_question_analysis=per_q,
@@ -3159,6 +3214,7 @@ class DisabledAssessor:
         behavioral_signals: dict | None = None,
         language: str = "ru",
         interview_meta: dict | None = None,
+        model_override: str | None = None,
     ) -> AssessmentResult:
         raise RuntimeError("AI assessor is not configured")
 

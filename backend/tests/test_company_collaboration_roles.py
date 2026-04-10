@@ -97,17 +97,21 @@ async def test_company_ai_settings_are_admin_managed(
         headers=auth_headers(company_token),
         json={
             "proctoring_policy_mode": "strict_flagging",
-            "interviewer_model_preference": "llama-3.3-70b-versatile",
-            "assessor_model_preference": "llama-3.3-70b-versatile",
+            "interviewer_model_preference": "llama-3.1-8b-instant",
+            "assessor_model_preference": "llama-3.1-8b-instant",
         },
     )
     assert updated.status_code == 200, updated.text
     data = updated.json()
     assert data["proctoring_policy_mode"] == "strict_flagging"
-    assert data["interviewer_model_preference"] == "llama-3.3-70b-versatile"
-    assert data["assessor_model_preference"] == "llama-3.3-70b-versatile"
+    assert data["interviewer_model_preference"] == "llama-3.1-8b-instant"
+    assert data["assessor_model_preference"] == "llama-3.1-8b-instant"
+    assert data["interviewer_runtime_model"] == "llama-3.1-8b-instant"
+    assert data["assessor_runtime_model"] == "llama-3.1-8b-instant"
     assert "interviewer_model_preference" in data["stored_preference_fields"]
     assert "assessor_model_preference" in data["stored_preference_fields"]
+    assert "interviewer_model_preference" in data["runtime_applied_fields"]
+    assert "assessor_model_preference" in data["runtime_applied_fields"]
 
     _viewer_email, viewer_token = await _invite_and_login_member(client, company_token, "viewer")
     viewer_update = await client.put(

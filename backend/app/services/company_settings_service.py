@@ -4,10 +4,14 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.model_preferences import (
+    DEFAULT_LLM_MODEL,
+    is_allowed_llm_model_preference,
+    resolve_llm_runtime_model,
+)
 from app.core.config import settings
 from app.models.company import Company
 
-_DEFAULT_LLM_MODEL = "llama-3.3-70b-versatile"
 _ALLOWED_PROCTORING_POLICY_MODES = {"observe_only", "strict_flagging"}
 
 
@@ -40,6 +44,10 @@ def get_company_ai_settings_response(company: Company) -> dict[str, Any]:
     provider = _runtime_provider_name()
     runtime_applied_fields = ["proctoring_policy_mode"]
     stored_preference_fields = [key for key in stored.keys() if key != "proctoring_policy_mode"]
+    if is_allowed_llm_model_preference(stored.get("interviewer_model_preference")):
+        runtime_applied_fields.append("interviewer_model_preference")
+    if is_allowed_llm_model_preference(stored.get("assessor_model_preference")):
+        runtime_applied_fields.append("assessor_model_preference")
 
     configured_policy = (settings.PROCTORING_POLICY_MODE or "").strip().lower()
     if configured_policy not in _ALLOWED_PROCTORING_POLICY_MODES:
@@ -48,10 +56,10 @@ def get_company_ai_settings_response(company: Company) -> dict[str, Any]:
     return {
         "proctoring_policy_mode": stored.get("proctoring_policy_mode") or configured_policy,
         "interviewer_provider": provider,
-        "interviewer_runtime_model": _DEFAULT_LLM_MODEL if provider != "disabled" else "disabled",
+        "interviewer_runtime_model": resolve_llm_runtime_model(stored.get("interviewer_model_preference")) if provider != "disabled" else "disabled",
         "interviewer_model_preference": stored.get("interviewer_model_preference"),
         "assessor_provider": provider,
-        "assessor_runtime_model": _DEFAULT_LLM_MODEL if provider != "disabled" else "disabled",
+        "assessor_runtime_model": resolve_llm_runtime_model(stored.get("assessor_model_preference")) if provider != "disabled" else "disabled",
         "assessor_model_preference": stored.get("assessor_model_preference"),
         "tts_provider": settings.TTS_PROVIDER,
         "tts_fallback_provider": settings.TTS_FALLBACK_PROVIDER,
