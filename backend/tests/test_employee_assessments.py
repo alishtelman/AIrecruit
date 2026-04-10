@@ -699,6 +699,157 @@ def allow_request(user_id: str, now: int, limit: int = 5, window_seconds: int = 
 
 
 @pytest.mark.asyncio
+async def test_employee_assessment_supports_sql_live_module_and_report_summary(
+    client: AsyncClient,
+    company_token: str,
+):
+    employee_email = f"sqllive_{uuid.uuid4().hex[:8]}@example.com"
+    assessment = await _create_assessment(
+        client,
+        company_token,
+        employee_email,
+        "SQL Live Candidate",
+        module_plan=[
+            {
+                "module_type": "adaptive_interview",
+                "title": "Core Interview",
+            },
+            {
+                "module_id": "sql_live_main",
+                "module_type": "sql_live",
+                "title": "SQL Live",
+                "config": {"scenario_id": "customer_revenue_rollup"},
+            },
+        ],
+    )
+    candidate_token = await _register_candidate(client, employee_email, "SQL Live Candidate")
+    await _upload_resume(client, candidate_token)
+
+    first_start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert first_start_resp.status_code == 200, first_start_resp.text
+    first_interview_id = first_start_resp.json()["interview_id"]
+    await _answer_all_questions(client, candidate_token, first_interview_id)
+
+    first_finish_resp = await client.post(
+        f"/api/v1/interviews/{first_interview_id}/finish",
+        headers=auth_headers(candidate_token),
+    )
+    assert first_finish_resp.status_code == 200, first_finish_resp.text
+    first_finish_data = first_finish_resp.json()
+    assert first_finish_data["assessment_progress"] is not None
+    assert first_finish_data["assessment_progress"]["has_remaining_modules"] is True
+    assert first_finish_data["assessment_progress"]["current_module_type"] == "sql_live"
+
+    sql_start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert sql_start_resp.status_code == 200, sql_start_resp.text
+    sql_interview_id = sql_start_resp.json()["interview_id"]
+
+    detail_resp = await client.get(
+        f"/api/v1/interviews/{sql_interview_id}",
+        headers=auth_headers(candidate_token),
+    )
+    assert detail_resp.status_code == 200, detail_resp.text
+    detail = detail_resp.json()
+    assert detail["module_session"] is not None
+    assert detail["module_session"]["module_type"] == "sql_live"
+    assert detail["module_session"]["stage_key"] == "schema_review"
+    assert detail["module_session"]["stage_count"] == 3
+
+    artifact_resp = await client.put(
+        f"/api/v1/interviews/{sql_interview_id}/coding-artifact",
+        headers=auth_headers(candidate_token),
+        json={
+            "language": "sql",
+            "code": """
+SELECT
+  c.name AS customer_name,
+  COUNT(o.id) AS completed_order_count,
+  SUM(o.total_amount) AS completed_revenue
+FROM customers c
+JOIN orders o ON o.customer_id = c.id
+WHERE c.is_active = 1
+  AND o.status = 'completed'
+  AND o.created_at >= '2024-03-01'
+  AND o.created_at < '2024-04-01'
+GROUP BY c.id, c.name
+HAVING SUM(o.total_amount) >= 100
+ORDER BY completed_revenue DESC, customer_name ASC
+""",
+        },
+    )
+    assert artifact_resp.status_code == 200, artifact_resp.text
+    artifact = artifact_resp.json()
+    assert artifact["language"] == "sql"
+    assert "customer_name" in artifact["code"]
+
+    sql_answer = (
+        "I would verify the join cardinality first, make sure only completed March orders are included, "
+        "check the aliases against the expected output, and validate the result with a control query per customer "
+        "before considering indexes on status, created_at, and customer_id."
+    )
+    await _answer_all_questions(
+        client,
+        candidate_token,
+        sql_interview_id,
+        message=sql_answer,
+    )
+
+    final_finish_resp = await client.post(
+        f"/api/v1/interviews/{sql_interview_id}/finish",
+        headers=auth_headers(candidate_token),
+    )
+    assert final_finish_resp.status_code == 200, final_finish_resp.text
+    final_finish_data = final_finish_resp.json()
+    final_report_id = final_finish_data.get("report_id")
+    if not final_report_id:
+        final_report_id = await _wait_for_report_id(client, candidate_token, sql_interview_id)
+
+    company_report_resp = await client.get(
+        f"/api/v1/company/reports/{final_report_id}",
+        headers=auth_headers(company_token),
+    )
+    assert company_report_resp.status_code == 200, company_report_resp.text
+    company_report = company_report_resp.json()
+    assert company_report["module_session"] is not None
+    assert company_report["module_session"]["module_type"] == "sql_live"
+    assert company_report["sql_live_summary"] is not None
+    summary = company_report["sql_live_summary"]
+    assert summary["stage_count"] == 3
+    assert summary["overall_score"] is not None
+    assert summary["validation_score"] is not None
+    assert len(summary["rubric_scores"]) == 4
+    assert summary["validation_checks"]
+    assert summary["query_excerpt"] is not None
+    assert "customer_name" in summary["query_excerpt"]
+    assert summary["has_query_submission"] is True
+    assert any(check["check_key"] == "expected_rows" for check in summary["validation_checks"])
+    assert any(check["status"] == "passed" for check in summary["validation_checks"])
+    assert len(summary["stages"]) == 3
+    assert all(stage["stage_title"] for stage in summary["stages"])
+    assert company_report["per_question_analysis"]
+    assert any(item.get("stage_title") for item in company_report["per_question_analysis"])
+
+    completed_assessments_resp = await client.get(
+        "/api/v1/company/assessments",
+        headers=auth_headers(company_token),
+    )
+    assert completed_assessments_resp.status_code == 200, completed_assessments_resp.text
+    completed = next(row for row in completed_assessments_resp.json() if row["id"] == assessment["id"])
+    assert completed["status"] == "completed"
+    assert completed["interview_id"] == sql_interview_id
+    assert completed["module_plan"][1]["status"] == "completed"
+    assert completed["module_plan"][1]["interview_id"] == sql_interview_id
+
+
+@pytest.mark.asyncio
 async def test_employee_assessment_rejects_module_plan_without_initial_adaptive_interview(
     client: AsyncClient,
     company_token: str,

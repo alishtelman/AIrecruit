@@ -109,6 +109,7 @@
       "questionsCount": "8 структурированных вопросов",
       "systemDesignQuestions": "3 структурированных design-этапа",
       "codingTaskQuestions": "3 этапа coding task",
+      "sqlLiveQuestions": "3 SQL-этапа с sandbox validation",
       "genericQuestions": "структурированный модуль",
       "questionsSuffix": "и обычно она занимает 15-20 минут.",
       "visibilityPrefix": "Ваши ответы будут проанализированы ИИ, а результаты останутся видимыми только для ",
@@ -986,6 +987,7 @@
     "stageLabel": "Текущий этап",
     "stageProgress": "Этап {current} из {total}",
     "codingTaskHint": "Используйте code workspace для самого решения, а поле ответа оставьте для пояснения логики, тестов и trade-offs.",
+    "sqlTaskHint": "Используйте SQL workspace для самого запроса, а поле ответа оставьте для пояснения схемы, проверки результата и optimisation trade-offs.",
     "codingWorkspace": {
       "title": "Кодовое рабочее поле",
       "description": "Черновик решения пишите здесь, а в поле ответа ниже поясняйте trade-offs, тесты и edge cases.",
@@ -998,6 +1000,18 @@
       "saveFailed": "Не удалось сохранить черновик coding task",
       "placeholder": "Пишите решение задачи здесь. Этот черновик будет сохранён как raw artifact для итогового отчёта.",
       "answerPlaceholder": "Опишите ключевые решения, тесты, edge cases и trade-offs..."
+    },
+    "sqlWorkspace": {
+      "title": "SQL workspace",
+      "description": "Черновик SQL-запроса пишите здесь, а в поле ответа ниже поясняйте joins, проверку результата и варианты оптимизации.",
+      "save": "Сохранить запрос",
+      "saving": "Сохраняем...",
+      "saved": "Запрос сохранён",
+      "unsaved": "Есть несохранённые изменения",
+      "failed": "Не удалось сохранить",
+      "saveFailed": "Не удалось сохранить черновик SQL",
+      "placeholder": "Пишите SQL-запрос здесь. Этот черновик будет сохранён как raw artifact для итогового отчёта и sandbox validation.",
+      "answerPlaceholder": "Опишите допущения по схеме, шаги проверки результата и соображения по производительности..."
     },
     "completeTitle": "Интервью завершено",
     "completeDescription": "Вы ответили на все {count} вопросов. Теперь можно сгенерировать отчёт.",
@@ -1137,6 +1151,26 @@
         "code_communication": "Объяснение кода",
         "functional_coverage": "Функциональное покрытие",
         "hidden_test_execution": "Скрытые тесты"
+      }
+    },
+    "sqlLive": {
+      "eyebrow": "Evidence по SQL task",
+      "title": "Модуль SQL live",
+      "task": "Задача",
+      "stageCount": "{count} этапа",
+      "overallScore": "Оценка модуля",
+      "validationScore": "Оценка validation",
+      "validationChecks": "Проверочные критерии",
+      "stageScore": "Оценка этапа",
+      "answerQuality": "Качество evidence",
+      "questionsCovered": "{count} вопроса",
+      "noEvidence": "По этому этапу пока не зафиксировано evidence.",
+      "queryExcerpt": "Фрагмент присланного SQL",
+      "rubrics": {
+        "schema_planning": "Планирование схемы",
+        "query_construction": "Построение запроса",
+        "validation_reasoning": "Логика валидации",
+        "query_correctness": "Корректность запроса"
       }
     },
     "summaryModel": {

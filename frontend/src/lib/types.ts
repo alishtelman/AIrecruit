@@ -727,6 +727,7 @@ export interface AssessmentReport {
   module_session: ReportModuleSession | null;
   system_design_summary: SystemDesignSummary | null;
   coding_task_summary: CodingTaskSummary | null;
+  sql_live_summary: SqlLiveSummary | null;
 }
 
 export interface ReportModuleSession {
@@ -804,4 +805,33 @@ export interface CodingTaskSummary {
   implementation_excerpt: string | null;
   has_code_submission: boolean;
   code_signal_score: number | null;
+}
+
+export interface SqlLiveStageSummary {
+  stage_key: string;
+  stage_title: string;
+  question_numbers: number[];
+  average_answer_quality: number | null;
+  stage_score: number | null;
+  evidence_items: string[];
+}
+
+export interface SqlLiveRubricScore {
+  rubric_key: string;
+  score: number | null;
+}
+
+export interface SqlLiveSummary {
+  module_title: string | null;
+  scenario_id: string | null;
+  scenario_title: string | null;
+  scenario_prompt: string | null;
+  stage_count: number;
+  overall_score: number | null;
+  validation_score: number | null;
+  rubric_scores: SqlLiveRubricScore[];
+  validation_checks: CodingTaskCoverageCheck[];
+  stages: SqlLiveStageSummary[];
+  query_excerpt: string | null;
+  has_query_submission: boolean;
 }

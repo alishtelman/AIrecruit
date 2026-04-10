@@ -766,6 +766,10 @@ def _fallback_question_for_context(ctx: InterviewContext, *, prefer_secondary_ma
             coding_task_depth = _coding_task_depth_question(ctx)
             if coding_task_depth:
                 return coding_task_depth
+        if ctx.module_type == "sql_live":
+            sql_live_depth = _sql_live_depth_question(ctx)
+            if sql_live_depth:
+                return sql_live_depth
         return _trim_question(get_depth_escalation_question(ctx.language))
     if ctx.module_type == "system_design":
         system_design_main = _system_design_main_question(ctx)
@@ -775,6 +779,10 @@ def _fallback_question_for_context(ctx: InterviewContext, *, prefer_secondary_ma
         coding_task_main = _coding_task_main_question(ctx)
         if coding_task_main:
             return coding_task_main
+    if ctx.module_type == "sql_live":
+        sql_live_main = _sql_live_main_question(ctx)
+        if sql_live_main:
+            return sql_live_main
 
     anchored = _competency_anchored_main_question(ctx, preference_index=1 if prefer_secondary_main_topic else 0)
     if anchored:
@@ -929,6 +937,76 @@ def _coding_task_depth_question(ctx: InterviewContext) -> str | None:
     return _trim_question(question)
 
 
+def _sql_live_main_question(ctx: InterviewContext) -> str | None:
+    if ctx.module_type != "sql_live":
+        return None
+
+    scenario_title = ctx.module_scenario_title or (
+        "the SQL task" if ctx.language == "en" else "SQL-задачу"
+    )
+    match ctx.module_stage_key:
+        case "schema_review":
+            question = (
+                f'For the SQL task "{scenario_title}", which tables, joins, filters, and aggregates do you need before you write the query?'
+                if ctx.language == "en"
+                else f'Для SQL-задачи «{scenario_title}» какие таблицы, join, фильтры и агрегаты вам нужны до написания запроса?'
+            )
+        case "query_authoring":
+            question = (
+                f'Please write the SQL query for "{scenario_title}" and explain the key join, grouping, and ordering choices.'
+                if ctx.language == "en"
+                else f'Пожалуйста, напишите SQL-запрос для «{scenario_title}» и объясните ключевые решения по join, grouping и ordering.'
+            )
+        case "result_review":
+            question = (
+                f'How would you validate the result for "{scenario_title}", and what would you optimize first if the dataset grows?'
+                if ctx.language == "en"
+                else f'Как вы бы проверили результат для «{scenario_title}» и что бы оптимизировали первым при росте объёма данных?'
+            )
+        case _:
+            question = (
+                f'Walk me through how you would solve "{scenario_title}" in SQL and what result shape you expect.'
+                if ctx.language == "en"
+                else f'Проведите меня по тому, как вы бы решили «{scenario_title}» на SQL и какую форму результата ожидаете.'
+            )
+    return _trim_question(question)
+
+
+def _sql_live_depth_question(ctx: InterviewContext) -> str | None:
+    if ctx.module_type != "sql_live":
+        return None
+
+    scenario_title = ctx.module_scenario_title or (
+        "the SQL task" if ctx.language == "en" else "эту SQL-задачу"
+    )
+    match ctx.module_stage_key:
+        case "schema_review":
+            question = (
+                f'Which row or business rule in "{scenario_title}" is easiest to mis-handle, and how would you account for it in the query design?'
+                if ctx.language == "en"
+                else f'Какую строку или бизнес-правило в задаче «{scenario_title}» проще всего обработать неправильно и как вы учтёте это в дизайне запроса?'
+            )
+        case "query_authoring":
+            question = (
+                f'In your SQL for "{scenario_title}", which clause does the real correctness work, and why did you structure it that way?'
+                if ctx.language == "en"
+                else f'В вашем SQL для «{scenario_title}» какой clause делает основную работу по корректности и почему вы построили запрос именно так?'
+            )
+        case "result_review":
+            question = (
+                f'What incorrect result would still worry you in "{scenario_title}", and which validation query or test would you run first?'
+                if ctx.language == "en"
+                else f'Какой некорректный результат в задаче «{scenario_title}» всё ещё вызывает у вас сомнение и какой validation query или тест вы бы запустили первым?'
+            )
+        case _:
+            question = (
+                f'Which part of your SQL solution for "{scenario_title}" is the most fragile today, and how would you harden it?'
+                if ctx.language == "en"
+                else f'Какая часть вашего SQL-решения для «{scenario_title}» сейчас самая хрупкая и как бы вы её усилили?'
+            )
+    return _trim_question(question)
+
+
 # ---------------------------------------------------------------------------
 # LLM implementation (Groq)
 # ---------------------------------------------------------------------------
@@ -1013,6 +1091,17 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
             prompt += f"Задание: {ctx.module_scenario_title}\n"
         if ctx.module_scenario_prompt:
             prompt += f"Описание задачи: {ctx.module_scenario_prompt}\n"
+    if ctx.module_type == "sql_live":
+        prompt += (
+            "\n## Режим модуля: SQL Live\n"
+            "Ты ведёшь SQL task интервью. Кандидат может вставлять SQL-запрос прямо в workspace или в чат.\n"
+            "Держись одного SQL-сценария до конца модуля. Не переключайся обратно на resume-driven вопросы и не уводи разговор в общие карьерные темы.\n"
+            "Если кандидат уже написал запрос, проси объяснить логику join/filter/grouping, валидацию результата и возможные оптимизации.\n"
+        )
+        if ctx.module_scenario_title:
+            prompt += f"SQL-задача: {ctx.module_scenario_title}\n"
+        if ctx.module_scenario_prompt:
+            prompt += f"Описание SQL-задачи: {ctx.module_scenario_prompt}\n"
         if ctx.module_stage_title:
             prompt += f"Текущий этап: {ctx.module_stage_title}\n"
         if ctx.module_stage_prompt:
@@ -1301,6 +1390,10 @@ class LLMInterviewer:
             coding_task_main = _coding_task_main_question(ctx)
             if coding_task_main:
                 return coding_task_main
+        if ctx.module_type == "sql_live" and ctx.question_type == "main":
+            sql_live_main = _sql_live_main_question(ctx)
+            if sql_live_main:
+                return sql_live_main
         if ctx.topic_phase == "intro" and not ctx.is_followup_mode:
             return _resume_anchored_first_question(ctx)
         if ctx.topic_phase == "behavioral_closing" and ctx.question_type == "main":
@@ -1482,6 +1575,10 @@ class MockInterviewer:
                     coding_task_depth = _coding_task_depth_question(ctx)
                     if coding_task_depth:
                         return coding_task_depth
+                if ctx.module_type == "sql_live":
+                    sql_live_depth = _sql_live_depth_question(ctx)
+                    if sql_live_depth:
+                        return sql_live_depth
                 return get_depth_escalation_question(ctx.language)
             case _:
                 if ctx.module_type == "system_design":
@@ -1492,6 +1589,10 @@ class MockInterviewer:
                     coding_task_main = _coding_task_main_question(ctx)
                     if coding_task_main:
                         return coding_task_main
+                if ctx.module_type == "sql_live":
+                    sql_live_main = _sql_live_main_question(ctx)
+                    if sql_live_main:
+                        return sql_live_main
                 if ctx.topic_phase == "intro":
                     return _resume_anchored_first_question(ctx)
                 if ctx.topic_phase == "behavioral_closing":

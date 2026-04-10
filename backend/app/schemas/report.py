@@ -157,6 +157,35 @@ class CodingTaskSummary(BaseModel):
     code_signal_score: float | None = None
 
 
+class SqlLiveStageSummary(BaseModel):
+    stage_key: str
+    stage_title: str
+    question_numbers: list[int] = []
+    average_answer_quality: float | None = None
+    stage_score: float | None = None
+    evidence_items: list[str] = []
+
+
+class SqlLiveRubricScore(BaseModel):
+    rubric_key: str
+    score: float | None = None
+
+
+class SqlLiveSummary(BaseModel):
+    module_title: str | None = None
+    scenario_id: str | None = None
+    scenario_title: str | None = None
+    scenario_prompt: str | None = None
+    stage_count: int = 0
+    overall_score: float | None = None
+    validation_score: float | None = None
+    rubric_scores: list[SqlLiveRubricScore] = []
+    validation_checks: list[CodingTaskCoverageCheck] = []
+    stages: list[SqlLiveStageSummary] = []
+    query_excerpt: str | None = None
+    has_query_submission: bool = False
+
+
 class AssessmentReportResponse(BaseModel):
     id: uuid.UUID
     interview_id: uuid.UUID
@@ -193,6 +222,7 @@ class AssessmentReportResponse(BaseModel):
     module_session: ReportModuleSession | None = None
     system_design_summary: SystemDesignSummary | None = None
     coding_task_summary: CodingTaskSummary | None = None
+    sql_live_summary: SqlLiveSummary | None = None
 
     model_config = {"from_attributes": True}
 
@@ -585,6 +615,179 @@ class AssessmentReportResponse(BaseModel):
                             "implementation_excerpt": implementation_excerpt,
                             "has_code_submission": has_code_submission,
                             "code_signal_score": code_signal_score,
+                        },
+                    )
+                elif module_type == "sql_live":
+                    question_history = interview_meta.get("module_question_history") if isinstance(interview_meta.get("module_question_history"), list) else []
+                    stage_map: dict[int, dict[str, str | None]] = {}
+                    for item in question_history:
+                        if not isinstance(item, dict):
+                            continue
+                        try:
+                            assistant_turn = int(item.get("assistant_turn") or 0)
+                        except (TypeError, ValueError):
+                            assistant_turn = 0
+                        if assistant_turn <= 0:
+                            continue
+                        stage_map[assistant_turn] = {
+                            "stage_key": str(item.get("stage_key") or "").strip() or None,
+                            "stage_title": str(item.get("stage_title") or "").strip() or None,
+                        }
+
+                    enriched_per_q: list[dict] = []
+                    if isinstance(per_question_analysis, list):
+                        for raw_item in per_question_analysis:
+                            if isinstance(raw_item, dict):
+                                question_number = raw_item.get("question_number")
+                                try:
+                                    question_number = int(question_number or 0)
+                                except (TypeError, ValueError):
+                                    question_number = 0
+                                stage_meta = stage_map.get(question_number, {})
+                                enriched = dict(raw_item)
+                                if stage_meta.get("stage_key"):
+                                    enriched["stage_key"] = stage_meta["stage_key"]
+                                if stage_meta.get("stage_title"):
+                                    enriched["stage_title"] = stage_meta["stage_title"]
+                                enriched_per_q.append(enriched)
+                            else:
+                                enriched_per_q.append(raw_item)
+                        _set_value(data, "per_question_analysis", enriched_per_q)
+                    else:
+                        enriched_per_q = []
+
+                    explicit_evaluation = (
+                        full_report_json.get("sql_live_evaluation")
+                        if isinstance(full_report_json.get("sql_live_evaluation"), dict)
+                        else None
+                    )
+                    stages: list[dict] = []
+                    rubric_scores = []
+                    validation_checks = []
+                    overall_score = None
+                    validation_score = None
+                    query_excerpt = None
+                    has_query_submission = False
+                    if explicit_evaluation:
+                        explicit_stages = explicit_evaluation.get("stages")
+                        if isinstance(explicit_stages, list):
+                            for stage in explicit_stages:
+                                if not isinstance(stage, dict):
+                                    continue
+                                stages.append(
+                                    {
+                                        "stage_key": str(stage.get("stage_key") or "").strip(),
+                                        "stage_title": str(stage.get("stage_title") or "").strip(),
+                                        "question_numbers": [
+                                            int(item)
+                                            for item in stage.get("question_numbers", [])
+                                            if isinstance(item, int)
+                                        ],
+                                        "average_answer_quality": stage.get("average_answer_quality"),
+                                        "stage_score": stage.get("stage_score"),
+                                        "evidence_items": [
+                                            str(item).strip()
+                                            for item in stage.get("evidence_items", [])
+                                            if str(item).strip()
+                                        ],
+                                    }
+                                )
+                        explicit_rubrics = explicit_evaluation.get("rubric_scores")
+                        if isinstance(explicit_rubrics, list):
+                            rubric_scores = [
+                                {
+                                    "rubric_key": str(item.get("rubric_key") or "").strip(),
+                                    "score": item.get("score"),
+                                }
+                                for item in explicit_rubrics
+                                if isinstance(item, dict) and str(item.get("rubric_key") or "").strip()
+                            ]
+                        explicit_checks = explicit_evaluation.get("validation_checks")
+                        if isinstance(explicit_checks, list):
+                            validation_checks = [
+                                {
+                                    "check_key": str(item.get("check_key") or "").strip(),
+                                    "title": str(item.get("title") or "").strip(),
+                                    "status": str(item.get("status") or "missed").strip(),
+                                    "score": item.get("score"),
+                                    "evidence": str(item.get("evidence") or "").strip() or None,
+                                }
+                                for item in explicit_checks
+                                if isinstance(item, dict) and str(item.get("check_key") or "").strip()
+                            ]
+                        overall_score = explicit_evaluation.get("overall_score")
+                        validation_score = explicit_evaluation.get("validation_score")
+                        query_excerpt = str(explicit_evaluation.get("query_excerpt") or "").strip() or None
+                        has_query_submission = bool(explicit_evaluation.get("has_query_submission"))
+                    else:
+                        for stage in stage_plan:
+                            if not isinstance(stage, dict):
+                                continue
+                            stage_key = str(stage.get("stage_key") or "").strip()
+                            stage_title = str(stage.get("stage_title") or "").strip()
+                            if not stage_key or not stage_title:
+                                continue
+                            stage_questions = [
+                                item for item in enriched_per_q
+                                if isinstance(item, dict) and item.get("stage_key") == stage_key
+                            ]
+                            qualities = [
+                                float(item.get("answer_quality"))
+                                for item in stage_questions
+                                if isinstance(item.get("answer_quality"), (int, float))
+                            ]
+                            evidence_items = [
+                                str(item.get("evidence") or "").strip()
+                                for item in stage_questions
+                                if str(item.get("evidence") or "").strip()
+                            ]
+                            stages.append(
+                                {
+                                    "stage_key": stage_key,
+                                    "stage_title": stage_title,
+                                    "question_numbers": [
+                                        int(item.get("question_number"))
+                                        for item in stage_questions
+                                        if isinstance(item.get("question_number"), int)
+                                    ],
+                                    "average_answer_quality": round(sum(qualities) / len(qualities), 2) if qualities else None,
+                                    "stage_score": None,
+                                    "evidence_items": evidence_items[:3],
+                                }
+                            )
+
+                    _set_value(
+                        data,
+                        "sql_live_summary",
+                        {
+                            "module_title": (
+                                explicit_evaluation.get("module_title")
+                                if explicit_evaluation and explicit_evaluation.get("module_title")
+                                else module_title
+                            ),
+                            "scenario_id": (
+                                explicit_evaluation.get("scenario_id")
+                                if explicit_evaluation and explicit_evaluation.get("scenario_id")
+                                else module_session["scenario_id"] if module_session else None
+                            ),
+                            "scenario_title": (
+                                explicit_evaluation.get("scenario_title")
+                                if explicit_evaluation and explicit_evaluation.get("scenario_title")
+                                else module_session["scenario_title"] if module_session else None
+                            ),
+                            "scenario_prompt": (
+                                explicit_evaluation.get("scenario_prompt")
+                                if explicit_evaluation and explicit_evaluation.get("scenario_prompt")
+                                else module_session["scenario_prompt"] if module_session else None
+                            ),
+                            "stage_count": int(explicit_evaluation.get("stage_count") or len(stage_plan)) if explicit_evaluation else len(stage_plan),
+                            "overall_score": overall_score,
+                            "validation_score": validation_score,
+                            "rubric_scores": rubric_scores,
+                            "validation_checks": validation_checks,
+                            "stages": stages,
+                            "query_excerpt": query_excerpt,
+                            "has_query_submission": has_query_submission,
                         },
                     )
         return data

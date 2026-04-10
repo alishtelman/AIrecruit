@@ -25,6 +25,7 @@ _INTERVIEW_FLOW_MODULE_TYPES = {
     _DEFAULT_ASSESSMENT_MODULE_TYPE,
     "system_design",
     "coding_task",
+    "sql_live",
 }
 _ASSESSMENT_MODULE_TITLE_MAP = {
     "adaptive_interview": "Adaptive Interview",

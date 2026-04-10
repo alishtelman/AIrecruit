@@ -147,6 +147,7 @@ async def _get_assessment_progress(
 
 _SYSTEM_DESIGN_MODULE_TYPE = "system_design"
 _CODING_TASK_MODULE_TYPE = "coding_task"
+_SQL_LIVE_MODULE_TYPE = "sql_live"
 _SYSTEM_DESIGN_STAGE_KEYS = (
     "requirements",
     "high_level_design",
@@ -156,6 +157,11 @@ _CODING_TASK_STAGE_KEYS = (
     "task_brief",
     "implementation",
     "review",
+)
+_SQL_LIVE_STAGE_KEYS = (
+    "schema_review",
+    "query_authoring",
+    "result_review",
 )
 _SYSTEM_DESIGN_SCENARIOS: dict[str, dict[str, str]] = {
     "backend_engineer": {
@@ -287,6 +293,29 @@ _CODING_TASK_DEFAULT_SCENARIO = {
     "prompt_en": "Implement a function that evaluates structured rules, returns deterministic decisions, and explains edge cases and test coverage.",
     "prompt_ru": "Реализуйте функцию, которая оценивает структурированные правила, возвращает детерминированное решение и объясняет edge cases и покрытие тестами.",
 }
+_SQL_LIVE_SCENARIOS: dict[str, dict[str, str]] = {
+    "backend_engineer": {
+        "scenario_id": "customer_revenue_rollup",
+        "title_en": "customer revenue rollup",
+        "title_ru": "агрегация выручки по клиентам",
+        "prompt_en": "Write a SQL query over customers and orders that returns the columns customer_name, completed_order_count, and completed_revenue for each active customer in March 2024. Include only customers with revenue >= 100 and order the result by completed_revenue descending, then customer_name ascending.",
+        "prompt_ru": "Напишите SQL-запрос по таблицам customers и orders, который вернёт колонки customer_name, completed_order_count и completed_revenue для каждого активного клиента за март 2024 года. Оставьте только клиентов с выручкой >= 100 и отсортируйте результат по completed_revenue по убыванию, затем по customer_name по возрастанию.",
+    },
+    "data_scientist": {
+        "scenario_id": "customer_revenue_rollup",
+        "title_en": "customer revenue rollup",
+        "title_ru": "агрегация выручки по клиентам",
+        "prompt_en": "Write a SQL query over customers and orders that returns the columns customer_name, completed_order_count, and completed_revenue for each active customer in March 2024. Include only customers with revenue >= 100 and order the result by completed_revenue descending, then customer_name ascending.",
+        "prompt_ru": "Напишите SQL-запрос по таблицам customers и orders, который вернёт колонки customer_name, completed_order_count и completed_revenue для каждого активного клиента за март 2024 года. Оставьте только клиентов с выручкой >= 100 и отсортируйте результат по completed_revenue по убыванию, затем по customer_name по возрастанию.",
+    },
+}
+_SQL_LIVE_DEFAULT_SCENARIO = {
+    "scenario_id": "customer_revenue_rollup",
+    "title_en": "customer revenue rollup",
+    "title_ru": "агрегация выручки по клиентам",
+    "prompt_en": "Write a SQL query over customers and orders that returns the columns customer_name, completed_order_count, and completed_revenue for each active customer in March 2024. Include only customers with revenue >= 100 and order the result by completed_revenue descending, then customer_name ascending.",
+    "prompt_ru": "Напишите SQL-запрос по таблицам customers и orders, который вернёт колонки customer_name, completed_order_count и completed_revenue для каждого активного клиента за март 2024 года. Оставьте только клиентов с выручкой >= 100 и отсортируйте результат по completed_revenue по убыванию, затем по customer_name по возрастанию.",
+}
 
 
 def _module_title_fallback(module_type: str) -> str:
@@ -294,7 +323,11 @@ def _module_title_fallback(module_type: str) -> str:
 
 
 def _is_staged_module_type(module_type: str | None) -> bool:
-    return module_type in {_SYSTEM_DESIGN_MODULE_TYPE, _CODING_TASK_MODULE_TYPE}
+    return module_type in {_SYSTEM_DESIGN_MODULE_TYPE, _CODING_TASK_MODULE_TYPE, _SQL_LIVE_MODULE_TYPE}
+
+
+def _is_workspace_artifact_module_type(module_type: str | None) -> bool:
+    return module_type in {_CODING_TASK_MODULE_TYPE, _SQL_LIVE_MODULE_TYPE}
 
 
 def _select_system_design_scenario(
@@ -324,6 +357,23 @@ def _select_coding_task_scenario(
 ) -> dict[str, str]:
     config = module_config if isinstance(module_config, dict) else {}
     scenario = dict(_CODING_TASK_SCENARIOS.get(target_role, _CODING_TASK_DEFAULT_SCENARIO))
+    title_override = str(config.get("scenario_title") or "").strip()
+    prompt_override = str(config.get("scenario_prompt") or "").strip()
+    is_en = language == "en"
+    return {
+        "scenario_id": str(config.get("scenario_id") or scenario["scenario_id"]).strip() or scenario["scenario_id"],
+        "title": title_override or (scenario["title_en"] if is_en else scenario["title_ru"]),
+        "prompt": prompt_override or (scenario["prompt_en"] if is_en else scenario["prompt_ru"]),
+    }
+
+
+def _select_sql_live_scenario(
+    target_role: str,
+    language: str,
+    module_config: dict[str, Any] | None,
+) -> dict[str, str]:
+    config = module_config if isinstance(module_config, dict) else {}
+    scenario = dict(_SQL_LIVE_SCENARIOS.get(target_role, _SQL_LIVE_DEFAULT_SCENARIO))
     title_override = str(config.get("scenario_title") or "").strip()
     prompt_override = str(config.get("scenario_prompt") or "").strip()
     is_en = language == "en"
@@ -482,6 +532,80 @@ def _build_coding_task_topic_plan(
     return topic_plan, module_context
 
 
+def _build_sql_live_topic_plan(
+    *,
+    target_role: str,
+    language: str,
+    module_config: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    scenario = _select_sql_live_scenario(target_role, language, module_config)
+    is_en = language == "en"
+    stage_titles = {
+        "schema_review": "Schema & Query Plan" if is_en else "Схема и план запроса",
+        "query_authoring": "Query Authoring" if is_en else "Написание запроса",
+        "result_review": "Validation & Optimization" if is_en else "Проверка и оптимизация",
+    }
+    stage_prompts = {
+        "schema_review": (
+            "Clarify the relevant tables, join keys, filters, aggregation rules, and the shape of the final result before writing SQL."
+            if is_en
+            else "Уточните нужные таблицы, ключи join, фильтры, правила агрегации и форму итогового результата до написания SQL."
+        ),
+        "query_authoring": (
+            "Write the SQL query itself and explain the most important join, grouping, filtering, and ordering decisions."
+            if is_en
+            else "Напишите сам SQL-запрос и объясните ключевые решения по join, grouping, filtering и ordering."
+        ),
+        "result_review": (
+            "Explain how you would validate correctness, handle tricky rows, and improve readability or performance if the dataset grows."
+            if is_en
+            else "Объясните, как вы бы проверяли корректность, обрабатывали tricky rows и улучшали читаемость или производительность при росте данных."
+        ),
+    }
+    competencies_by_stage = {
+        "schema_review": ["Database Design & Optimization", "Problem Solving"],
+        "query_authoring": ["Database Design & Optimization", "Technical Communication"],
+        "result_review": ["Debugging & Problem Decomposition", "Ownership & Growth Mindset"],
+    }
+    stage_plan = [
+        {
+            "stage_key": stage_key,
+            "stage_title": stage_titles[stage_key],
+            "stage_prompt": stage_prompts[stage_key],
+        }
+        for stage_key in _SQL_LIVE_STAGE_KEYS
+    ]
+    topic_plan = [
+        {
+            "competencies": competencies_by_stage[item["stage_key"]],
+            "resume_anchor": None,
+            "verification_target": None,
+            "stage_key": item["stage_key"],
+            "stage_title": item["stage_title"],
+            "stage_prompt": item["stage_prompt"],
+            "scenario_id": scenario["scenario_id"],
+            "scenario_title": scenario["title"],
+            "scenario_prompt": scenario["prompt"],
+        }
+        for item in stage_plan
+    ]
+    module_context = {
+        "module_type": _SQL_LIVE_MODULE_TYPE,
+        "scenario_id": scenario["scenario_id"],
+        "scenario_title": scenario["title"],
+        "scenario_prompt": scenario["prompt"],
+        "stage_plan": stage_plan,
+        "question_history": [
+            {
+                "assistant_turn": 1,
+                "stage_key": stage_plan[0]["stage_key"],
+                "stage_title": stage_plan[0]["stage_title"],
+            }
+        ],
+    }
+    return topic_plan, module_context
+
+
 def _build_interview_module_session_payload(interview: Interview) -> InterviewModuleSessionResponse | None:
     state = interview.interview_state if isinstance(interview.interview_state, dict) else {}
     module_type = str(state.get("module_type") or "").strip().lower()
@@ -535,8 +659,8 @@ def _build_coding_task_artifact_response(interview: Interview) -> CodingTaskArti
 def _ensure_coding_task_interview(interview: Interview) -> None:
     state = interview.interview_state if isinstance(interview.interview_state, dict) else {}
     module_type = str(state.get("module_type") or "").strip().lower()
-    if module_type != _CODING_TASK_MODULE_TYPE:
-        raise CodingTaskArtifactUnavailableError("Coding artifact is only available for coding_task interviews.")
+    if not _is_workspace_artifact_module_type(module_type):
+        raise CodingTaskArtifactUnavailableError("Task workspace artifact is only available for coding_task or sql_live interviews.")
 
 
 def _build_module_stage_map(interview: Interview) -> dict[int, dict[str, str]]:
@@ -1907,6 +2031,15 @@ async def start_interview(
         max_q = len(topic_plan)
         role_max_cap = max_q
         min_questions_before_early_stop = max_q
+    elif normalized_module_type == _SQL_LIVE_MODULE_TYPE:
+        topic_plan, module_context = _build_sql_live_topic_plan(
+            target_role=target_role,
+            language=language,
+            module_config=safe_module_config,
+        )
+        max_q = len(topic_plan)
+        role_max_cap = max_q
+        min_questions_before_early_stop = max_q
     else:
         adaptive_max_q, adaptive_role_cap, adaptive_min_questions = _estimate_dynamic_question_budget(
             target_role=target_role,
@@ -2630,7 +2763,7 @@ async def add_candidate_message(
                 "interviewer_model_preference": workspace_ai_settings.get("interviewer_model_preference"),
                 "assessor_model_preference": workspace_ai_settings.get("assessor_model_preference"),
             }
-        if coding_task_artifact:
+        if coding_task_artifact and _is_workspace_artifact_module_type(module_type):
             interview.interview_state["coding_task_artifact"] = {
                 "language": _normalize_coding_task_language(coding_task_artifact.get("language")),
                 "code": str(coding_task_artifact.get("code") or "")[:50000],

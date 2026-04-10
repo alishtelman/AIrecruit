@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -1312,6 +1313,131 @@ _CODING_TASK_SCENARIO_COVERAGE_CHECKS = {
     ),
 }
 
+_SQL_LIVE_STAGE_WEIGHTS = {
+    "schema_review": 0.25,
+    "query_authoring": 0.45,
+    "result_review": 0.30,
+}
+
+_SQL_LIVE_STAGE_KEYWORDS = {
+    "schema_review": (
+        "table",
+        "join",
+        "filter",
+        "group",
+        "aggregate",
+        "customer",
+        "orders",
+        "status",
+        "date",
+        "march",
+        "active",
+    ),
+    "query_authoring": (
+        "select",
+        "from",
+        "join",
+        "where",
+        "group by",
+        "having",
+        "order by",
+        "sum(",
+        "count(",
+        "completed",
+    ),
+    "result_review": (
+        "validate",
+        "check",
+        "result",
+        "duplicate",
+        "null",
+        "index",
+        "performance",
+        "explain",
+        "test",
+        "sort",
+    ),
+}
+
+_SQL_LIVE_QUERY_HINTS = (
+    "select ",
+    "from ",
+    "join ",
+    "where ",
+    "group by",
+    "order by",
+    "having ",
+    "with ",
+)
+
+_SQL_LIVE_SCENARIO_VALIDATION_DEFS = {
+    "customer_revenue_rollup": {
+        "schema_statements": (
+            """
+            CREATE TABLE customers (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                is_active INTEGER NOT NULL
+            );
+            """,
+            """
+            CREATE TABLE orders (
+                id INTEGER PRIMARY KEY,
+                customer_id INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                total_amount REAL NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            """,
+        ),
+        "seed_statements": (
+            "INSERT INTO customers (id, name, is_active) VALUES (1, 'Alice', 1);",
+            "INSERT INTO customers (id, name, is_active) VALUES (2, 'Bob', 1);",
+            "INSERT INTO customers (id, name, is_active) VALUES (3, 'Carol', 0);",
+            "INSERT INTO customers (id, name, is_active) VALUES (4, 'Dana', 1);",
+            "INSERT INTO orders (id, customer_id, status, total_amount, created_at) VALUES (1, 1, 'completed', 120, '2024-03-05');",
+            "INSERT INTO orders (id, customer_id, status, total_amount, created_at) VALUES (2, 1, 'completed', 80, '2024-03-18');",
+            "INSERT INTO orders (id, customer_id, status, total_amount, created_at) VALUES (3, 1, 'pending', 40, '2024-03-20');",
+            "INSERT INTO orders (id, customer_id, status, total_amount, created_at) VALUES (4, 1, 'completed', 50, '2024-02-27');",
+            "INSERT INTO orders (id, customer_id, status, total_amount, created_at) VALUES (5, 2, 'completed', 60, '2024-03-09');",
+            "INSERT INTO orders (id, customer_id, status, total_amount, created_at) VALUES (6, 2, 'completed', 40, '2024-03-11');",
+            "INSERT INTO orders (id, customer_id, status, total_amount, created_at) VALUES (7, 2, 'refunded', 25, '2024-03-14');",
+            "INSERT INTO orders (id, customer_id, status, total_amount, created_at) VALUES (8, 3, 'completed', 500, '2024-03-12');",
+            "INSERT INTO orders (id, customer_id, status, total_amount, created_at) VALUES (9, 4, 'completed', 110, '2024-03-21');",
+            "INSERT INTO orders (id, customer_id, status, total_amount, created_at) VALUES (10, 4, 'completed', 20, '2024-04-02');",
+            "INSERT INTO orders (id, customer_id, status, total_amount, created_at) VALUES (11, 4, 'pending', 70, '2024-03-25');",
+        ),
+        "expected_columns": ("customer_name", "completed_order_count", "completed_revenue"),
+        "expected_rows": (
+            ("Alice", 2, 200.0),
+            ("Dana", 1, 110.0),
+            ("Bob", 2, 100.0),
+        ),
+        "check_defs": (
+            {
+                "check_key": "query_is_select_only",
+                "title_en": "Uses a single SELECT-style query",
+                "title_ru": "Использует один SELECT-style запрос",
+            },
+            {
+                "check_key": "query_executes",
+                "title_en": "Executes successfully against the sandbox dataset",
+                "title_ru": "Успешно выполняется на sandbox dataset",
+            },
+            {
+                "check_key": "expected_columns",
+                "title_en": "Returns the expected output columns",
+                "title_ru": "Возвращает ожидаемые колонки результата",
+            },
+            {
+                "check_key": "expected_rows",
+                "title_en": "Returns the expected result rows in the required order",
+                "title_ru": "Возвращает ожидаемые строки в нужном порядке",
+            },
+        ),
+    },
+}
+
 _CODING_TASK_RUNNER_TIMEOUT_SECONDS = 2.0
 
 _CODING_TASK_RUNNER_CHECK_DEFS = {
@@ -1623,6 +1749,17 @@ def _extract_code_excerpt(texts: list[str]) -> str | None:
     return None
 
 
+def _extract_sql_excerpt(texts: list[str]) -> str | None:
+    for text in texts:
+        normalized = str(text or "").strip()
+        if not normalized:
+            continue
+        lowered = normalized.lower()
+        if any(hint in lowered for hint in _SQL_LIVE_QUERY_HINTS):
+            return normalized[:1200]
+    return None
+
+
 def _find_matching_evidence(
     texts: list[str],
     patterns: tuple[str, ...],
@@ -1634,6 +1771,193 @@ def _find_matching_evidence(
         if raw and any(pattern in lowered for pattern in lowered_patterns):
             return raw[:240]
     return None
+
+
+def _sql_live_check_title(
+    *,
+    scenario_id: str | None,
+    check_key: str,
+    report_language: str,
+) -> str:
+    normalized_language = _normalized_report_language(report_language)
+    scenario_def = _SQL_LIVE_SCENARIO_VALIDATION_DEFS.get(str(scenario_id or "").strip(), {})
+    for item in scenario_def.get("check_defs", ()):
+        if str(item.get("check_key") or "").strip() != check_key:
+            continue
+        if normalized_language == "ru":
+            return str(item.get("title_ru") or check_key).strip()
+        return str(item.get("title_en") or check_key).strip()
+    return check_key
+
+
+def _normalize_sql_result_row(row: tuple) -> tuple:
+    normalized: list[object] = []
+    for value in row:
+        if isinstance(value, (int, float)):
+            normalized.append(round(float(value), 4))
+            continue
+        if isinstance(value, float):
+            normalized.append(round(value, 4))
+        else:
+            normalized.append(value)
+    return tuple(normalized)
+
+
+def _build_sql_live_validation_checks(
+    *,
+    scenario_id: str | None,
+    query_text: str | None,
+    report_language: str,
+) -> tuple[list[dict], float | None]:
+    normalized_scenario_id = str(scenario_id or "").strip()
+    scenario_def = _SQL_LIVE_SCENARIO_VALIDATION_DEFS.get(normalized_scenario_id)
+    query = str(query_text or "").strip()
+    if not scenario_def or not query:
+        return [], None
+
+    stripped_query = query.strip().rstrip(";").strip()
+    lowered_query = stripped_query.lower()
+    is_select_only = (
+        bool(stripped_query)
+        and lowered_query.startswith(("select", "with"))
+        and ";" not in stripped_query
+    )
+
+    checks: list[dict] = [
+        {
+            "check_key": "query_is_select_only",
+            "title": _sql_live_check_title(
+                scenario_id=normalized_scenario_id,
+                check_key="query_is_select_only",
+                report_language=report_language,
+            ),
+            "status": "passed" if is_select_only else "missed",
+            "score": 10.0 if is_select_only else 0.0,
+            "evidence": None if is_select_only else "Only a single SELECT/CTE query is allowed.",
+        }
+    ]
+
+    if not is_select_only:
+        for check_key in ("query_executes", "expected_columns", "expected_rows"):
+            checks.append(
+                {
+                    "check_key": check_key,
+                    "title": _sql_live_check_title(
+                        scenario_id=normalized_scenario_id,
+                        check_key=check_key,
+                        report_language=report_language,
+                    ),
+                    "status": "missed",
+                    "score": 0.0,
+                    "evidence": None,
+                }
+            )
+        return checks, 2.5
+
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(":memory:")
+        cursor = conn.cursor()
+        for statement in scenario_def.get("schema_statements", ()):
+            cursor.executescript(str(statement))
+        for statement in scenario_def.get("seed_statements", ()):
+            cursor.execute(str(statement))
+
+        cursor.execute(stripped_query)
+        rows = [_normalize_sql_result_row(tuple(row)) for row in cursor.fetchall()]
+        columns = tuple(str(item[0] or "").strip().lower() for item in (cursor.description or ()))
+        expected_columns = tuple(str(item).strip().lower() for item in scenario_def.get("expected_columns", ()))
+        expected_rows = tuple(_normalize_sql_result_row(tuple(row)) for row in scenario_def.get("expected_rows", ()))
+
+        columns_match = columns == expected_columns
+        rows_match = rows == list(expected_rows)
+        checks.extend(
+            [
+                {
+                    "check_key": "query_executes",
+                    "title": _sql_live_check_title(
+                        scenario_id=normalized_scenario_id,
+                        check_key="query_executes",
+                        report_language=report_language,
+                    ),
+                    "status": "passed",
+                    "score": 10.0,
+                    "evidence": f"rows={len(rows)}",
+                },
+                {
+                    "check_key": "expected_columns",
+                    "title": _sql_live_check_title(
+                        scenario_id=normalized_scenario_id,
+                        check_key="expected_columns",
+                        report_language=report_language,
+                    ),
+                    "status": "passed" if columns_match else "missed",
+                    "score": 10.0 if columns_match else 0.0,
+                    "evidence": ", ".join(columns) if columns else None,
+                },
+                {
+                    "check_key": "expected_rows",
+                    "title": _sql_live_check_title(
+                        scenario_id=normalized_scenario_id,
+                        check_key="expected_rows",
+                        report_language=report_language,
+                    ),
+                    "status": "passed" if rows_match else "missed",
+                    "score": 10.0 if rows_match else 0.0,
+                    "evidence": str(rows[:3])[:240] if rows else None,
+                },
+            ]
+        )
+    except Exception as exc:
+        checks.extend(
+            [
+                {
+                    "check_key": "query_executes",
+                    "title": _sql_live_check_title(
+                        scenario_id=normalized_scenario_id,
+                        check_key="query_executes",
+                        report_language=report_language,
+                    ),
+                    "status": "missed",
+                    "score": 0.0,
+                    "evidence": str(exc)[:240] or None,
+                },
+                {
+                    "check_key": "expected_columns",
+                    "title": _sql_live_check_title(
+                        scenario_id=normalized_scenario_id,
+                        check_key="expected_columns",
+                        report_language=report_language,
+                    ),
+                    "status": "missed",
+                    "score": 0.0,
+                    "evidence": None,
+                },
+                {
+                    "check_key": "expected_rows",
+                    "title": _sql_live_check_title(
+                        scenario_id=normalized_scenario_id,
+                        check_key="expected_rows",
+                        report_language=report_language,
+                    ),
+                    "status": "missed",
+                    "score": 0.0,
+                    "evidence": None,
+                },
+            ]
+        )
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    validation_score = round(
+        sum(float(item.get("score") or 0.0) for item in checks) / len(checks),
+        1,
+    ) if checks else None
+    return checks, validation_score
 
 
 def _build_coding_task_coverage_checks(
@@ -2158,6 +2482,139 @@ def _build_coding_task_evaluation(
         "coverage_checks": coverage_checks,
         "runner_score": runner_score,
         "runner_checks": runner_checks,
+    }
+
+
+def _build_sql_live_evaluation(
+    interview_meta: dict | None,
+    per_question_analysis: list[dict],
+    message_history: list[dict] | None,
+    report_language: str = "ru",
+) -> dict | None:
+    interview_meta = interview_meta or {}
+    module_type = str(interview_meta.get("module_type") or "").strip().lower()
+    if module_type != "sql_live":
+        return None
+
+    stage_plan = (
+        list(interview_meta.get("module_stage_plan", []) or [])
+        if isinstance(interview_meta.get("module_stage_plan"), list)
+        else []
+    )
+    if not stage_plan:
+        return None
+
+    question_history = (
+        list(interview_meta.get("module_question_history", []) or [])
+        if isinstance(interview_meta.get("module_question_history"), list)
+        else []
+    )
+    stage_map: dict[int, dict[str, str | None]] = {}
+    for item in question_history:
+        if not isinstance(item, dict):
+            continue
+        assistant_turn = _to_int(item.get("assistant_turn"), 0)
+        if assistant_turn <= 0:
+            continue
+        stage_map[assistant_turn] = {
+            "stage_key": str(item.get("stage_key") or "").strip() or None,
+            "stage_title": str(item.get("stage_title") or "").strip() or None,
+        }
+
+    questions_by_stage: dict[str, list[dict]] = {}
+    for question in per_question_analysis:
+        if not isinstance(question, dict):
+            continue
+        question_number = _to_int(question.get("question_number"), 0)
+        if question_number <= 0:
+            continue
+        stage_key = str(stage_map.get(question_number, {}).get("stage_key") or "").strip()
+        if stage_key:
+            questions_by_stage.setdefault(stage_key, []).append(question)
+
+    answers_by_stage = _build_stage_answer_map(interview_meta, message_history)
+    artifact_payload = (
+        interview_meta.get("coding_task_artifact")
+        if isinstance(interview_meta.get("coding_task_artifact"), dict)
+        else {}
+    )
+    query_text = str(artifact_payload.get("code") or "").strip() or None
+    query_answers = list(answers_by_stage.get("query_authoring", []))
+    if query_text:
+        query_answers = [query_text, *query_answers]
+    query_excerpt = _extract_sql_excerpt(query_answers)
+
+    stages: list[dict] = []
+    stage_scores: dict[str, float | None] = {}
+    for stage in stage_plan:
+        if not isinstance(stage, dict):
+            continue
+        stage_key = str(stage.get("stage_key") or "").strip()
+        stage_title = str(stage.get("stage_title") or "").strip()
+        if not stage_key:
+            continue
+        scored = _score_system_design_question_block(
+            questions_by_stage.get(stage_key, []),
+            _SQL_LIVE_STAGE_KEYWORDS.get(stage_key, ()),
+        )
+        stage_score = scored["stage_score"] if isinstance(scored["stage_score"], (int, float)) else None
+        evidence_items = list(scored["evidence_items"])
+        if stage_key == "query_authoring" and query_excerpt:
+            evidence_items = [query_excerpt[:240], *evidence_items]
+        stage_scores[stage_key] = stage_score
+        stages.append(
+            {
+                "stage_key": stage_key,
+                "stage_title": stage_title or stage_key.replace("_", " ").title(),
+                "question_numbers": scored["question_numbers"],
+                "average_answer_quality": scored["average_answer_quality"],
+                "stage_score": stage_score,
+                "evidence_items": evidence_items[:3],
+            }
+        )
+
+    weighted_scores = [
+        (float(score), weight)
+        for stage_key, weight in _SQL_LIVE_STAGE_WEIGHTS.items()
+        for score in [stage_scores.get(stage_key)]
+        if isinstance(score, (int, float))
+    ]
+    overall_score = None
+    if weighted_scores:
+        total_weight = sum(weight for _, weight in weighted_scores)
+        if total_weight > 0:
+            overall_score = round(
+                sum(score * weight for score, weight in weighted_scores) / total_weight,
+                1,
+            )
+
+    scenario_id = str(interview_meta.get("module_scenario_id") or "").strip() or None
+    validation_checks, validation_score = _build_sql_live_validation_checks(
+        scenario_id=scenario_id,
+        query_text=query_text,
+        report_language=report_language,
+    )
+    if overall_score is not None and validation_score is not None:
+        overall_score = round((overall_score * 0.8) + (validation_score * 0.2), 1)
+
+    return {
+        "module_title": str(interview_meta.get("module_title") or "").strip() or None,
+        "scenario_id": scenario_id,
+        "scenario_title": str(interview_meta.get("module_scenario_title") or "").strip() or None,
+        "scenario_prompt": str(interview_meta.get("module_scenario_prompt") or "").strip() or None,
+        "stage_count": len(stages),
+        "overall_score": overall_score,
+        "validation_score": validation_score,
+        "rubric_scores": [
+            {"rubric_key": "schema_planning", "score": stage_scores.get("schema_review")},
+            {"rubric_key": "query_construction", "score": stage_scores.get("query_authoring")},
+            {"rubric_key": "validation_reasoning", "score": stage_scores.get("result_review")},
+            {"rubric_key": "query_correctness", "score": validation_score},
+        ],
+        "validation_checks": validation_checks,
+        "stages": stages,
+        "query_excerpt": query_excerpt,
+        "has_query_submission": bool(query_excerpt),
     }
 
 
@@ -3011,6 +3468,14 @@ class LLMAssessor:
         )
         if coding_task_evaluation:
             result.full_report_json["coding_task_evaluation"] = coding_task_evaluation
+        sql_live_evaluation = _build_sql_live_evaluation(
+            interview_meta,
+            result.per_question_analysis,
+            message_history,
+            report_language,
+        )
+        if sql_live_evaluation:
+            result.full_report_json["sql_live_evaluation"] = sql_live_evaluation
         result.full_report_json["aggregates"] = adjusted_aggregates
         result.full_report_json["score_penalties"] = result.full_report_json.get("score_penalties", []) + summary_penalties
         final_recommendation, gate_reasons = _apply_recommendation_gates(
@@ -3482,6 +3947,14 @@ class MockAssessor:
         )
         if coding_task_evaluation:
             full_json["coding_task_evaluation"] = coding_task_evaluation
+        sql_live_evaluation = _build_sql_live_evaluation(
+            interview_meta,
+            per_q,
+            message_history,
+            report_language,
+        )
+        if sql_live_evaluation:
+            full_json["sql_live_evaluation"] = sql_live_evaluation
 
         cheat_risk, cheat_flags = _compute_cheat_risk(behavioral_signals, per_q)
 

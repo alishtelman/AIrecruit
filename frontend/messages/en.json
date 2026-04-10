@@ -109,6 +109,7 @@
       "questionsCount": "8 structured questions",
       "systemDesignQuestions": "3 structured design stages",
       "codingTaskQuestions": "3 coding task stages",
+      "sqlLiveQuestions": "3 SQL stages with sandbox validation",
       "genericQuestions": "a structured module",
       "questionsSuffix": "and usually takes 15-20 minutes.",
       "visibilityPrefix": "Your answers will be reviewed by AI and the results will remain visible only to ",
@@ -986,6 +987,7 @@
     "stageLabel": "Current stage",
     "stageProgress": "Stage {current} of {total}",
     "codingTaskHint": "Use the code workspace for the implementation itself. Use the answer box for reasoning, tests, and trade-offs.",
+    "sqlTaskHint": "Use the SQL workspace for the query itself. Use the answer box for schema reasoning, result validation, and optimization trade-offs.",
     "codingWorkspace": {
       "title": "Code workspace",
       "description": "Draft the implementation here, then use the answer box below to explain trade-offs, tests, and edge cases.",
@@ -998,6 +1000,18 @@
       "saveFailed": "Failed to save coding task draft",
       "placeholder": "Write the coding task solution here. This draft is stored as a raw artifact for the final report.",
       "answerPlaceholder": "Explain key decisions, tests, edge cases, and trade-offs..."
+    },
+    "sqlWorkspace": {
+      "title": "SQL workspace",
+      "description": "Draft the SQL query here, then use the answer box below to explain joins, validation steps, and optimization choices.",
+      "save": "Save query",
+      "saving": "Saving...",
+      "saved": "Query saved",
+      "unsaved": "Unsaved changes",
+      "failed": "Save failed",
+      "saveFailed": "Failed to save SQL draft",
+      "placeholder": "Write the SQL query here. This draft is stored as a raw artifact for the final report and sandbox validation.",
+      "answerPlaceholder": "Explain schema assumptions, validation steps, and performance considerations..."
     },
     "completeTitle": "Interview complete",
     "completeDescription": "You've answered all {count} questions. Generate your assessment report now.",
@@ -1137,6 +1151,26 @@
         "code_communication": "Code communication",
         "functional_coverage": "Functional coverage",
         "hidden_test_execution": "Hidden test execution"
+      }
+    },
+    "sqlLive": {
+      "eyebrow": "SQL task evidence",
+      "title": "SQL live module",
+      "task": "Task",
+      "stageCount": "{count} stages",
+      "overallScore": "Module score",
+      "validationScore": "Validation score",
+      "validationChecks": "Validation checks",
+      "stageScore": "Stage score",
+      "answerQuality": "Evidence quality",
+      "questionsCovered": "{count} questions",
+      "noEvidence": "No evidence captured for this stage yet.",
+      "queryExcerpt": "Submitted query excerpt",
+      "rubrics": {
+        "schema_planning": "Schema planning",
+        "query_construction": "Query construction",
+        "validation_reasoning": "Validation reasoning",
+        "query_correctness": "Query correctness"
       }
     },
     "summaryModel": {

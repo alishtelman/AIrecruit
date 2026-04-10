@@ -146,8 +146,14 @@ export default function InterviewPage() {
     return `/employee/invite/${progress.invite_token}`;
   }
 
+  const taskWorkspaceModuleType =
+    moduleSession?.module_type === "coding_task" || moduleSession?.module_type === "sql_live"
+      ? moduleSession.module_type
+      : null;
+  const isSqlLive = taskWorkspaceModuleType === "sql_live";
+
   async function saveCodingTaskDraftArtifact(force = false): Promise<boolean> {
-    if (!id || moduleSession?.module_type !== "coding_task") {
+    if (!id || !taskWorkspaceModuleType) {
       return true;
     }
     if (!codingTaskDraft.trim()) {
@@ -163,18 +169,24 @@ export default function InterviewPage() {
     setCodingTaskSaveState("saving");
     try {
       const saved = await interviewApi.saveCodingTaskArtifact(id, {
-        language: codingTaskLanguage,
+        language: isSqlLive ? "sql" : codingTaskLanguage,
         code: codingTaskDraft,
       });
       setCodingTaskDraft(saved.code);
-      setCodingTaskLanguage(saved.language ?? "python");
+      setCodingTaskLanguage(saved.language ?? (isSqlLive ? "sql" : "python"));
       setCodingTaskSavedAt(saved.updated_at ?? null);
       setCodingTaskDirty(false);
       setCodingTaskSaveState("saved");
       return true;
     } catch (err: unknown) {
       setCodingTaskSaveState("failed");
-      setError(err instanceof Error ? err.message : t("codingWorkspace.saveFailed"));
+      setError(
+        err instanceof Error
+          ? err.message
+          : isSqlLive
+          ? t("sqlWorkspace.saveFailed")
+          : t("codingWorkspace.saveFailed"),
+      );
       return false;
     }
   }
@@ -231,9 +243,9 @@ export default function InterviewPage() {
   }, [id, authLoading]);
 
   useEffect(() => {
-    if (!id || moduleSession?.module_type !== "coding_task") {
+    if (!id || !taskWorkspaceModuleType) {
       setCodingTaskDraft("");
-      setCodingTaskLanguage("python");
+      setCodingTaskLanguage(taskWorkspaceModuleType === "sql_live" ? "sql" : "python");
       setCodingTaskSavedAt(null);
       setCodingTaskSaveState("idle");
       setCodingTaskDirty(false);
@@ -246,7 +258,7 @@ export default function InterviewPage() {
       .then((artifact) => {
         if (cancelled) return;
         setCodingTaskDraft(artifact.code ?? "");
-        setCodingTaskLanguage(artifact.language ?? "python");
+        setCodingTaskLanguage(artifact.language ?? (taskWorkspaceModuleType === "sql_live" ? "sql" : "python"));
         setCodingTaskSavedAt(artifact.updated_at ?? null);
         setCodingTaskSaveState(artifact.code ? "saved" : "idle");
         setCodingTaskDirty(false);
@@ -254,7 +266,7 @@ export default function InterviewPage() {
       .catch(() => {
         if (cancelled) return;
         setCodingTaskDraft("");
-        setCodingTaskLanguage("python");
+        setCodingTaskLanguage(taskWorkspaceModuleType === "sql_live" ? "sql" : "python");
         setCodingTaskSavedAt(null);
         setCodingTaskSaveState("idle");
         setCodingTaskDirty(false);
@@ -263,7 +275,7 @@ export default function InterviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, moduleSession?.module_type]);
+  }, [id, taskWorkspaceModuleType]);
 
   // Track behavioral signals
   useEffect(() => {
@@ -564,10 +576,10 @@ export default function InterviewPage() {
     setPollRefreshCycle(0);
     setError("");
     try {
-      if (moduleSession?.module_type === "coding_task") {
+      if (taskWorkspaceModuleType) {
         const artifactSaved = await saveCodingTaskDraftArtifact(true);
         if (!artifactSaved) {
-          throw new Error(t("codingWorkspace.saveFailed"));
+          throw new Error(isSqlLive ? t("sqlWorkspace.saveFailed") : t("codingWorkspace.saveFailed"));
         }
       }
       let recordingNotice: string | null = null;
@@ -734,16 +746,25 @@ export default function InterviewPage() {
       : null;
   const systemDesignSession = moduleSession?.module_type === "system_design" ? moduleSession : null;
   const codingTaskSession = moduleSession?.module_type === "coding_task" ? moduleSession : null;
-  const isCodingTask = Boolean(codingTaskSession);
+  const sqlLiveSession = moduleSession?.module_type === "sql_live" ? moduleSession : null;
+  const taskWorkspaceSession = codingTaskSession || sqlLiveSession;
   const codingTaskSaveLabel =
     codingTaskSaveState === "saving"
-      ? t("codingWorkspace.saving")
+      ? taskWorkspaceModuleType === "sql_live"
+        ? t("sqlWorkspace.saving")
+        : t("codingWorkspace.saving")
       : codingTaskSaveState === "saved"
-      ? t("codingWorkspace.saved")
+      ? taskWorkspaceModuleType === "sql_live"
+        ? t("sqlWorkspace.saved")
+        : t("codingWorkspace.saved")
       : codingTaskSaveState === "failed"
-      ? t("codingWorkspace.failed")
+      ? taskWorkspaceModuleType === "sql_live"
+        ? t("sqlWorkspace.failed")
+        : t("codingWorkspace.failed")
       : codingTaskDirty
-      ? t("codingWorkspace.unsaved")
+      ? taskWorkspaceModuleType === "sql_live"
+        ? t("sqlWorkspace.unsaved")
+        : t("codingWorkspace.unsaved")
       : null;
   const codingTaskSavedAtLabel = codingTaskSavedAt
     ? new Date(codingTaskSavedAt).toLocaleTimeString()
@@ -889,50 +910,52 @@ export default function InterviewPage() {
       <div className="flex flex-1 overflow-hidden relative">
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4 max-w-2xl w-full mx-auto">
-          {(systemDesignSession || codingTaskSession) && (
+          {(systemDesignSession || taskWorkspaceSession) && (
             <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-300">
-                  {(systemDesignSession || codingTaskSession)?.module_title || t("moduleCardEyebrow")}
+                  {(systemDesignSession || taskWorkspaceSession)?.module_title || t("moduleCardEyebrow")}
                 </div>
                 <div className="rounded-full border border-blue-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
                   {t("stageProgress", {
-                    current: ((systemDesignSession || codingTaskSession)?.stage_index ?? 0) + 1,
-                    total: Math.max((systemDesignSession || codingTaskSession)?.stage_count ?? 0, 1),
+                    current: ((systemDesignSession || taskWorkspaceSession)?.stage_index ?? 0) + 1,
+                    total: Math.max((systemDesignSession || taskWorkspaceSession)?.stage_count ?? 0, 1),
                   })}
                 </div>
               </div>
-              {(systemDesignSession || codingTaskSession)?.scenario_title && (
+              {(systemDesignSession || taskWorkspaceSession)?.scenario_title && (
                 <div className="mt-3">
                   <div className="text-xs uppercase tracking-[0.14em] text-slate-400">
-                    {isCodingTask ? t("taskLabel") : t("scenarioLabel")}
+                    {taskWorkspaceSession ? t("taskLabel") : t("scenarioLabel")}
                   </div>
                   <div className="mt-1 text-sm font-medium text-white">
-                    {(systemDesignSession || codingTaskSession)?.scenario_title}
+                    {(systemDesignSession || taskWorkspaceSession)?.scenario_title}
                   </div>
                 </div>
               )}
-              {(systemDesignSession || codingTaskSession)?.stage_title && (
+              {(systemDesignSession || taskWorkspaceSession)?.stage_title && (
                 <div className="mt-3">
                   <div className="text-xs uppercase tracking-[0.14em] text-slate-400">{t("stageLabel")}</div>
-                  <div className="mt-1 text-sm text-slate-200">{(systemDesignSession || codingTaskSession)?.stage_title}</div>
+                  <div className="mt-1 text-sm text-slate-200">{(systemDesignSession || taskWorkspaceSession)?.stage_title}</div>
                 </div>
               )}
-              {(systemDesignSession || codingTaskSession)?.scenario_prompt && (
-                <p className="mt-3 text-sm leading-6 text-slate-300">{(systemDesignSession || codingTaskSession)?.scenario_prompt}</p>
+              {(systemDesignSession || taskWorkspaceSession)?.scenario_prompt && (
+                <p className="mt-3 text-sm leading-6 text-slate-300">{(systemDesignSession || taskWorkspaceSession)?.scenario_prompt}</p>
               )}
-              {codingTaskSession && (
+              {taskWorkspaceSession && (
                 <div className="mt-4 space-y-3">
                   <div className="rounded-xl border border-slate-700/80 bg-slate-950/40 px-4 py-3 text-sm text-slate-300">
-                    {t("codingTaskHint")}
+                    {isSqlLive ? t("sqlTaskHint") : t("codingTaskHint")}
                   </div>
                   <div className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                          {t("codingWorkspace.title")}
+                          {isSqlLive ? t("sqlWorkspace.title") : t("codingWorkspace.title")}
                         </div>
-                        <p className="mt-1 text-sm text-slate-300">{t("codingWorkspace.description")}</p>
+                        <p className="mt-1 text-sm text-slate-300">
+                          {isSqlLive ? t("sqlWorkspace.description") : t("codingWorkspace.description")}
+                        </p>
                       </div>
                       {codingTaskSaveLabel && (
                         <div className="text-xs text-slate-400">
@@ -944,31 +967,46 @@ export default function InterviewPage() {
                       )}
                     </div>
                     <div className="mt-4 flex flex-wrap items-center gap-3">
-                      <label className="text-xs uppercase tracking-[0.14em] text-slate-500">
-                        {t("codingWorkspace.language")}
-                      </label>
-                      <select
-                        value={codingTaskLanguage}
-                        onChange={(e) => {
-                          setCodingTaskLanguage(e.target.value);
-                          setCodingTaskDirty(true);
-                          setCodingTaskSaveState("idle");
-                        }}
-                        className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      >
-                        {CODING_TASK_LANGUAGES.map((language) => (
-                          <option key={language} value={language}>
-                            {language}
-                          </option>
-                        ))}
-                      </select>
+                      {!isSqlLive && (
+                        <>
+                          <label className="text-xs uppercase tracking-[0.14em] text-slate-500">
+                            {t("codingWorkspace.language")}
+                          </label>
+                          <select
+                            value={codingTaskLanguage}
+                            onChange={(e) => {
+                              setCodingTaskLanguage(e.target.value);
+                              setCodingTaskDirty(true);
+                              setCodingTaskSaveState("idle");
+                            }}
+                            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            {CODING_TASK_LANGUAGES.map((language) => (
+                              <option key={language} value={language}>
+                                {language}
+                              </option>
+                            ))}
+                          </select>
+                        </>
+                      )}
+                      {isSqlLive && (
+                        <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-300">
+                          SQL
+                        </div>
+                      )}
                       <button
                         type="button"
                         onClick={() => void saveCodingTaskDraftArtifact(true)}
                         disabled={!codingTaskDraft.trim() || codingTaskSaveState === "saving"}
                         className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-300 transition-colors hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-40"
                       >
-                        {codingTaskSaveState === "saving" ? t("codingWorkspace.saving") : t("codingWorkspace.save")}
+                        {codingTaskSaveState === "saving"
+                          ? isSqlLive
+                            ? t("sqlWorkspace.saving")
+                            : t("codingWorkspace.saving")
+                          : isSqlLive
+                          ? t("sqlWorkspace.save")
+                          : t("codingWorkspace.save")}
                       </button>
                     </div>
                     <textarea
@@ -986,7 +1024,7 @@ export default function InterviewPage() {
                           details: { count: pasteCountRef.current, source: "coding_workspace" },
                         });
                       }}
-                      placeholder={t("codingWorkspace.placeholder")}
+                      placeholder={isSqlLive ? t("sqlWorkspace.placeholder") : t("codingWorkspace.placeholder")}
                       rows={14}
                       className="mt-4 w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 font-mono text-sm leading-6 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
@@ -1197,8 +1235,10 @@ export default function InterviewPage() {
               placeholder={
                 sending
                   ? t("placeholderThinking")
-                  : isCodingTask
-                  ? t("codingWorkspace.answerPlaceholder")
+                  : taskWorkspaceModuleType
+                  ? isSqlLive
+                    ? t("sqlWorkspace.answerPlaceholder")
+                    : t("codingWorkspace.answerPlaceholder")
                   : voiceMode && voiceState === "recording"
                   ? t("placeholderListening")
                   : voiceMode && voiceState === "transcribing"
@@ -1207,9 +1247,9 @@ export default function InterviewPage() {
                   ? t("placeholderVoice")
                   : t("placeholderText")
               }
-              rows={isCodingTask ? 4 : 2}
+              rows={taskWorkspaceModuleType ? 4 : 2}
               className={`flex-1 bg-slate-800 border border-slate-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500 disabled:opacity-50 disabled:cursor-not-allowed ${
-                isCodingTask ? "resize-y leading-6" : "resize-none"
+                taskWorkspaceModuleType ? "resize-y leading-6" : "resize-none"
               }`}
             />
             {voiceMode && (

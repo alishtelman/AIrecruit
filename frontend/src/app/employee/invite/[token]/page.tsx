@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { authApi, employeeApi } from "@/lib/api";
 import type { AssessmentModulePlanItem, EmployeeInviteInfo } from "@/lib/types";
 
-const STARTABLE_MODULE_TYPES = new Set(["adaptive_interview", "system_design", "coding_task"]);
+const STARTABLE_MODULE_TYPES = new Set(["adaptive_interview", "system_design", "coding_task", "sql_live"]);
 
 function formatDate(value: string | null): string | null {
   if (!value) return null;
@@ -71,6 +71,8 @@ export default function EmployeeInvitePage() {
       ? t("flow.systemDesignQuestions")
       : currentModuleType === "coding_task"
       ? t("flow.codingTaskQuestions")
+      : currentModuleType === "sql_live"
+      ? t("flow.sqlLiveQuestions")
       : currentModuleType === "adaptive_interview"
       ? t("flow.questionsCount")
       : t("flow.genericQuestions");
@@ -402,7 +404,7 @@ function ModulePlanItemCard({
           <span className="rounded-full border border-slate-800 bg-slate-900 px-2.5 py-1">
             {t("modules.runtimePending")}
           </span>
-        ) : item.module_type === "system_design" || item.module_type === "coding_task" ? (
+        ) : item.module_type === "system_design" || item.module_type === "coding_task" || item.module_type === "sql_live" ? (
           <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-emerald-300">
             {t("modules.runtimeReady")}
           </span>
