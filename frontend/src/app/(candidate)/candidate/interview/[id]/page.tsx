@@ -27,6 +27,7 @@ const PROCTORING_POLICY_MODE =
   process.env.NEXT_PUBLIC_PROCTORING_POLICY_MODE === "strict_flagging"
     ? "strict_flagging"
     : "observe_only";
+const CODING_TASK_LANGUAGES = ["python", "typescript", "javascript", "go", "java", "sql", "other"] as const;
 
 type ProctoringEvent = {
   event_type: string;
@@ -71,6 +72,11 @@ export default function InterviewPage() {
   const [latestTranscript, setLatestTranscript] = useState("");
   const [recordingUploadState, setRecordingUploadState] = useState<"idle" | "uploading" | "uploaded" | "failed" | "skipped">("idle");
   const [moduleSession, setModuleSession] = useState<InterviewModuleSession | null>(null);
+  const [codingTaskDraft, setCodingTaskDraft] = useState("");
+  const [codingTaskLanguage, setCodingTaskLanguage] = useState<string>("python");
+  const [codingTaskSaveState, setCodingTaskSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
+  const [codingTaskSavedAt, setCodingTaskSavedAt] = useState<string | null>(null);
+  const [codingTaskDirty, setCodingTaskDirty] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const autoRecordingAttemptedRef = useRef(false);
 
@@ -140,6 +146,39 @@ export default function InterviewPage() {
     return `/employee/invite/${progress.invite_token}`;
   }
 
+  async function saveCodingTaskDraftArtifact(force = false): Promise<boolean> {
+    if (!id || moduleSession?.module_type !== "coding_task") {
+      return true;
+    }
+    if (!codingTaskDraft.trim()) {
+      setCodingTaskSaveState("idle");
+      setCodingTaskSavedAt(null);
+      setCodingTaskDirty(false);
+      return true;
+    }
+    if (!force && !codingTaskDirty) {
+      return true;
+    }
+
+    setCodingTaskSaveState("saving");
+    try {
+      const saved = await interviewApi.saveCodingTaskArtifact(id, {
+        language: codingTaskLanguage,
+        code: codingTaskDraft,
+      });
+      setCodingTaskDraft(saved.code);
+      setCodingTaskLanguage(saved.language ?? "python");
+      setCodingTaskSavedAt(saved.updated_at ?? null);
+      setCodingTaskDirty(false);
+      setCodingTaskSaveState("saved");
+      return true;
+    } catch (err: unknown) {
+      setCodingTaskSaveState("failed");
+      setError(err instanceof Error ? err.message : t("codingWorkspace.saveFailed"));
+      return false;
+    }
+  }
+
   // Load interview on mount
   useEffect(() => {
     if (!id || authLoading) return;
@@ -190,6 +229,41 @@ export default function InterviewPage() {
     if (!id || authLoading) return;
     candidateApi.getResumeText().then((r) => setResumeText(r.raw_text)).catch(() => null);
   }, [id, authLoading]);
+
+  useEffect(() => {
+    if (!id || moduleSession?.module_type !== "coding_task") {
+      setCodingTaskDraft("");
+      setCodingTaskLanguage("python");
+      setCodingTaskSavedAt(null);
+      setCodingTaskSaveState("idle");
+      setCodingTaskDirty(false);
+      return;
+    }
+
+    let cancelled = false;
+    interviewApi
+      .getCodingTaskArtifact(id)
+      .then((artifact) => {
+        if (cancelled) return;
+        setCodingTaskDraft(artifact.code ?? "");
+        setCodingTaskLanguage(artifact.language ?? "python");
+        setCodingTaskSavedAt(artifact.updated_at ?? null);
+        setCodingTaskSaveState(artifact.code ? "saved" : "idle");
+        setCodingTaskDirty(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCodingTaskDraft("");
+        setCodingTaskLanguage("python");
+        setCodingTaskSavedAt(null);
+        setCodingTaskSaveState("idle");
+        setCodingTaskDirty(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, moduleSession?.module_type]);
 
   // Track behavioral signals
   useEffect(() => {
@@ -490,6 +564,12 @@ export default function InterviewPage() {
     setPollRefreshCycle(0);
     setError("");
     try {
+      if (moduleSession?.module_type === "coding_task") {
+        const artifactSaved = await saveCodingTaskDraftArtifact(true);
+        if (!artifactSaved) {
+          throw new Error(t("codingWorkspace.saveFailed"));
+        }
+      }
       let recordingNotice: string | null = null;
       // Ensure MediaRecorder has time to flush its last chunk.
       await new Promise((resolve) => setTimeout(resolve, 300));
@@ -655,6 +735,19 @@ export default function InterviewPage() {
   const systemDesignSession = moduleSession?.module_type === "system_design" ? moduleSession : null;
   const codingTaskSession = moduleSession?.module_type === "coding_task" ? moduleSession : null;
   const isCodingTask = Boolean(codingTaskSession);
+  const codingTaskSaveLabel =
+    codingTaskSaveState === "saving"
+      ? t("codingWorkspace.saving")
+      : codingTaskSaveState === "saved"
+      ? t("codingWorkspace.saved")
+      : codingTaskSaveState === "failed"
+      ? t("codingWorkspace.failed")
+      : codingTaskDirty
+      ? t("codingWorkspace.unsaved")
+      : null;
+  const codingTaskSavedAtLabel = codingTaskSavedAt
+    ? new Date(codingTaskSavedAt).toLocaleTimeString()
+    : null;
 
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col">
@@ -829,8 +922,75 @@ export default function InterviewPage() {
                 <p className="mt-3 text-sm leading-6 text-slate-300">{(systemDesignSession || codingTaskSession)?.scenario_prompt}</p>
               )}
               {codingTaskSession && (
-                <div className="mt-3 rounded-xl border border-slate-700/80 bg-slate-950/40 px-4 py-3 text-sm text-slate-300">
-                  {t("codingTaskHint")}
+                <div className="mt-4 space-y-3">
+                  <div className="rounded-xl border border-slate-700/80 bg-slate-950/40 px-4 py-3 text-sm text-slate-300">
+                    {t("codingTaskHint")}
+                  </div>
+                  <div className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                          {t("codingWorkspace.title")}
+                        </div>
+                        <p className="mt-1 text-sm text-slate-300">{t("codingWorkspace.description")}</p>
+                      </div>
+                      {codingTaskSaveLabel && (
+                        <div className="text-xs text-slate-400">
+                          <span>{codingTaskSaveLabel}</span>
+                          {codingTaskSavedAtLabel && codingTaskSaveState === "saved" ? (
+                            <span>{` · ${codingTaskSavedAtLabel}`}</span>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-4 flex flex-wrap items-center gap-3">
+                      <label className="text-xs uppercase tracking-[0.14em] text-slate-500">
+                        {t("codingWorkspace.language")}
+                      </label>
+                      <select
+                        value={codingTaskLanguage}
+                        onChange={(e) => {
+                          setCodingTaskLanguage(e.target.value);
+                          setCodingTaskDirty(true);
+                          setCodingTaskSaveState("idle");
+                        }}
+                        className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        {CODING_TASK_LANGUAGES.map((language) => (
+                          <option key={language} value={language}>
+                            {language}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => void saveCodingTaskDraftArtifact(true)}
+                        disabled={!codingTaskDraft.trim() || codingTaskSaveState === "saving"}
+                        className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-300 transition-colors hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {codingTaskSaveState === "saving" ? t("codingWorkspace.saving") : t("codingWorkspace.save")}
+                      </button>
+                    </div>
+                    <textarea
+                      value={codingTaskDraft}
+                      onChange={(e) => {
+                        setCodingTaskDraft(e.target.value);
+                        setCodingTaskDirty(true);
+                        setCodingTaskSaveState("idle");
+                      }}
+                      onPaste={() => {
+                        pasteCountRef.current++;
+                        trackProctoringEvent({
+                          event_type: "paste_detected",
+                          severity: PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
+                          details: { count: pasteCountRef.current, source: "coding_workspace" },
+                        });
+                      }}
+                      placeholder={t("codingWorkspace.placeholder")}
+                      rows={14}
+                      className="mt-4 w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 font-mono text-sm leading-6 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -1038,7 +1198,7 @@ export default function InterviewPage() {
                 sending
                   ? t("placeholderThinking")
                   : isCodingTask
-                  ? t("placeholderCode")
+                  ? t("codingWorkspace.answerPlaceholder")
                   : voiceMode && voiceState === "recording"
                   ? t("placeholderListening")
                   : voiceMode && voiceState === "transcribing"
@@ -1047,9 +1207,9 @@ export default function InterviewPage() {
                   ? t("placeholderVoice")
                   : t("placeholderText")
               }
-              rows={isCodingTask ? 8 : 2}
+              rows={isCodingTask ? 4 : 2}
               className={`flex-1 bg-slate-800 border border-slate-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500 disabled:opacity-50 disabled:cursor-not-allowed ${
-                isCodingTask ? "font-mono resize-y leading-6" : "resize-none"
+                isCodingTask ? "resize-y leading-6" : "resize-none"
               }`}
             />
             {voiceMode && (

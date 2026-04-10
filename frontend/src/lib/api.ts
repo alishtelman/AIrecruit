@@ -19,6 +19,7 @@ import type {
   CompanyMember,
   CompanyRegisterRequest,
   CompanyRegisterResponse,
+  CodingTaskArtifact,
   CompanyShareAccessStatus,
   EmployeeInviteInfo,
   FinishInterviewResponse,
@@ -412,6 +413,15 @@ export const interviewApi = {
 
   getDetail: (id: string) =>
     request<InterviewDetail>(`/api/v1/interviews/${id}`),
+
+  getCodingTaskArtifact: (id: string) =>
+    request<CodingTaskArtifact>(`/api/v1/interviews/${id}/coding-artifact`),
+
+  saveCodingTaskArtifact: (id: string, data: { language?: string | null; code: string }) =>
+    request<CodingTaskArtifact>(`/api/v1/interviews/${id}/coding-artifact`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
 
   submitSignals: (
     id: string,

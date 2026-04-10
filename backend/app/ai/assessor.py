@@ -1712,7 +1712,16 @@ def _build_coding_task_evaluation(
     answers_by_stage = _build_stage_answer_map(interview_meta, message_history)
     stages: list[dict] = []
     stage_scores: dict[str, float | None] = {}
-    implementation_code_excerpt = _extract_code_excerpt(answers_by_stage.get("implementation", []))
+    artifact_payload = (
+        interview_meta.get("coding_task_artifact")
+        if isinstance(interview_meta.get("coding_task_artifact"), dict)
+        else {}
+    )
+    artifact_code = str(artifact_payload.get("code") or "").strip() or None
+    implementation_answers = list(answers_by_stage.get("implementation", []))
+    if artifact_code:
+        implementation_answers = [artifact_code, *implementation_answers]
+    implementation_code_excerpt = _extract_code_excerpt(implementation_answers)
 
     for stage in stage_plan:
         if not isinstance(stage, dict):
@@ -1727,7 +1736,7 @@ def _build_coding_task_evaluation(
         )
         stage_score = scored["stage_score"] if isinstance(scored["stage_score"], (int, float)) else None
 
-        stage_answers = answers_by_stage.get(stage_key, [])
+        stage_answers = implementation_answers if stage_key == "implementation" else answers_by_stage.get(stage_key, [])
         code_signal = 0.0
         if stage_key == "implementation" and stage_answers:
             code_hits = sum(
@@ -1786,7 +1795,6 @@ def _build_coding_task_evaluation(
     )
 
     implementation_score = stage_scores.get("implementation")
-    implementation_answers = answers_by_stage.get("implementation", [])
     has_code_submission = bool(implementation_code_excerpt)
     code_signal_score = None
     if implementation_answers:

@@ -44,6 +44,25 @@ class InterviewModuleSessionResponse(BaseModel):
     stage_count: int = 0
 
 
+class CodingTaskArtifactRequest(BaseModel):
+    language: str | None = "python"
+    code: str
+
+    @field_validator("code")
+    @classmethod
+    def code_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("code cannot be empty")
+        return v
+
+
+class CodingTaskArtifactResponse(BaseModel):
+    interview_id: uuid.UUID
+    language: str | None = "python"
+    code: str = ""
+    updated_at: datetime | None = None
+
+
 class SendMessageRequest(BaseModel):
     message: str
 

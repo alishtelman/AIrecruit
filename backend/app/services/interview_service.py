@@ -40,6 +40,7 @@ from app.models.skill import CandidateSkill
 from app.models.template import InterviewTemplate
 from app.schemas.interview import (
     AssessmentProgressResponse,
+    CodingTaskArtifactResponse,
     FinishInterviewResponse,
     InterviewDetailResponse,
     InterviewModuleSessionResponse,
@@ -86,6 +87,10 @@ class MaxQuestionsNotReachedError(Exception):
 
 class ReportRetryNotAllowedError(Exception):
     """Manual retry is not allowed for this interview state."""
+
+
+class CodingTaskArtifactUnavailableError(Exception):
+    """Operation requires a coding_task interview module."""
 
 
 # ---------------------------------------------------------------------------
@@ -500,6 +505,38 @@ def _build_interview_module_session_payload(interview: Interview) -> InterviewMo
         stage_index=current_stage_index,
         stage_count=stage_count,
     )
+
+
+def _normalize_coding_task_language(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return "python"
+    return normalized[:40]
+
+
+def _get_coding_task_artifact_state(state: dict[str, Any]) -> dict[str, Any]:
+    raw = state.get("coding_task_artifact")
+    if not isinstance(raw, dict):
+        return {}
+    return raw
+
+
+def _build_coding_task_artifact_response(interview: Interview) -> CodingTaskArtifactResponse:
+    state = interview.interview_state if isinstance(interview.interview_state, dict) else {}
+    artifact = _get_coding_task_artifact_state(state)
+    return CodingTaskArtifactResponse(
+        interview_id=interview.id,
+        language=_normalize_coding_task_language(artifact.get("language")),
+        code=str(artifact.get("code") or ""),
+        updated_at=_parse_iso_datetime(artifact.get("updated_at")),
+    )
+
+
+def _ensure_coding_task_interview(interview: Interview) -> None:
+    state = interview.interview_state if isinstance(interview.interview_state, dict) else {}
+    module_type = str(state.get("module_type") or "").strip().lower()
+    if module_type != _CODING_TASK_MODULE_TYPE:
+        raise CodingTaskArtifactUnavailableError("Coding artifact is only available for coding_task interviews.")
 
 
 def _build_module_stage_map(interview: Interview) -> dict[int, dict[str, str]]:
@@ -2102,6 +2139,7 @@ async def add_candidate_message(
 
         # ── Load persistent interview state ────────────────────────────────
         state: dict = interview.interview_state or {}
+        coding_task_artifact = _get_coding_task_artifact_state(state)
         turn_count: int = int(state.get("turn_count", interview.question_count))
         current_topic_index: int = int(state.get("current_topic_index", max(interview.question_count - 1, 0)))
         topic_turns: int = int(state.get("topic_turns", interview.followup_depth or 0))
@@ -2591,6 +2629,12 @@ async def add_candidate_message(
                 "proctoring_policy_mode": workspace_ai_settings.get("proctoring_policy_mode"),
                 "interviewer_model_preference": workspace_ai_settings.get("interviewer_model_preference"),
                 "assessor_model_preference": workspace_ai_settings.get("assessor_model_preference"),
+            }
+        if coding_task_artifact:
+            interview.interview_state["coding_task_artifact"] = {
+                "language": _normalize_coding_task_language(coding_task_artifact.get("language")),
+                "code": str(coding_task_artifact.get("code") or "")[:50000],
+                "updated_at": coding_task_artifact.get("updated_at"),
             }
         if next_q:
             db.add(InterviewMessage(
@@ -3326,6 +3370,41 @@ async def get_interview_detail(
         assessment_progress=assessment_progress,
         module_session=_build_interview_module_session_payload(interview),
     )
+
+
+async def get_coding_task_artifact(
+    db: AsyncSession,
+    candidate: Candidate,
+    interview_id: uuid.UUID,
+) -> CodingTaskArtifactResponse:
+    interview = await _get_interview(db, interview_id, candidate.id)
+    _ensure_coding_task_interview(interview)
+    return _build_coding_task_artifact_response(interview)
+
+
+async def save_coding_task_artifact(
+    db: AsyncSession,
+    candidate: Candidate,
+    interview_id: uuid.UUID,
+    *,
+    code: str,
+    language: str | None = None,
+) -> CodingTaskArtifactResponse:
+    interview = await _get_interview(db, interview_id, candidate.id)
+    _ensure_coding_task_interview(interview)
+    if interview.status != "in_progress":
+        raise InterviewNotActiveError()
+
+    state = dict(interview.interview_state or {})
+    state["coding_task_artifact"] = {
+        "language": _normalize_coding_task_language(language),
+        "code": str(code or "")[:50000],
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    interview.interview_state = state
+    await db.commit()
+    await db.refresh(interview)
+    return _build_coding_task_artifact_response(interview)
 
 
 async def save_interview_recording(

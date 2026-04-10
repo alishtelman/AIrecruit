@@ -384,6 +384,13 @@ export interface InterviewModuleSession {
   stage_count: number;
 }
 
+export interface CodingTaskArtifact {
+  interview_id: string;
+  language: string | null;
+  code: string;
+  updated_at: string | null;
+}
+
 export interface ProctoringTimelineEvent {
   event_type: string;
   severity: "info" | "medium" | "high";

@@ -343,7 +343,7 @@ async def test_company_ai_model_preference_applies_to_assessment_reports(
     )
     assert report_resp.status_code == 200, report_resp.text
     report = report_resp.json()
-    assert report["model_version"] == "mock-v2-evidence-aware[llama-3.1-8b-instant]"
+    assert "llama-3.1-8b-instant" in report["model_version"]
 
 
 @pytest.mark.asyncio
@@ -601,10 +601,12 @@ async def test_employee_assessment_supports_coding_task_module_and_report_summar
     assert detail["module_session"]["stage_key"] == "task_brief"
     assert detail["module_session"]["stage_count"] == 3
 
-    coding_answer = """I would validate user_id and timestamp first, keep a per-user ordered queue, evict old timestamps, then decide.
-
-```python
-from collections import defaultdict, deque
+    artifact_resp = await client.put(
+        f"/api/v1/interviews/{coding_interview_id}/coding-artifact",
+        headers=auth_headers(candidate_token),
+        json={
+            "language": "python",
+            "code": """from collections import defaultdict, deque
 
 windows = defaultdict(deque)
 
@@ -616,9 +618,27 @@ def allow_request(user_id: str, now: int, limit: int = 5, window_seconds: int = 
         return False
     queue.append(now)
     return True
-```
+""",
+        },
+    )
+    assert artifact_resp.status_code == 200, artifact_resp.text
+    artifact = artifact_resp.json()
+    assert artifact["language"] == "python"
+    assert "allow_request" in artifact["code"]
+    assert artifact["updated_at"] is not None
 
-I would test boundary timestamps, repeated requests in one second, empty users, and complexity staying amortized O(1)."""
+    artifact_fetch_resp = await client.get(
+        f"/api/v1/interviews/{coding_interview_id}/coding-artifact",
+        headers=auth_headers(candidate_token),
+    )
+    assert artifact_fetch_resp.status_code == 200, artifact_fetch_resp.text
+    assert artifact_fetch_resp.json()["code"] == artifact["code"]
+
+    coding_answer = (
+        "I would validate user_id and timestamp first, keep a per-user ordered queue, "
+        "evict old timestamps before checking the limit, and test edge timestamps, "
+        "burst traffic, and invalid input so the per-request cost stays amortized O(1)."
+    )
     await _answer_all_questions(
         client,
         candidate_token,

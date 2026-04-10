@@ -26,6 +26,8 @@ from app.models.candidate import Candidate
 from app.models.user import User
 from app.schemas.interview import (
     BehavioralSignalsRequest,
+    CodingTaskArtifactRequest,
+    CodingTaskArtifactResponse,
     FinishInterviewResponse,
     InterviewDetailResponse,
     InterviewListItemResponse,
@@ -43,14 +45,17 @@ from app.services.interview_service import (
     MaxQuestionsNotReachedError,
     MaxQuestionsReachedError,
     NoActiveResumeError,
+    CodingTaskArtifactUnavailableError,
     ReportRetryNotAllowedError,
     add_candidate_message,
     finish_interview,
+    get_coding_task_artifact,
     get_interview_detail,
     get_interview_report_status,
     list_interviews,
     retry_interview_report_generation,
     save_behavioral_signals,
+    save_coding_task_artifact,
     save_interview_recording,
     start_interview,
 )
@@ -258,6 +263,54 @@ async def upload_recording(
         await save_interview_recording(db, candidate.id, interview_id, file)
     except InterviewNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
+
+
+@router.get(
+    "/{interview_id}/coding-artifact",
+    response_model=CodingTaskArtifactResponse,
+    summary="Get the saved code artifact for a coding task interview",
+)
+async def get_saved_coding_artifact(
+    interview_id: uuid.UUID,
+    candidate: Candidate = Depends(_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await get_coding_task_artifact(db, candidate, interview_id)
+    except InterviewNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
+    except CodingTaskArtifactUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+@router.put(
+    "/{interview_id}/coding-artifact",
+    response_model=CodingTaskArtifactResponse,
+    summary="Save the code artifact for a coding task interview",
+)
+async def save_coding_artifact(
+    interview_id: uuid.UUID,
+    body: CodingTaskArtifactRequest,
+    candidate: Candidate = Depends(_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await save_coding_task_artifact(
+            db,
+            candidate,
+            interview_id,
+            code=body.code,
+            language=body.language,
+        )
+    except InterviewNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
+    except InterviewNotActiveError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Interview is not active.",
+        )
+    except CodingTaskArtifactUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
 @router.get(
