@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useParams, useRouter } from "next/navigation";
 import { authApi, employeeApi } from "@/lib/api";
 import type { AssessmentModulePlanItem, EmployeeInviteInfo } from "@/lib/types";
@@ -15,23 +15,24 @@ function formatDate(value: string | null): string | null {
 
 export default function EmployeeInvitePage() {
   const t = useTranslations("employeeInvite");
+  const locale = useLocale();
   const { token } = useParams<{ token: string }>();
   const router = useRouter();
   const [info, setInfo] = useState<EmployeeInviteInfo | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
-  const [language, setLanguage] = useState<"ru" | "en">("ru");
+  const [language, setLanguage] = useState<"ru" | "en">(locale === "en" ? "en" : "ru");
   const [hasSession, setHasSession] = useState(false);
 
   useEffect(() => {
     setLoading(true);
     employeeApi
-      .getInvite(token)
+      .getInvite(token, language)
       .then(setInfo)
       .catch((e: unknown) => setError(e instanceof Error ? e.message : t("errors.notFoundOrExpired")))
       .finally(() => setLoading(false));
-  }, [token, t]);
+  }, [language, token, t]);
 
   useEffect(() => {
     authApi.me().then(() => setHasSession(true)).catch(() => setHasSession(false));
@@ -189,6 +190,33 @@ export default function EmployeeInvitePage() {
               ))}
             </div>
           </div>
+
+          {info.current_module_preview && (
+            <div className="mt-6 rounded-[28px] border border-slate-800 bg-slate-900/40 p-5">
+              <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("currentModulePreview.title")}</div>
+              <div className="mt-2 text-sm font-semibold text-white">
+                {info.current_module_preview.scenario_title || info.current_module_title || currentModule?.title}
+              </div>
+              {info.current_module_preview.stack_focus && (
+                <div className="mt-3 text-xs text-slate-400">
+                  {t("currentModulePreview.stackFocus")}:{" "}
+                  <span className="font-medium text-slate-200">{info.current_module_preview.stack_focus}</span>
+                </div>
+              )}
+              {info.current_module_preview.preferred_language && (
+                <div className="mt-2 text-xs text-slate-400">
+                  {t("currentModulePreview.preferredLanguage")}:{" "}
+                  <span className="font-medium text-slate-200">{info.current_module_preview.preferred_language}</span>
+                </div>
+              )}
+              {info.current_module_preview.workspace_hint && (
+                <p className="mt-3 text-sm leading-6 text-slate-300">{info.current_module_preview.workspace_hint}</p>
+              )}
+              {info.current_module_preview.scenario_prompt && (
+                <p className="mt-3 text-sm leading-6 text-slate-400">{info.current_module_preview.scenario_prompt}</p>
+              )}
+            </div>
+          )}
 
           {error && (
             <div className="mt-5 rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">

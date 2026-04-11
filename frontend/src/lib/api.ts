@@ -296,8 +296,8 @@ export const companyApi = {
 // ── Employee Invites ──────────────────────────────────────────────────────────
 
 export const employeeApi = {
-  getInvite: (token: string) =>
-    request<EmployeeInviteInfo>(`/api/v1/employee/invite/${token}`),
+  getInvite: (token: string, language: "ru" | "en" = "ru") =>
+    request<EmployeeInviteInfo>(`/api/v1/employee/invite/${token}?language=${language}`),
 
   startAssessment: (token: string, language: "ru" | "en") =>
     request<{ interview_id: string; assessment_id: string }>(`/api/v1/employee/invite/${token}/start`, {

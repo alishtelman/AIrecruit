@@ -240,6 +240,7 @@ async def test_employee_assessment_invite_returns_module_orchestration_payload(
     assert invite["current_module_index"] == 0
     assert invite["current_module_type"] == "adaptive_interview"
     assert invite["current_module_title"] == "Core Interview"
+    assert invite["current_module_preview"] is None
     assert invite["active_interview_id"] is None
     assert invite["can_start_current_module"] is True
     assert invite["module_plan"][1]["module_type"] == "system_design"
@@ -760,12 +761,23 @@ async def test_employee_assessment_coding_task_uses_role_specific_stack_profiles
         assert first_start_resp.status_code == 200, first_start_resp.text
         first_interview_id = first_start_resp.json()["interview_id"]
         await _answer_all_questions(client, candidate_token, first_interview_id)
-
         first_finish_resp = await client.post(
             f"/api/v1/interviews/{first_interview_id}/finish",
             headers=auth_headers(candidate_token),
         )
         assert first_finish_resp.status_code == 200, first_finish_resp.text
+
+        invite_resp = await client.get(
+            f"/api/v1/employee/invite/{assessment['invite_token']}",
+            params={"language": "en"},
+        )
+        assert invite_resp.status_code == 200, invite_resp.text
+        invite = invite_resp.json()
+        assert invite["current_module_type"] == "coding_task"
+        assert invite["current_module_preview"] is not None
+        assert invite["current_module_preview"]["scenario_id"] == expected_scenario_id
+        assert invite["current_module_preview"]["preferred_language"] == expected_language
+        assert expected_stack_marker in (invite["current_module_preview"]["stack_focus"] or "")
 
         coding_start_resp = await client.post(
             f"/api/v1/employee/invite/{assessment['invite_token']}/start",

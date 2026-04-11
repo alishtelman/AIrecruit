@@ -68,6 +68,14 @@ export interface EmployeeInviteInfo {
   current_module_index: number;
   current_module_type: string | null;
   current_module_title: string | null;
+  current_module_preview: {
+    scenario_id: string | null;
+    scenario_title: string | null;
+    scenario_prompt: string | null;
+    stack_focus: string | null;
+    preferred_language: string | null;
+    workspace_hint: string | null;
+  } | null;
   active_interview_id: string | null;
   can_start_current_module: boolean;
 }

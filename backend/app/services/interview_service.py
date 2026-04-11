@@ -432,6 +432,47 @@ def _select_sql_live_scenario(
     }
 
 
+def build_assessment_module_preview(
+    *,
+    module_type: str | None,
+    target_role: str,
+    language: str,
+    module_config: dict[str, Any] | None,
+) -> dict[str, str | None] | None:
+    normalized_module_type = str(module_type or "").strip().lower()
+    if normalized_module_type == _SYSTEM_DESIGN_MODULE_TYPE:
+        scenario = _select_system_design_scenario(target_role, language, module_config)
+        return {
+            "scenario_id": scenario["scenario_id"],
+            "scenario_title": scenario["title"],
+            "scenario_prompt": scenario["prompt"],
+            "stack_focus": None,
+            "preferred_language": None,
+            "workspace_hint": None,
+        }
+    if normalized_module_type == _CODING_TASK_MODULE_TYPE:
+        scenario = _select_coding_task_scenario(target_role, language, module_config)
+        return {
+            "scenario_id": scenario["scenario_id"],
+            "scenario_title": scenario["title"],
+            "scenario_prompt": scenario["prompt"],
+            "stack_focus": scenario.get("stack_focus"),
+            "preferred_language": scenario.get("preferred_language"),
+            "workspace_hint": scenario.get("workspace_hint"),
+        }
+    if normalized_module_type == _SQL_LIVE_MODULE_TYPE:
+        scenario = _select_sql_live_scenario(target_role, language, module_config)
+        return {
+            "scenario_id": scenario["scenario_id"],
+            "scenario_title": scenario["title"],
+            "scenario_prompt": scenario["prompt"],
+            "stack_focus": None,
+            "preferred_language": "sql",
+            "workspace_hint": None,
+        }
+    return None
+
+
 def _build_system_design_topic_plan(
     *,
     target_role: str,

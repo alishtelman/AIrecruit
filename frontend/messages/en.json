@@ -151,6 +151,11 @@
         "locked": "Locked"
       }
     },
+    "currentModulePreview": {
+      "title": "Current module preview",
+      "stackFocus": "Stack focus",
+      "preferredLanguage": "Recommended language"
+    },
     "checklist": {
       "title": "Before you begin",
       "emailTitle": "Use the invited email",

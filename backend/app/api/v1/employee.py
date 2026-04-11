@@ -21,6 +21,7 @@ from app.services.assessment_invite_service import (
     get_current_assessment_module_payload,
     link_interview_to_assessment,
 )
+from app.services.interview_service import build_assessment_module_preview
 
 router = APIRouter(prefix="/employee", tags=["employee"])
 
@@ -55,6 +56,7 @@ class InviteInfoResponse(BaseModel):
     current_module_index: int
     current_module_type: str | None = None
     current_module_title: str | None = None
+    current_module_preview: dict | None = None
     active_interview_id: str | None = None
     can_start_current_module: bool = False
 
@@ -69,7 +71,7 @@ class StartAssessmentResponse(BaseModel):
 
 
 @router.get("/invite/{token}", response_model=InviteInfoResponse)
-async def get_invite_info(token: str, db: AsyncSession = Depends(get_db)):
+async def get_invite_info(token: str, language: str = "ru", db: AsyncSession = Depends(get_db)):
     """Public endpoint — returns invite details so employee can see who invited them."""
     from fastapi import HTTPException, status
     assessment = await get_assessment_for_invite_view(db, token)
@@ -84,6 +86,12 @@ async def get_invite_info(token: str, db: AsyncSession = Depends(get_db)):
         if interview and interview.status in {"created", "in_progress"}:
             active_interview_id = str(interview.id)
             has_active_interview = True
+    current_module_preview = build_assessment_module_preview(
+        module_type=current_module.get("module_type") if current_module else None,
+        target_role=assessment.target_role,
+        language="en" if str(language).strip().lower() == "en" else "ru",
+        module_config=current_module.get("config") if current_module else None,
+    )
 
     return InviteInfoResponse(
         assessment_id=str(assessment.id),
@@ -104,6 +112,7 @@ async def get_invite_info(token: str, db: AsyncSession = Depends(get_db)):
         current_module_index=current_module_index,
         current_module_type=current_module.get("module_type") if current_module else None,
         current_module_title=current_module.get("title") if current_module else None,
+        current_module_preview=current_module_preview,
         active_interview_id=active_interview_id,
         can_start_current_module=can_start_current_assessment_module_via_interview(
             assessment,

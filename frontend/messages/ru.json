@@ -151,6 +151,11 @@
         "locked": "Заблокирован"
       }
     },
+    "currentModulePreview": {
+      "title": "Превью текущего модуля",
+      "stackFocus": "Фокус стека",
+      "preferredLanguage": "Рекомендуемый язык"
+    },
     "checklist": {
       "title": "Перед началом",
       "emailTitle": "Используйте приглашённый email",
