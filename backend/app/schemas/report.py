@@ -159,6 +159,9 @@ class CodingTaskSummary(BaseModel):
     coverage_checks: list[CodingTaskCoverageCheck] = []
     runner_checks: list[CodingTaskCoverageCheck] = []
     stack_checks: list[CodingTaskCoverageCheck] = []
+    strengths: list[str] = []
+    gaps: list[str] = []
+    next_steps: list[str] = []
     stages: list[CodingTaskStageSummary] = []
     implementation_excerpt: str | None = None
     has_code_submission: bool = False
@@ -481,6 +484,9 @@ class AssessmentReportResponse(BaseModel):
                     coverage_checks = []
                     runner_checks = []
                     stack_checks = []
+                    strengths: list[str] = []
+                    gaps: list[str] = []
+                    next_steps: list[str] = []
                     overall_score = None
                     coverage_score = None
                     runner_score = None
@@ -565,6 +571,21 @@ class AssessmentReportResponse(BaseModel):
                         coverage_score = explicit_evaluation.get("coverage_score")
                         runner_score = explicit_evaluation.get("runner_score")
                         stack_score = explicit_evaluation.get("stack_score")
+                        strengths = [
+                            str(item).strip()
+                            for item in explicit_evaluation.get("strengths", [])
+                            if str(item).strip()
+                        ]
+                        gaps = [
+                            str(item).strip()
+                            for item in explicit_evaluation.get("gaps", [])
+                            if str(item).strip()
+                        ]
+                        next_steps = [
+                            str(item).strip()
+                            for item in explicit_evaluation.get("next_steps", [])
+                            if str(item).strip()
+                        ]
                         implementation_excerpt = (
                             str(explicit_evaluation.get("implementation_excerpt") or "").strip() or None
                         )
@@ -655,6 +676,9 @@ class AssessmentReportResponse(BaseModel):
                             "coverage_checks": coverage_checks,
                             "runner_checks": runner_checks,
                             "stack_checks": stack_checks,
+                            "strengths": strengths,
+                            "gaps": gaps,
+                            "next_steps": next_steps,
                             "stages": stages,
                             "implementation_excerpt": implementation_excerpt,
                             "has_code_submission": has_code_submission,

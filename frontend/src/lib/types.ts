@@ -812,6 +812,9 @@ export interface CodingTaskSummary {
   coverage_checks: CodingTaskCoverageCheck[];
   runner_checks: CodingTaskCoverageCheck[];
   stack_checks: CodingTaskCoverageCheck[];
+  strengths: string[];
+  gaps: string[];
+  next_steps: string[];
   stages: CodingTaskStageSummary[];
   implementation_excerpt: string | null;
   has_code_submission: boolean;

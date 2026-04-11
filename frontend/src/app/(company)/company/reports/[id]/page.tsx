@@ -318,6 +318,14 @@ function CodingTaskSummaryPanel({ summary }: { summary: NonNullable<AssessmentRe
         </div>
       )}
 
+      {(summary.strengths.length > 0 || summary.gaps.length > 0 || summary.next_steps.length > 0) && (
+        <div className="mb-4 grid gap-3 lg:grid-cols-3">
+          <CodingTaskInsightList title={t("codingTask.strengths")} tone="emerald" items={summary.strengths} />
+          <CodingTaskInsightList title={t("codingTask.gaps")} tone="amber" items={summary.gaps} />
+          <CodingTaskInsightList title={t("codingTask.nextSteps")} tone="blue" items={summary.next_steps} />
+        </div>
+      )}
+
       {summary.implementation_excerpt && (
         <div className="mb-4 rounded-xl border border-slate-700 bg-slate-950/70 p-4">
           <div className="mb-2 flex items-center justify-between gap-3">
@@ -368,6 +376,39 @@ function CodingTaskSummaryPanel({ summary }: { summary: NonNullable<AssessmentRe
       <div className="grid gap-3 md:grid-cols-3">
         {summary.stages.map((stage) => (
           <CodingTaskStageCard key={stage.stage_key} stage={stage} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CodingTaskInsightList({
+  title,
+  tone,
+  items,
+}: {
+  title: string;
+  tone: "emerald" | "amber" | "blue";
+  items: string[];
+}) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  const toneStyles = {
+    emerald: "border-emerald-500/20 bg-emerald-500/10 text-emerald-100",
+    amber: "border-amber-500/20 bg-amber-500/10 text-amber-100",
+    blue: "border-blue-500/20 bg-blue-500/10 text-blue-100",
+  } satisfies Record<typeof tone, string>;
+
+  return (
+    <div className={`rounded-xl border p-4 ${toneStyles[tone]}`}>
+      <div className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-300">{title}</div>
+      <div className="space-y-2">
+        {items.map((item) => (
+          <div key={item} className="text-sm leading-6">
+            {item}
+          </div>
         ))}
       </div>
     </div>

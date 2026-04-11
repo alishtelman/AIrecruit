@@ -2222,6 +2222,181 @@ def _build_coding_task_stack_checks(
     return stack_checks, stack_score
 
 
+def _build_coding_task_review_notes(
+    *,
+    report_language: str,
+    stack_focus: str | None,
+    preferred_language: str | None,
+    coverage_checks: list[dict],
+    stack_checks: list[dict],
+    runner_checks: list[dict],
+    implementation_score: float | None,
+    review_score: float | None,
+    correctness_score: float | None,
+) -> tuple[list[str], list[str], list[str]]:
+    normalized_language = _normalized_report_language(report_language)
+    stack_label = str(stack_focus or "").strip() or (
+        "the selected stack" if normalized_language == "en" else "выбранный стек"
+    )
+    language_label = str(preferred_language or "").strip() or (
+        "the chosen language" if normalized_language == "en" else "выбранный язык"
+    )
+
+    def _titles(checks: list[dict], statuses: tuple[str, ...]) -> list[str]:
+        seen: set[str] = set()
+        items: list[str] = []
+        for check in checks:
+            if str(check.get("status") or "").strip() not in statuses:
+                continue
+            title = str(check.get("title") or "").strip()
+            if not title or title in seen:
+                continue
+            seen.add(title)
+            items.append(title)
+        return items
+
+    def _join_titles(titles: list[str]) -> str:
+        return ", ".join(titles[:3])
+
+    def _append_unique(target: list[str], message: str | None) -> None:
+        text = str(message or "").strip()
+        if text and text not in target:
+            target.append(text)
+
+    passed_stack = _titles(stack_checks, ("passed",))
+    partial_stack = _titles(stack_checks, ("partial",))
+    weak_stack = _titles(stack_checks, ("missed", "partial"))
+    passed_coverage = _titles(coverage_checks, ("passed",))
+    weak_coverage = _titles(coverage_checks, ("missed", "partial"))
+    weak_runner = _titles(runner_checks, ("missed", "partial"))
+
+    strengths: list[str] = []
+    gaps: list[str] = []
+    next_steps: list[str] = []
+
+    if isinstance(implementation_score, (int, float)) and float(implementation_score) >= 7.0:
+        _append_unique(
+            strengths,
+            (
+                "Implementation stayed structured and readable during the live task."
+                if normalized_language == "en"
+                else "Реализация оставалась структурной и читаемой во время задания."
+            ),
+        )
+    if passed_stack:
+        _append_unique(
+            strengths,
+            (
+                f"Showed practical fluency in {stack_label}: {_join_titles(passed_stack)}."
+                if normalized_language == "en"
+                else f"Показал практическое владение стеком {stack_label}: {_join_titles(passed_stack)}."
+            ),
+        )
+    elif partial_stack:
+        _append_unique(
+            strengths,
+            (
+                f"Showed partial fluency in {stack_label}: {_join_titles(partial_stack)}."
+                if normalized_language == "en"
+                else f"Показал частичное владение стеком {stack_label}: {_join_titles(partial_stack)}."
+            ),
+        )
+    if passed_coverage:
+        _append_unique(
+            strengths,
+            (
+                f"Covered key functional requirements: {_join_titles(passed_coverage)}."
+                if normalized_language == "en"
+                else f"Покрыл ключевые функциональные требования: {_join_titles(passed_coverage)}."
+            ),
+        )
+
+    if weak_stack:
+        _append_unique(
+            gaps,
+            (
+                f"Stack-specific patterns are still weak in {stack_label}: {_join_titles(weak_stack)}."
+                if normalized_language == "en"
+                else f"Стековые паттерны пока слабые в области {stack_label}: {_join_titles(weak_stack)}."
+            ),
+        )
+    if weak_coverage:
+        _append_unique(
+            gaps,
+            (
+                f"Functional coverage is incomplete around {_join_titles(weak_coverage)}."
+                if normalized_language == "en"
+                else f"Функциональное покрытие неполное в части {_join_titles(weak_coverage)}."
+            ),
+        )
+    if weak_runner:
+        _append_unique(
+            gaps,
+            (
+                f"Hidden execution checks exposed issues in {_join_titles(weak_runner)}."
+                if normalized_language == "en"
+                else f"Скрытые проверки выполнения выявили проблемы в части {_join_titles(weak_runner)}."
+            ),
+        )
+    if isinstance(review_score, (int, float)) and float(review_score) < 6.0:
+        _append_unique(
+            gaps,
+            (
+                "Code explanation and trade-off discussion stayed too shallow."
+                if normalized_language == "en"
+                else "Объяснение кода и обсуждение trade-off осталось слишком поверхностным."
+            ),
+        )
+    if isinstance(correctness_score, (int, float)) and float(correctness_score) < 6.0:
+        _append_unique(
+            gaps,
+            (
+                "Correctness and edge-case reasoning need tighter validation."
+                if normalized_language == "en"
+                else "Корректность и разбор edge-case требуют более строгой проверки."
+            ),
+        )
+
+    if weak_stack:
+        _append_unique(
+            next_steps,
+            (
+                f"Practice {_join_titles(weak_stack)} in {language_label} with one small end-to-end exercise."
+                if normalized_language == "en"
+                else f"Отработай {_join_titles(weak_stack)} на {language_label} через одно небольшое end-to-end задание."
+            ),
+        )
+    if weak_coverage:
+        _append_unique(
+            next_steps,
+            (
+                f"Add explicit handling for {_join_titles(weak_coverage)} and explain the trade-offs in review."
+                if normalized_language == "en"
+                else f"Добавь явную обработку {_join_titles(weak_coverage)} и проговори trade-off на этапе review."
+            ),
+        )
+    if weak_runner:
+        _append_unique(
+            next_steps,
+            (
+                f"Re-run the solution against failure and edge scenarios around {_join_titles(weak_runner)}."
+                if normalized_language == "en"
+                else f"Перепроверь решение на сбойных и граничных сценариях вокруг {_join_titles(weak_runner)}."
+            ),
+        )
+    if not next_steps:
+        _append_unique(
+            next_steps,
+            (
+                f"Keep explaining design choices in {language_label} while implementing to preserve stack clarity."
+                if normalized_language == "en"
+                else f"Продолжай проговаривать решения на {language_label} во время реализации, чтобы сохранять ясность по стеку."
+            ),
+        )
+
+    return strengths[:3], gaps[:3], next_steps[:3]
+
+
 def _coding_task_runner_title(
     *,
     scenario_id: str | None,
@@ -2638,6 +2813,17 @@ def _build_coding_task_evaluation(
         artifact_language=artifact_language,
         report_language=report_language,
     )
+    strengths, gaps, next_steps = _build_coding_task_review_notes(
+        report_language=report_language,
+        stack_focus=str(interview_meta.get("module_stack_focus") or "").strip() or None,
+        preferred_language=str(interview_meta.get("module_preferred_language") or "").strip() or None,
+        coverage_checks=coverage_checks,
+        stack_checks=stack_checks,
+        runner_checks=runner_checks,
+        implementation_score=implementation_score if isinstance(implementation_score, (int, float)) else None,
+        review_score=stage_scores.get("review") if isinstance(stage_scores.get("review"), (int, float)) else None,
+        correctness_score=correctness_score if isinstance(correctness_score, (int, float)) else None,
+    )
 
     rubric_scores = [
         {
@@ -2706,6 +2892,9 @@ def _build_coding_task_evaluation(
         "stack_checks": stack_checks,
         "runner_score": runner_score,
         "runner_checks": runner_checks,
+        "strengths": strengths,
+        "gaps": gaps,
+        "next_steps": next_steps,
     }
 
 

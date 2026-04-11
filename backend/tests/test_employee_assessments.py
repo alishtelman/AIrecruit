@@ -680,6 +680,9 @@ def allow_request(user_id: str, now: int, limit: int = 5, window_seconds: int = 
     assert summary["stack_checks"]
     assert summary["stack_focus"]
     assert summary["preferred_language"] == "python"
+    assert summary["strengths"]
+    assert summary["gaps"]
+    assert summary["next_steps"]
     assert summary["has_code_submission"] is True
     assert summary["implementation_excerpt"] is not None
     assert "allow_request" in summary["implementation_excerpt"]
