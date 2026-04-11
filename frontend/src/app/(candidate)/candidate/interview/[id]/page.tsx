@@ -151,6 +151,7 @@ export default function InterviewPage() {
       ? moduleSession.module_type
       : null;
   const isSqlLive = taskWorkspaceModuleType === "sql_live";
+  const preferredTaskLanguage = moduleSession?.preferred_language ?? (isSqlLive ? "sql" : "python");
 
   async function saveCodingTaskDraftArtifact(force = false): Promise<boolean> {
     if (!id || !taskWorkspaceModuleType) {
@@ -202,6 +203,9 @@ export default function InterviewPage() {
         setQuestionCount(data.question_count);
         setMaxQuestions(data.max_questions);
         setModuleSession(data.module_session ?? null);
+        if (data.module_session?.preferred_language) {
+          setCodingTaskLanguage(data.module_session.preferred_language);
+        }
         if (data.language) setInterviewLanguage(data.language);
 
         const hubPath = getAssessmentHubPath(data);
@@ -245,7 +249,7 @@ export default function InterviewPage() {
   useEffect(() => {
     if (!id || !taskWorkspaceModuleType) {
       setCodingTaskDraft("");
-      setCodingTaskLanguage(taskWorkspaceModuleType === "sql_live" ? "sql" : "python");
+      setCodingTaskLanguage(preferredTaskLanguage);
       setCodingTaskSavedAt(null);
       setCodingTaskSaveState("idle");
       setCodingTaskDirty(false);
@@ -258,7 +262,7 @@ export default function InterviewPage() {
       .then((artifact) => {
         if (cancelled) return;
         setCodingTaskDraft(artifact.code ?? "");
-        setCodingTaskLanguage(artifact.language ?? (taskWorkspaceModuleType === "sql_live" ? "sql" : "python"));
+        setCodingTaskLanguage(artifact.language ?? preferredTaskLanguage);
         setCodingTaskSavedAt(artifact.updated_at ?? null);
         setCodingTaskSaveState(artifact.code ? "saved" : "idle");
         setCodingTaskDirty(false);
@@ -266,7 +270,7 @@ export default function InterviewPage() {
       .catch(() => {
         if (cancelled) return;
         setCodingTaskDraft("");
-        setCodingTaskLanguage(taskWorkspaceModuleType === "sql_live" ? "sql" : "python");
+        setCodingTaskLanguage(preferredTaskLanguage);
         setCodingTaskSavedAt(null);
         setCodingTaskSaveState("idle");
         setCodingTaskDirty(false);
@@ -275,7 +279,7 @@ export default function InterviewPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, taskWorkspaceModuleType]);
+  }, [id, preferredTaskLanguage, taskWorkspaceModuleType]);
 
   // Track behavioral signals
   useEffect(() => {
@@ -939,13 +943,19 @@ export default function InterviewPage() {
                   <div className="mt-1 text-sm text-slate-200">{(systemDesignSession || taskWorkspaceSession)?.stage_title}</div>
                 </div>
               )}
+              {taskWorkspaceSession?.stack_focus && (
+                <div className="mt-3">
+                  <div className="text-xs uppercase tracking-[0.14em] text-slate-400">{t("stackLabel")}</div>
+                  <div className="mt-1 text-sm text-slate-200">{taskWorkspaceSession.stack_focus}</div>
+                </div>
+              )}
               {(systemDesignSession || taskWorkspaceSession)?.scenario_prompt && (
                 <p className="mt-3 text-sm leading-6 text-slate-300">{(systemDesignSession || taskWorkspaceSession)?.scenario_prompt}</p>
               )}
               {taskWorkspaceSession && (
                 <div className="mt-4 space-y-3">
                   <div className="rounded-xl border border-slate-700/80 bg-slate-950/40 px-4 py-3 text-sm text-slate-300">
-                    {isSqlLive ? t("sqlTaskHint") : t("codingTaskHint")}
+                    {taskWorkspaceSession.workspace_hint || (isSqlLive ? t("sqlTaskHint") : t("codingTaskHint"))}
                   </div>
                   <div className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -992,6 +1002,11 @@ export default function InterviewPage() {
                       {isSqlLive && (
                         <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-300">
                           SQL
+                        </div>
+                      )}
+                      {!isSqlLive && taskWorkspaceSession.preferred_language && (
+                        <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-300">
+                          {t("recommendedLanguage")}: {taskWorkspaceSession.preferred_language}
                         </div>
                       )}
                       <button

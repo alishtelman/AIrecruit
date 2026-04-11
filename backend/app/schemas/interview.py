@@ -38,6 +38,9 @@ class InterviewModuleSessionResponse(BaseModel):
     scenario_id: str | None = None
     scenario_title: str | None = None
     scenario_prompt: str | None = None
+    stack_focus: str | None = None
+    preferred_language: str | None = None
+    workspace_hint: str | None = None
     stage_key: str | None = None
     stage_title: str | None = None
     stage_index: int = 0

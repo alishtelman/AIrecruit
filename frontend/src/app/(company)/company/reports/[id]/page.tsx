@@ -283,6 +283,11 @@ function CodingTaskSummaryPanel({ summary }: { summary: NonNullable<AssessmentRe
               {t("codingTask.runnerScore")}: {summary.runner_score.toFixed(1)}/10
             </span>
           )}
+          {summary.stack_score != null && (
+            <span className="rounded-full border border-blue-400/20 bg-blue-950/40 px-3 py-1 text-xs font-semibold text-blue-200">
+              {t("codingTask.stackScore")}: {summary.stack_score.toFixed(1)}/10
+            </span>
+          )}
         </div>
       </div>
 
@@ -290,6 +295,17 @@ function CodingTaskSummaryPanel({ summary }: { summary: NonNullable<AssessmentRe
         <div className="mb-3">
           <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("codingTask.task")}</div>
           <div className="mt-1 text-sm font-medium text-white">{summary.scenario_title}</div>
+        </div>
+      )}
+      {summary.stack_focus && (
+        <div className="mb-3">
+          <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("codingTask.stackFocus")}</div>
+          <div className="mt-1 text-sm text-slate-200">{summary.stack_focus}</div>
+        </div>
+      )}
+      {summary.preferred_language && (
+        <div className="mb-3 text-xs text-slate-400">
+          {t("codingTask.preferredLanguage")}: <span className="font-medium text-slate-200">{summary.preferred_language}</span>
         </div>
       )}
       {summary.scenario_prompt && <p className="mb-4 text-sm leading-6 text-slate-300">{summary.scenario_prompt}</p>}
@@ -332,6 +348,17 @@ function CodingTaskSummaryPanel({ summary }: { summary: NonNullable<AssessmentRe
           <div className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">{t("codingTask.runnerChecks")}</div>
           <div className="grid gap-3 lg:grid-cols-2">
             {summary.runner_checks.map((check) => (
+              <CodingTaskCoverageCheckCard key={check.check_key} check={check} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {summary.stack_checks.length > 0 && (
+        <div className="mb-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">{t("codingTask.stackChecks")}</div>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {summary.stack_checks.map((check) => (
               <CodingTaskCoverageCheckCard key={check.check_key} check={check} />
             ))}
           </div>

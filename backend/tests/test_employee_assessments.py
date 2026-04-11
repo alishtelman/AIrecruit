@@ -598,6 +598,9 @@ async def test_employee_assessment_supports_coding_task_module_and_report_summar
     assert detail["module_session"]["module_type"] == "coding_task"
     assert detail["module_session"]["module_title"] == "Coding Task"
     assert detail["module_session"]["scenario_title"]
+    assert detail["module_session"]["stack_focus"]
+    assert detail["module_session"]["preferred_language"] == "python"
+    assert detail["module_session"]["workspace_hint"]
     assert detail["module_session"]["stage_key"] == "task_brief"
     assert detail["module_session"]["stage_count"] == 3
 
@@ -668,11 +671,15 @@ def allow_request(user_id: str, now: int, limit: int = 5, window_seconds: int = 
     summary = company_report["coding_task_summary"]
     assert summary["stage_count"] == 3
     assert summary["overall_score"] is not None
-    assert len(summary["rubric_scores"]) == 6
+    assert len(summary["rubric_scores"]) == 7
     assert summary["coverage_score"] is not None
     assert summary["coverage_checks"]
     assert summary["runner_score"] is not None
     assert summary["runner_checks"]
+    assert summary["stack_score"] is not None
+    assert summary["stack_checks"]
+    assert summary["stack_focus"]
+    assert summary["preferred_language"] == "python"
     assert summary["has_code_submission"] is True
     assert summary["implementation_excerpt"] is not None
     assert "allow_request" in summary["implementation_excerpt"]
@@ -681,6 +688,7 @@ def allow_request(user_id: str, now: int, limit: int = 5, window_seconds: int = 
     assert any(check["check_key"] == "expired_window_cleanup" for check in summary["coverage_checks"])
     assert any(check["check_key"] == "runner_blocks_over_limit" for check in summary["runner_checks"])
     assert any(check["status"] == "passed" for check in summary["runner_checks"])
+    assert any(check["status"] in {"passed", "partial"} for check in summary["stack_checks"])
     assert len(summary["stages"]) == 3
     assert all(stage["stage_title"] for stage in summary["stages"])
     assert company_report["per_question_analysis"]
@@ -696,6 +704,86 @@ def allow_request(user_id: str, now: int, limit: int = 5, window_seconds: int = 
     assert completed["interview_id"] == coding_interview_id
     assert completed["module_plan"][1]["status"] == "completed"
     assert completed["module_plan"][1]["interview_id"] == coding_interview_id
+
+
+@pytest.mark.asyncio
+async def test_employee_assessment_coding_task_uses_role_specific_stack_profiles(
+    client: AsyncClient,
+    company_token: str,
+):
+    cases = [
+        (
+            "frontend_engineer",
+            "typescript",
+            "async_search_state_manager",
+            "React",
+        ),
+        (
+            "qa_engineer",
+            "python",
+            "flaky_test_classifier",
+            "QA automation",
+        ),
+    ]
+
+    for target_role, expected_language, expected_scenario_id, expected_stack_marker in cases:
+        employee_email = f"{target_role}_{uuid.uuid4().hex[:8]}@example.com"
+        assessment = await _create_assessment(
+            client,
+            company_token,
+            employee_email,
+            f"{target_role} Candidate",
+            target_role=target_role,
+            module_plan=[
+                {
+                    "module_type": "adaptive_interview",
+                    "title": "Core Interview",
+                },
+                {
+                    "module_id": "coding_task_main",
+                    "module_type": "coding_task",
+                    "title": "Coding Task",
+                },
+            ],
+        )
+        candidate_token = await _register_candidate(client, employee_email, f"{target_role} Candidate")
+        await _upload_resume(client, candidate_token)
+
+        first_start_resp = await client.post(
+            f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+            headers=auth_headers(candidate_token),
+            json={"language": "en"},
+        )
+        assert first_start_resp.status_code == 200, first_start_resp.text
+        first_interview_id = first_start_resp.json()["interview_id"]
+        await _answer_all_questions(client, candidate_token, first_interview_id)
+
+        first_finish_resp = await client.post(
+            f"/api/v1/interviews/{first_interview_id}/finish",
+            headers=auth_headers(candidate_token),
+        )
+        assert first_finish_resp.status_code == 200, first_finish_resp.text
+
+        coding_start_resp = await client.post(
+            f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+            headers=auth_headers(candidate_token),
+            json={"language": "en"},
+        )
+        assert coding_start_resp.status_code == 200, coding_start_resp.text
+        coding_interview_id = coding_start_resp.json()["interview_id"]
+
+        detail_resp = await client.get(
+            f"/api/v1/interviews/{coding_interview_id}",
+            headers=auth_headers(candidate_token),
+        )
+        assert detail_resp.status_code == 200, detail_resp.text
+        detail = detail_resp.json()
+        assert detail["module_session"] is not None
+        assert detail["module_session"]["module_type"] == "coding_task"
+        assert detail["module_session"]["scenario_id"] == expected_scenario_id
+        assert detail["module_session"]["preferred_language"] == expected_language
+        assert expected_stack_marker in detail["module_session"]["stack_focus"]
+        assert detail["module_session"]["workspace_hint"]
 
 
 @pytest.mark.asyncio

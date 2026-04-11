@@ -378,6 +378,9 @@ export interface InterviewModuleSession {
   scenario_id: string | null;
   scenario_title: string | null;
   scenario_prompt: string | null;
+  stack_focus: string | null;
+  preferred_language: string | null;
+  workspace_hint: string | null;
   stage_key: string | null;
   stage_title: string | null;
   stage_index: number;
@@ -736,6 +739,9 @@ export interface ReportModuleSession {
   scenario_id: string | null;
   scenario_title: string | null;
   scenario_prompt: string | null;
+  stack_focus: string | null;
+  preferred_language: string | null;
+  workspace_hint: string | null;
   stage_key: string | null;
   stage_title: string | null;
   stage_index: number;
@@ -794,13 +800,18 @@ export interface CodingTaskSummary {
   scenario_id: string | null;
   scenario_title: string | null;
   scenario_prompt: string | null;
+  stack_focus: string | null;
+  preferred_language: string | null;
+  workspace_hint: string | null;
   stage_count: number;
   overall_score: number | null;
   coverage_score: number | null;
   runner_score: number | null;
+  stack_score: number | null;
   rubric_scores: CodingTaskRubricScore[];
   coverage_checks: CodingTaskCoverageCheck[];
   runner_checks: CodingTaskCoverageCheck[];
+  stack_checks: CodingTaskCoverageCheck[];
   stages: CodingTaskStageSummary[];
   implementation_excerpt: string | null;
   has_code_submission: boolean;

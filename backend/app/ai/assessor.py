@@ -1313,6 +1313,153 @@ _CODING_TASK_SCENARIO_COVERAGE_CHECKS = {
     ),
 }
 
+_CODING_TASK_SCENARIO_STACK_CHECKS = {
+    "rate_limiter_window_counter": (
+        {
+            "check_key": "backend_service_boundaries",
+            "title_en": "Shows backend handler/service boundaries",
+            "title_ru": "Показывает backend-границы handler/service",
+            "stage_key": "implementation",
+            "patterns": ("fastapi", "endpoint", "middleware", "service", "handler", "pydantic", "request", "response"),
+            "required_hits": 2,
+        },
+        {
+            "check_key": "backend_async_reliability",
+            "title_en": "Mentions async or reliability concerns for backend integration",
+            "title_ru": "Учитывает async или reliability-аспекты backend-интеграции",
+            "stage_key": "review",
+            "patterns": ("async", "await", "redis", "concurrency", "race", "timeout", "429", "retry", "test"),
+            "required_hits": 2,
+        },
+    ),
+    "async_search_state_manager": (
+        {
+            "check_key": "frontend_state_model",
+            "title_en": "Shows React-style state and transition thinking",
+            "title_ru": "Показывает React-style подход к state и transition",
+            "stage_key": "implementation",
+            "patterns": ("react", "hook", "usestate", "reducer", "state", "loading", "error", "query"),
+            "required_hits": 2,
+        },
+        {
+            "check_key": "frontend_stale_response_control",
+            "title_en": "Handles cancellation and stale-response UX",
+            "title_ru": "Обрабатывает cancelation и stale-response UX",
+            "stage_key": "review",
+            "patterns": ("abort", "cancel", "stale", "debounce", "effect", "spinner", "empty state", "retry"),
+            "required_hits": 2,
+        },
+    ),
+    "flaky_test_classifier": (
+        {
+            "check_key": "qa_assertion_strategy",
+            "title_en": "Shows test assertions, fixtures, or automation structure",
+            "title_ru": "Показывает assertions, fixtures или структуру automation",
+            "stage_key": "implementation",
+            "patterns": ("pytest", "fixture", "assert", "parametrize", "playwright", "test case", "spec"),
+            "required_hits": 2,
+        },
+        {
+            "check_key": "qa_ci_diagnostics",
+            "title_en": "Explains CI diagnostics and flaky-test evidence",
+            "title_ru": "Объясняет CI diagnostics и evidence по flaky-тестам",
+            "stage_key": "review",
+            "patterns": ("ci", "artifact", "trace", "report", "rerun", "history", "screenshot", "diagnostic"),
+            "required_hits": 2,
+        },
+    ),
+    "deployment_rollout_guard": (
+        {
+            "check_key": "ops_health_thresholds",
+            "title_en": "Defines rollout health thresholds and rollback triggers",
+            "title_ru": "Определяет rollout thresholds и rollback triggers",
+            "stage_key": "implementation",
+            "patterns": ("latency", "error rate", "slo", "threshold", "rollback", "pause", "continue", "canary"),
+            "required_hits": 2,
+        },
+        {
+            "check_key": "ops_observability_signals",
+            "title_en": "Uses observability and event signals in the decision path",
+            "title_ru": "Использует observability и event signals в decision path",
+            "stage_key": "review",
+            "patterns": ("metric", "alert", "event", "monitor", "dashboard", "trace", "burn rate", "pager"),
+            "required_hits": 2,
+        },
+    ),
+    "feature_freshness_monitor": (
+        {
+            "check_key": "data_validation_thresholds",
+            "title_en": "Defines concrete data-validation thresholds and fallbacks",
+            "title_ru": "Задаёт конкретные пороги data-validation и fallback",
+            "stage_key": "implementation",
+            "patterns": ("threshold", "freshness", "null", "fallback", "stale", "feature", "block", "allow"),
+            "required_hits": 2,
+        },
+        {
+            "check_key": "data_pipeline_reasoning",
+            "title_en": "Explains how the logic fits into a scoring pipeline",
+            "title_ru": "Объясняет, как логика встроится в scoring pipeline",
+            "stage_key": "review",
+            "patterns": ("pipeline", "batch", "stream", "latency", "monitor", "backfill", "scoring"),
+            "required_hits": 2,
+        },
+    ),
+    "experiment_guardrail_parser": (
+        {
+            "check_key": "product_decision_rules",
+            "title_en": "Shows explicit rollout decision rules",
+            "title_ru": "Показывает явные rollout decision rules",
+            "stage_key": "implementation",
+            "patterns": ("guardrail", "metric", "threshold", "rollout", "launch", "block", "decision"),
+            "required_hits": 2,
+        },
+        {
+            "check_key": "product_payload_shape",
+            "title_en": "Defines a structured output payload for decision makers",
+            "title_ru": "Определяет структурированный output payload для decision makers",
+            "stage_key": "review",
+            "patterns": ("payload", "owner", "reason", "recommendation", "status", "invalid", "summary"),
+            "required_hits": 2,
+        },
+    ),
+    "offline_sync_queue": (
+        {
+            "check_key": "mobile_sync_state",
+            "title_en": "Shows offline sync state and conflict markers",
+            "title_ru": "Показывает состояние offline sync и conflict markers",
+            "stage_key": "implementation",
+            "patterns": ("queue", "sync", "conflict", "retry", "batch", "offline", "reconnect", "marker"),
+            "required_hits": 2,
+        },
+        {
+            "check_key": "mobile_failure_battery_tradeoffs",
+            "title_en": "Explains battery or retry trade-offs for mobile behavior",
+            "title_ru": "Объясняет battery/retry trade-offs для mobile-поведения",
+            "stage_key": "review",
+            "patterns": ("battery", "background", "backoff", "network", "latency", "retry", "flush"),
+            "required_hits": 2,
+        },
+    ),
+    "design_token_transformer": (
+        {
+            "check_key": "design_token_schema",
+            "title_en": "Defines token schema and validation rules",
+            "title_ru": "Определяет схему токенов и правила валидации",
+            "stage_key": "implementation",
+            "patterns": ("token", "alias", "schema", "validate", "required", "platform", "transform"),
+            "required_hits": 2,
+        },
+        {
+            "check_key": "design_handoff_outputs",
+            "title_en": "Explains platform outputs and actionable errors",
+            "title_ru": "Объясняет platform outputs и понятные ошибки",
+            "stage_key": "review",
+            "patterns": ("ios", "android", "web", "error", "output", "handoff", "theme"),
+            "required_hits": 2,
+        },
+    ),
+}
+
 _SQL_LIVE_STAGE_WEIGHTS = {
     "schema_review": 0.25,
     "query_authoring": 0.45,
@@ -2018,6 +2165,63 @@ def _build_coding_task_coverage_checks(
     return coverage_checks, coverage_score
 
 
+def _build_coding_task_stack_checks(
+    *,
+    scenario_id: str | None,
+    answers_by_stage: dict[str, list[str]],
+    implementation_excerpt: str | None,
+    report_language: str,
+) -> tuple[list[dict], float | None]:
+    normalized_language = _normalized_report_language(report_language)
+    check_bank = _CODING_TASK_SCENARIO_STACK_CHECKS.get(str(scenario_id or "").strip(), ())
+    stack_checks: list[dict] = []
+    scores: list[float] = []
+    if not check_bank:
+        return stack_checks, None
+
+    implementation_texts = list(answers_by_stage.get("implementation", []))
+    if implementation_excerpt:
+        implementation_texts = [implementation_excerpt, *implementation_texts]
+
+    for raw_check in check_bank:
+        stage_key = str(raw_check.get("stage_key") or "").strip() or "implementation"
+        stage_texts = implementation_texts if stage_key == "implementation" else list(answers_by_stage.get(stage_key, []))
+        patterns = tuple(str(item).lower() for item in raw_check.get("patterns", ()) if str(item).strip())
+        required_hits = max(_to_int(raw_check.get("required_hits"), 1), 1)
+        searchable = "\n".join(text.lower() for text in stage_texts if str(text).strip())
+        hits = sum(1 for pattern in patterns if pattern in searchable)
+
+        if hits >= required_hits:
+            status = "passed"
+            score = 10.0
+        elif hits > 0:
+            status = "partial"
+            score = 5.0
+        else:
+            status = "missed"
+            score = 0.0
+
+        title = (
+            str(raw_check.get("title_ru") or "").strip()
+            if normalized_language == "ru"
+            else str(raw_check.get("title_en") or "").strip()
+        ) or str(raw_check.get("check_key") or "").strip()
+        evidence = _find_matching_evidence(stage_texts, patterns)
+        stack_checks.append(
+            {
+                "check_key": str(raw_check.get("check_key") or "").strip(),
+                "title": title,
+                "status": status,
+                "score": score,
+                "evidence": evidence,
+            }
+        )
+        scores.append(score)
+
+    stack_score = round(sum(scores) / len(scores), 1) if scores else None
+    return stack_checks, stack_score
+
+
 def _coding_task_runner_title(
     *,
     scenario_id: str | None,
@@ -2422,6 +2626,12 @@ def _build_coding_task_evaluation(
         implementation_excerpt=implementation_code_excerpt,
         report_language=report_language,
     )
+    stack_checks, stack_score = _build_coding_task_stack_checks(
+        scenario_id=scenario_id,
+        answers_by_stage=answers_by_stage,
+        implementation_excerpt=implementation_code_excerpt,
+        report_language=report_language,
+    )
     runner_checks, runner_score = _build_coding_task_runner_checks(
         scenario_id=scenario_id,
         artifact_code=artifact_code,
@@ -2450,6 +2660,10 @@ def _build_coding_task_evaluation(
             "rubric_key": "functional_coverage",
             "score": coverage_score,
         },
+        {
+            "rubric_key": "stack_fluency",
+            "score": stack_score,
+        },
     ]
     if runner_score is not None:
         rubric_scores.append(
@@ -2459,18 +2673,26 @@ def _build_coding_task_evaluation(
             }
         )
 
-    if overall_score is not None and coverage_score is not None and runner_score is not None:
-        overall_score = round((overall_score * 0.75) + (coverage_score * 0.15) + (runner_score * 0.10), 1)
-    elif overall_score is not None and coverage_score is not None:
-        overall_score = round((overall_score * 0.85) + (coverage_score * 0.15), 1)
-    elif overall_score is not None and runner_score is not None:
-        overall_score = round((overall_score * 0.9) + (runner_score * 0.1), 1)
+    if overall_score is not None:
+        weighted_parts = [(overall_score, 0.7)]
+        if coverage_score is not None:
+            weighted_parts.append((coverage_score, 0.15))
+        if stack_score is not None:
+            weighted_parts.append((stack_score, 0.1))
+        if runner_score is not None:
+            weighted_parts.append((runner_score, 0.05))
+        total_weight = sum(weight for _, weight in weighted_parts)
+        if total_weight > 0:
+            overall_score = round(sum(score * weight for score, weight in weighted_parts) / total_weight, 1)
 
     return {
         "module_title": str(interview_meta.get("module_title") or "").strip() or None,
         "scenario_id": scenario_id,
         "scenario_title": str(interview_meta.get("module_scenario_title") or "").strip() or None,
         "scenario_prompt": str(interview_meta.get("module_scenario_prompt") or "").strip() or None,
+        "stack_focus": str(interview_meta.get("module_stack_focus") or "").strip() or None,
+        "preferred_language": str(interview_meta.get("module_preferred_language") or "").strip() or None,
+        "workspace_hint": str(interview_meta.get("module_workspace_hint") or "").strip() or None,
         "stage_count": len(stages),
         "overall_score": overall_score,
         "rubric_scores": rubric_scores,
@@ -2480,6 +2702,8 @@ def _build_coding_task_evaluation(
         "code_signal_score": code_signal_score,
         "coverage_score": coverage_score,
         "coverage_checks": coverage_checks,
+        "stack_score": stack_score,
+        "stack_checks": stack_checks,
         "runner_score": runner_score,
         "runner_checks": runner_checks,
     }

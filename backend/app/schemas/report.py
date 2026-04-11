@@ -86,6 +86,9 @@ class ReportModuleSession(BaseModel):
     scenario_id: str | None = None
     scenario_title: str | None = None
     scenario_prompt: str | None = None
+    stack_focus: str | None = None
+    preferred_language: str | None = None
+    workspace_hint: str | None = None
     stage_key: str | None = None
     stage_title: str | None = None
     stage_index: int = 0
@@ -144,13 +147,18 @@ class CodingTaskSummary(BaseModel):
     scenario_id: str | None = None
     scenario_title: str | None = None
     scenario_prompt: str | None = None
+    stack_focus: str | None = None
+    preferred_language: str | None = None
+    workspace_hint: str | None = None
     stage_count: int = 0
     overall_score: float | None = None
     coverage_score: float | None = None
     runner_score: float | None = None
+    stack_score: float | None = None
     rubric_scores: list[CodingTaskRubricScore] = []
     coverage_checks: list[CodingTaskCoverageCheck] = []
     runner_checks: list[CodingTaskCoverageCheck] = []
+    stack_checks: list[CodingTaskCoverageCheck] = []
     stages: list[CodingTaskStageSummary] = []
     implementation_excerpt: str | None = None
     has_code_submission: bool = False
@@ -265,6 +273,9 @@ class AssessmentReportResponse(BaseModel):
                     "scenario_id": str(interview_meta.get("module_scenario_id") or "").strip() or None,
                     "scenario_title": str(interview_meta.get("module_scenario_title") or "").strip() or None,
                     "scenario_prompt": str(interview_meta.get("module_scenario_prompt") or "").strip() or None,
+                    "stack_focus": str(interview_meta.get("module_stack_focus") or "").strip() or None,
+                    "preferred_language": str(interview_meta.get("module_preferred_language") or "").strip() or None,
+                    "workspace_hint": str(interview_meta.get("module_workspace_hint") or "").strip() or None,
                     "stage_key": str(current_stage.get("stage_key") or interview_meta.get("module_stage_key") or "").strip() or None,
                     "stage_title": str(current_stage.get("stage_title") or interview_meta.get("module_stage_title") or "").strip() or None,
                     "stage_index": stage_index,
@@ -469,9 +480,11 @@ class AssessmentReportResponse(BaseModel):
                     rubric_scores = []
                     coverage_checks = []
                     runner_checks = []
+                    stack_checks = []
                     overall_score = None
                     coverage_score = None
                     runner_score = None
+                    stack_score = None
                     implementation_excerpt = None
                     has_code_submission = False
                     code_signal_score = None
@@ -535,9 +548,23 @@ class AssessmentReportResponse(BaseModel):
                                 for item in explicit_runner_checks
                                 if isinstance(item, dict) and str(item.get("check_key") or "").strip()
                             ]
+                        explicit_stack_checks = explicit_evaluation.get("stack_checks")
+                        if isinstance(explicit_stack_checks, list):
+                            stack_checks = [
+                                {
+                                    "check_key": str(item.get("check_key") or "").strip(),
+                                    "title": str(item.get("title") or "").strip(),
+                                    "status": str(item.get("status") or "missed").strip(),
+                                    "score": item.get("score"),
+                                    "evidence": str(item.get("evidence") or "").strip() or None,
+                                }
+                                for item in explicit_stack_checks
+                                if isinstance(item, dict) and str(item.get("check_key") or "").strip()
+                            ]
                         overall_score = explicit_evaluation.get("overall_score")
                         coverage_score = explicit_evaluation.get("coverage_score")
                         runner_score = explicit_evaluation.get("runner_score")
+                        stack_score = explicit_evaluation.get("stack_score")
                         implementation_excerpt = (
                             str(explicit_evaluation.get("implementation_excerpt") or "").strip() or None
                         )
@@ -604,13 +631,30 @@ class AssessmentReportResponse(BaseModel):
                                 if explicit_evaluation and explicit_evaluation.get("scenario_prompt")
                                 else module_session["scenario_prompt"] if module_session else None
                             ),
+                            "stack_focus": (
+                                explicit_evaluation.get("stack_focus")
+                                if explicit_evaluation and explicit_evaluation.get("stack_focus")
+                                else module_session["stack_focus"] if module_session else None
+                            ),
+                            "preferred_language": (
+                                explicit_evaluation.get("preferred_language")
+                                if explicit_evaluation and explicit_evaluation.get("preferred_language")
+                                else module_session["preferred_language"] if module_session else None
+                            ),
+                            "workspace_hint": (
+                                explicit_evaluation.get("workspace_hint")
+                                if explicit_evaluation and explicit_evaluation.get("workspace_hint")
+                                else module_session["workspace_hint"] if module_session else None
+                            ),
                             "stage_count": int(explicit_evaluation.get("stage_count") or len(stage_plan)) if explicit_evaluation else len(stage_plan),
                             "overall_score": overall_score,
                             "coverage_score": coverage_score,
                             "runner_score": runner_score,
+                            "stack_score": stack_score,
                             "rubric_scores": rubric_scores,
                             "coverage_checks": coverage_checks,
                             "runner_checks": runner_checks,
+                            "stack_checks": stack_checks,
                             "stages": stages,
                             "implementation_excerpt": implementation_excerpt,
                             "has_code_submission": has_code_submission,
