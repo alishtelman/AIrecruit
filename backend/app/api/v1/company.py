@@ -69,6 +69,7 @@ from app.services.assessment_invite_service import (
     get_current_assessment_module_payload,
     list_company_assessments,
 )
+from app.services.interview_service import list_assessment_module_profile_options
 from app.services.shortlist_service import (
     add_candidate_to_shortlist,
     create_shortlist,
@@ -606,6 +607,22 @@ class AssessmentResponse(BaseModel):
     created_at: str
 
 
+class AssessmentModuleProfileOptionResponse(BaseModel):
+    module_type: str
+    scenario_id: str
+    title: str
+    prompt: str
+    stack_focus: str | None = None
+    preferred_language: str | None = None
+    workspace_hint: str | None = None
+    recommended: bool = False
+
+
+class AssessmentModuleProfilesResponse(BaseModel):
+    coding_task: list[AssessmentModuleProfileOptionResponse]
+    sql_live: list[AssessmentModuleProfileOptionResponse]
+
+
 @router.get("/assessments", response_model=list[AssessmentResponse])
 async def get_assessments(
     db: AsyncSession = Depends(get_db),
@@ -613,6 +630,28 @@ async def get_assessments(
 ):
     _, company = user_and_company
     return await list_company_assessments(db, company.id)
+
+
+@router.get("/assessment-module-profiles", response_model=AssessmentModuleProfilesResponse)
+async def get_assessment_module_profiles(
+    target_role: str,
+    language: str = "ru",
+    _user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    profiles = list_assessment_module_profile_options(
+        target_role=target_role,
+        language="en" if str(language).strip().lower() == "en" else "ru",
+    )
+    return AssessmentModuleProfilesResponse(
+        coding_task=[
+            AssessmentModuleProfileOptionResponse(**item)
+            for item in profiles["coding_task"]
+        ],
+        sql_live=[
+            AssessmentModuleProfileOptionResponse(**item)
+            for item in profiles["sql_live"]
+        ],
+    )
 
 
 @router.post("/assessments", response_model=AssessmentResponse, status_code=status.HTTP_201_CREATED)

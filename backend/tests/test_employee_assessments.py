@@ -263,6 +263,52 @@ async def test_employee_assessment_invite_returns_module_orchestration_payload(
 
 
 @pytest.mark.asyncio
+async def test_company_assessment_module_profiles_endpoint_returns_role_aware_profiles(
+    client: AsyncClient,
+    company_token: str,
+):
+    resp = await client.get(
+        "/api/v1/company/assessment-module-profiles",
+        headers=auth_headers(company_token),
+        params={"target_role": "frontend_engineer", "language": "en"},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["coding_task"]
+    assert data["sql_live"]
+    assert data["coding_task"][0]["recommended"] is True
+    assert data["coding_task"][0]["scenario_id"] == "async_search_state_manager"
+    assert data["coding_task"][0]["preferred_language"] == "typescript"
+    assert "React" in (data["coding_task"][0]["stack_focus"] or "")
+    assert any(item["scenario_id"] == "incident_error_budget_audit" for item in data["sql_live"])
+
+
+@pytest.mark.asyncio
+async def test_company_assessment_rejects_invalid_module_scenario_override(
+    client: AsyncClient,
+    company_token: str,
+):
+    resp = await client.post(
+        "/api/v1/company/assessments",
+        headers=auth_headers(company_token),
+        json={
+            "employee_email": f"invalid_override_{uuid.uuid4().hex[:8]}@example.com",
+            "employee_name": "Invalid Override",
+            "target_role": "backend_engineer",
+            "module_plan": [
+                {"module_type": "adaptive_interview"},
+                {
+                    "module_type": "coding_task",
+                    "config": {"scenario_id": "missing_profile"},
+                },
+            ],
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    assert "Unsupported scenario_id" in resp.text
+
+
+@pytest.mark.asyncio
 async def test_company_ai_proctoring_policy_applies_to_new_assessment_interviews(
     client: AsyncClient,
     company_token: str,
@@ -799,6 +845,115 @@ async def test_employee_assessment_coding_task_uses_role_specific_stack_profiles
         assert detail["module_session"]["preferred_language"] == expected_language
         assert expected_stack_marker in detail["module_session"]["stack_focus"]
         assert detail["module_session"]["workspace_hint"]
+
+
+@pytest.mark.asyncio
+async def test_employee_assessment_respects_explicit_module_scenario_overrides(
+    client: AsyncClient,
+    company_token: str,
+):
+    employee_email = f"explicit_override_{uuid.uuid4().hex[:8]}@example.com"
+    assessment = await _create_assessment(
+        client,
+        company_token,
+        employee_email,
+        "Explicit Override Candidate",
+        target_role="backend_engineer",
+        module_plan=[
+            {"module_type": "adaptive_interview", "title": "Core Interview"},
+            {
+                "module_id": "coding_task_main",
+                "module_type": "coding_task",
+                "title": "Coding Task",
+                "config": {"scenario_id": "async_search_state_manager"},
+            },
+            {
+                "module_id": "sql_live_main",
+                "module_type": "sql_live",
+                "title": "SQL Live",
+                "config": {"scenario_id": "incident_error_budget_audit"},
+            },
+        ],
+    )
+    candidate_token = await _register_candidate(client, employee_email, "Explicit Override Candidate")
+    await _upload_resume(client, candidate_token)
+
+    first_start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert first_start_resp.status_code == 200, first_start_resp.text
+    first_interview_id = first_start_resp.json()["interview_id"]
+    await _answer_all_questions(client, candidate_token, first_interview_id)
+    first_finish_resp = await client.post(
+        f"/api/v1/interviews/{first_interview_id}/finish",
+        headers=auth_headers(candidate_token),
+    )
+    assert first_finish_resp.status_code == 200, first_finish_resp.text
+
+    coding_invite_resp = await client.get(
+        f"/api/v1/employee/invite/{assessment['invite_token']}",
+        params={"language": "en"},
+    )
+    assert coding_invite_resp.status_code == 200, coding_invite_resp.text
+    coding_invite = coding_invite_resp.json()
+    assert coding_invite["current_module_type"] == "coding_task"
+    assert coding_invite["current_module_preview"]["scenario_id"] == "async_search_state_manager"
+    assert coding_invite["current_module_preview"]["preferred_language"] == "typescript"
+
+    coding_start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert coding_start_resp.status_code == 200, coding_start_resp.text
+    coding_interview_id = coding_start_resp.json()["interview_id"]
+
+    coding_detail_resp = await client.get(
+        f"/api/v1/interviews/{coding_interview_id}",
+        headers=auth_headers(candidate_token),
+    )
+    assert coding_detail_resp.status_code == 200, coding_detail_resp.text
+    coding_detail = coding_detail_resp.json()
+    assert coding_detail["module_session"]["scenario_id"] == "async_search_state_manager"
+    assert coding_detail["module_session"]["preferred_language"] == "typescript"
+    assert "React" in (coding_detail["module_session"]["stack_focus"] or "")
+
+    await _answer_all_questions(client, candidate_token, coding_interview_id)
+    coding_finish_resp = await client.post(
+        f"/api/v1/interviews/{coding_interview_id}/finish",
+        headers=auth_headers(candidate_token),
+    )
+    assert coding_finish_resp.status_code == 200, coding_finish_resp.text
+
+    sql_invite_resp = await client.get(
+        f"/api/v1/employee/invite/{assessment['invite_token']}",
+        params={"language": "en"},
+    )
+    assert sql_invite_resp.status_code == 200, sql_invite_resp.text
+    sql_invite = sql_invite_resp.json()
+    assert sql_invite["current_module_type"] == "sql_live"
+    assert sql_invite["current_module_preview"]["scenario_id"] == "incident_error_budget_audit"
+    assert sql_invite["current_module_preview"]["preferred_language"] == "sql"
+
+    sql_start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert sql_start_resp.status_code == 200, sql_start_resp.text
+    sql_interview_id = sql_start_resp.json()["interview_id"]
+
+    sql_detail_resp = await client.get(
+        f"/api/v1/interviews/{sql_interview_id}",
+        headers=auth_headers(candidate_token),
+    )
+    assert sql_detail_resp.status_code == 200, sql_detail_resp.text
+    sql_detail = sql_detail_resp.json()
+    assert sql_detail["module_session"]["scenario_id"] == "incident_error_budget_audit"
+    assert sql_detail["module_session"]["preferred_language"] == "sql"
+    assert "Operational SQL" in (sql_detail["module_session"]["stack_focus"] or "")
 
 
 @pytest.mark.asyncio

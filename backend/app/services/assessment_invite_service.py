@@ -151,6 +151,18 @@ def prepare_assessment_module_plan(
         config.setdefault("target_role", target_role)
         if module_type == _DEFAULT_ASSESSMENT_MODULE_TYPE:
             config["template_id"] = str(template_id) if template_id else None
+        scenario_id = str(config.get("scenario_id") or "").strip() or None
+        if scenario_id:
+            from app.services.interview_service import is_valid_assessment_module_scenario
+
+            if not is_valid_assessment_module_scenario(
+                module_type=module_type,
+                scenario_id=scenario_id,
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Unsupported scenario_id '{scenario_id}' for module_type '{module_type}'",
+                )
 
         prepared.append(
             {

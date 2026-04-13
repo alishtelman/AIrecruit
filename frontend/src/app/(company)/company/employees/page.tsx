@@ -3,10 +3,17 @@
 import { CompanyWorkspaceHeader } from "@/components/company-workspace-header";
 import { Link } from "@/i18n/navigation";
 import { useEffect, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useAuth } from "@/hooks/useAuth";
 import { companyApi } from "@/lib/api";
-import type { AssessmentType, CompanyAssessment, InterviewTemplate, TargetRole } from "@/lib/types";
+import type {
+  AssessmentModuleProfileOption,
+  AssessmentModuleProfiles,
+  AssessmentType,
+  CompanyAssessment,
+  InterviewTemplate,
+  TargetRole,
+} from "@/lib/types";
 
 const ROLES: TargetRole[] = [
   "backend_engineer",
@@ -36,6 +43,10 @@ type AssessmentFormState = {
   expires_at: string;
   branding_name: string;
   branding_logo_url: string;
+  include_coding_task: boolean;
+  coding_task_scenario_id: string;
+  include_sql_live: boolean;
+  sql_live_scenario_id: string;
 };
 
 const BLANK_FORM: AssessmentFormState = {
@@ -48,11 +59,21 @@ const BLANK_FORM: AssessmentFormState = {
   expires_at: "",
   branding_name: "",
   branding_logo_url: "",
+  include_coding_task: false,
+  coding_task_scenario_id: "",
+  include_sql_live: false,
+  sql_live_scenario_id: "",
+};
+
+const EMPTY_MODULE_PROFILES: AssessmentModuleProfiles = {
+  coding_task: [],
+  sql_live: [],
 };
 
 export default function EmployeesPage() {
   const t = useTranslations("companyEmployees");
   const roleT = useTranslations("interviewStart.roles");
+  const locale = useLocale();
   const { user, loading: authLoading, logout } = useAuth({
     redirectTo: "/company/login",
     allowedRoles: ["company_admin", "company_member"],
@@ -67,6 +88,7 @@ export default function EmployeesPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [createdInvite, setCreatedInvite] = useState<{ label: string; link: string } | null>(null);
+  const [moduleProfiles, setModuleProfiles] = useState<AssessmentModuleProfiles>(EMPTY_MODULE_PROFILES);
   const canManageCampaigns = (user?.company_member_role ?? (user?.role === "company_admin" ? "admin" : null)) === "admin";
 
   useEffect(() => {
@@ -81,6 +103,21 @@ export default function EmployeesPage() {
       .finally(() => setLoading(false));
   }, [authLoading, t]);
 
+  useEffect(() => {
+    if (authLoading) return;
+    companyApi
+      .getAssessmentModuleProfiles(form.target_role, locale === "en" ? "en" : "ru")
+      .then((profiles) => {
+        setModuleProfiles(profiles);
+        setForm((current) => ({
+          ...current,
+          coding_task_scenario_id: resolveProfileSelection(current.coding_task_scenario_id, profiles.coding_task),
+          sql_live_scenario_id: resolveProfileSelection(current.sql_live_scenario_id, profiles.sql_live),
+        }));
+      })
+      .catch((e: unknown) => setFormError(e instanceof Error ? e.message : t("errors.loadProfiles")));
+  }, [authLoading, form.target_role, locale, t]);
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!canManageCampaigns) {
@@ -91,12 +128,14 @@ export default function EmployeesPage() {
     setSaving(true);
 
     try {
+      const module_plan = buildModulePlan(form);
       const created = await companyApi.createAssessment({
         employee_email: form.employee_email,
         employee_name: form.employee_name,
         assessment_type: form.assessment_type,
         target_role: form.target_role,
         template_id: form.template_id || null,
+        module_plan,
         deadline_at: form.deadline_at || null,
         expires_at: form.expires_at || null,
         branding_name: form.branding_name || null,
@@ -144,6 +183,8 @@ export default function EmployeesPage() {
     const currentModule = assessment.module_plan[assessment.current_module_index];
     return currentModule?.title ?? t("meta.notSet");
   };
+  const selectedCodingProfile = moduleProfiles.coding_task.find((item) => item.scenario_id === form.coding_task_scenario_id) ?? null;
+  const selectedSqlProfile = moduleProfiles.sql_live.find((item) => item.scenario_id === form.sql_live_scenario_id) ?? null;
 
   if (authLoading || loading) {
     return (
@@ -309,6 +350,48 @@ export default function EmployeesPage() {
                 )}
               </div>
 
+              <div className="rounded-[1.4rem] border border-white/6 bg-slate-950/60 p-5">
+                <div className="text-sm font-semibold text-white">{t("form.handsOnTitle")}</div>
+                <p className="mt-1 text-sm text-slate-400">{t("form.handsOnSubtitle")}</p>
+
+                <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                  <ModuleProfileCard
+                    title={t("form.codingTaskCardTitle")}
+                    enabled={form.include_coding_task}
+                    onToggle={(enabled) => setForm({ ...form, include_coding_task: enabled })}
+                    selectLabel={t("form.codingTaskProfile")}
+                    selectedScenarioId={form.coding_task_scenario_id}
+                    onSelect={(scenarioId) => setForm({ ...form, coding_task_scenario_id: scenarioId })}
+                    options={moduleProfiles.coding_task}
+                    selectedOption={selectedCodingProfile}
+                    toggleLabel={t("form.includeCodingTask")}
+                    stackFocusLabel={t("form.stackFocus")}
+                    preferredLanguageLabel={t("form.preferredLanguage")}
+                    promptLabel={t("form.profilePrompt")}
+                    enabledLabel={t("form.enabled")}
+                    disabledLabel={t("form.disabled")}
+                    recommendedLabel={t("form.recommended")}
+                  />
+                  <ModuleProfileCard
+                    title={t("form.sqlLiveCardTitle")}
+                    enabled={form.include_sql_live}
+                    onToggle={(enabled) => setForm({ ...form, include_sql_live: enabled })}
+                    selectLabel={t("form.sqlLiveProfile")}
+                    selectedScenarioId={form.sql_live_scenario_id}
+                    onSelect={(scenarioId) => setForm({ ...form, sql_live_scenario_id: scenarioId })}
+                    options={moduleProfiles.sql_live}
+                    selectedOption={selectedSqlProfile}
+                    toggleLabel={t("form.includeSqlLive")}
+                    stackFocusLabel={t("form.stackFocus")}
+                    preferredLanguageLabel={t("form.preferredLanguage")}
+                    promptLabel={t("form.profilePrompt")}
+                    enabledLabel={t("form.enabled")}
+                    disabledLabel={t("form.disabled")}
+                    recommendedLabel={t("form.recommended")}
+                  />
+                </div>
+              </div>
+
               <div className="grid gap-4 md:grid-cols-2">
                 <Field
                   label={t("form.deadline")}
@@ -464,6 +547,142 @@ export default function EmployeesPage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function resolveProfileSelection(
+  currentScenarioId: string,
+  options: AssessmentModuleProfileOption[],
+): string {
+  if (options.some((item) => item.scenario_id === currentScenarioId)) {
+    return currentScenarioId;
+  }
+  return options.find((item) => item.recommended)?.scenario_id ?? options[0]?.scenario_id ?? "";
+}
+
+function buildModulePlan(form: AssessmentFormState): Array<{
+  module_id?: string | null;
+  module_type: string;
+  title?: string | null;
+  config?: Record<string, unknown> | null;
+}> {
+  const modulePlan: Array<{
+    module_id?: string | null;
+    module_type: string;
+    title?: string | null;
+    config?: Record<string, unknown> | null;
+  }> = [{ module_type: "adaptive_interview" }];
+
+  if (form.include_coding_task) {
+    modulePlan.push({
+      module_id: "coding_task_main",
+      module_type: "coding_task",
+      title: "Coding Task",
+      config: form.coding_task_scenario_id ? { scenario_id: form.coding_task_scenario_id } : null,
+    });
+  }
+
+  if (form.include_sql_live) {
+    modulePlan.push({
+      module_id: "sql_live_main",
+      module_type: "sql_live",
+      title: "SQL Live",
+      config: form.sql_live_scenario_id ? { scenario_id: form.sql_live_scenario_id } : null,
+    });
+  }
+
+  return modulePlan;
+}
+
+function ModuleProfileCard({
+  title,
+  enabled,
+  onToggle,
+  toggleLabel,
+  selectLabel,
+  selectedScenarioId,
+  onSelect,
+  options,
+  selectedOption,
+  stackFocusLabel,
+  preferredLanguageLabel,
+  promptLabel,
+  enabledLabel,
+  disabledLabel,
+  recommendedLabel,
+}: {
+  title: string;
+  enabled: boolean;
+  onToggle: (enabled: boolean) => void;
+  toggleLabel: string;
+  selectLabel: string;
+  selectedScenarioId: string;
+  onSelect: (scenarioId: string) => void;
+  options: AssessmentModuleProfileOption[];
+  selectedOption: AssessmentModuleProfileOption | null;
+  stackFocusLabel: string;
+  preferredLanguageLabel: string;
+  promptLabel: string;
+  enabledLabel: string;
+  disabledLabel: string;
+  recommendedLabel: string;
+}) {
+  return (
+    <div className="rounded-[1.2rem] border border-white/6 bg-slate-900/50 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-white">{title}</div>
+          <div className="mt-1 text-xs text-slate-500">{toggleLabel}</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onToggle(!enabled)}
+          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+            enabled
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+              : "border-slate-700 bg-slate-950 text-slate-400"
+          }`}
+        >
+          {enabled ? enabledLabel : disabledLabel}
+        </button>
+      </div>
+
+      {enabled && (
+        <div className="mt-4 space-y-3">
+          <div>
+            <label className="mb-1.5 block text-sm text-slate-300">{selectLabel}</label>
+            <SelectField value={selectedScenarioId} onChange={(e) => onSelect(e.target.value)}>
+              {options.map((option) => (
+                <option key={option.scenario_id} value={option.scenario_id}>
+                  {option.title}{option.recommended ? ` · ${recommendedLabel}` : ""}
+                </option>
+              ))}
+            </SelectField>
+          </div>
+
+          {selectedOption?.stack_focus && (
+            <div className="text-xs text-slate-400">
+              {stackFocusLabel}: <span className="font-medium text-slate-200">{selectedOption.stack_focus}</span>
+            </div>
+          )}
+          {selectedOption?.preferred_language && (
+            <div className="text-xs text-slate-400">
+              {preferredLanguageLabel}:{" "}
+              <span className="font-medium text-slate-200">{selectedOption.preferred_language}</span>
+            </div>
+          )}
+          {selectedOption?.workspace_hint && (
+            <p className="text-sm leading-6 text-slate-300">{selectedOption.workspace_hint}</p>
+          )}
+          {selectedOption?.prompt && (
+            <div>
+              <div className="mb-1 text-xs uppercase tracking-[0.16em] text-slate-500">{promptLabel}</div>
+              <p className="text-sm leading-6 text-slate-400">{selectedOption.prompt}</p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

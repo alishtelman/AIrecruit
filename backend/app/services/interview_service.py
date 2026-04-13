@@ -345,13 +345,37 @@ _SQL_LIVE_SCENARIOS: dict[str, dict[str, str]] = {
         "title_ru": "агрегация выручки по клиентам",
         "prompt_en": "Write a SQL query over customers and orders that returns the columns customer_name, completed_order_count, and completed_revenue for each active customer in March 2024. Include only customers with revenue >= 100 and order the result by completed_revenue descending, then customer_name ascending.",
         "prompt_ru": "Напишите SQL-запрос по таблицам customers и orders, который вернёт колонки customer_name, completed_order_count и completed_revenue для каждого активного клиента за март 2024 года. Оставьте только клиентов с выручкой >= 100 и отсортируйте результат по completed_revenue по убыванию, затем по customer_name по возрастанию.",
+        "stack_focus_en": "SQL joins, filtered aggregations, and deterministic reporting output",
+        "stack_focus_ru": "SQL joins, filtered aggregations и детерминированный reporting output",
+        "preferred_language": "sql",
+        "workspace_hint_en": "Focus on join logic, filters, aggregate correctness, and predictable ordering.",
+        "workspace_hint_ru": "Сфокусируйтесь на логике join, фильтрах, корректности агрегаций и предсказуемой сортировке.",
     },
     "data_scientist": {
-        "scenario_id": "customer_revenue_rollup",
-        "title_en": "customer revenue rollup",
-        "title_ru": "агрегация выручки по клиентам",
-        "prompt_en": "Write a SQL query over customers and orders that returns the columns customer_name, completed_order_count, and completed_revenue for each active customer in March 2024. Include only customers with revenue >= 100 and order the result by completed_revenue descending, then customer_name ascending.",
-        "prompt_ru": "Напишите SQL-запрос по таблицам customers и orders, который вернёт колонки customer_name, completed_order_count и completed_revenue для каждого активного клиента за март 2024 года. Оставьте только клиентов с выручкой >= 100 и отсортируйте результат по completed_revenue по убыванию, затем по customer_name по возрастанию.",
+        "scenario_id": "signup_funnel_rollup",
+        "title_en": "signup funnel breakdown",
+        "title_ru": "разбор signup funnel",
+        "prompt_en": "Write a SQL query over daily signup events that returns event_date, started_users, verified_users, and verified_rate for each day in the target week. Include only days with at least 3 signup starts and order by event_date ascending.",
+        "prompt_ru": "Напишите SQL-запрос по daily signup events, который вернёт event_date, started_users, verified_users и verified_rate для каждого дня целевой недели. Оставьте только дни минимум с 3 signup starts и отсортируйте по event_date по возрастанию.",
+        "stack_focus_en": "Analytical SQL, grouped funnel metrics, and numeric precision",
+        "stack_focus_ru": "Аналитический SQL, grouped funnel metrics и численная точность",
+        "preferred_language": "sql",
+        "workspace_hint_en": "Focus on daily grouping, conditional aggregation, and a stable conversion-rate calculation.",
+        "workspace_hint_ru": "Сфокусируйтесь на дневной группировке, условных агрегациях и стабильном расчёте conversion rate.",
+    },
+}
+_SQL_LIVE_EXTRA_SCENARIOS: dict[str, dict[str, str]] = {
+    "incident_error_budget_audit": {
+        "scenario_id": "incident_error_budget_audit",
+        "title_en": "error budget audit",
+        "title_ru": "аудит error budget",
+        "prompt_en": "Write a SQL query over daily service metrics that returns service_name, breach_days, and max_error_rate for services that exceeded the 1% error budget on at least 2 days in April 2024. Order by breach_days descending, then service_name ascending.",
+        "prompt_ru": "Напишите SQL-запрос по ежедневным сервисным метрикам, который вернёт service_name, breach_days и max_error_rate для сервисов, превысивших error budget в 1% минимум в 2 дня апреля 2024 года. Сортировка: сначала breach_days по убыванию, затем service_name по возрастанию.",
+        "stack_focus_en": "Operational SQL, threshold filters, and service-level aggregation",
+        "stack_focus_ru": "Operational SQL, пороговые фильтры и сервисные агрегации",
+        "preferred_language": "sql",
+        "workspace_hint_en": "Focus on date filtering, threshold logic, and grouping that stays readable for ops reporting.",
+        "workspace_hint_ru": "Сфокусируйтесь на фильтрации по датам, пороговой логике и группировке, пригодной для ops reporting.",
     },
 }
 _SQL_LIVE_DEFAULT_SCENARIO = {
@@ -360,7 +384,54 @@ _SQL_LIVE_DEFAULT_SCENARIO = {
     "title_ru": "агрегация выручки по клиентам",
     "prompt_en": "Write a SQL query over customers and orders that returns the columns customer_name, completed_order_count, and completed_revenue for each active customer in March 2024. Include only customers with revenue >= 100 and order the result by completed_revenue descending, then customer_name ascending.",
     "prompt_ru": "Напишите SQL-запрос по таблицам customers и orders, который вернёт колонки customer_name, completed_order_count и completed_revenue для каждого активного клиента за март 2024 года. Оставьте только клиентов с выручкой >= 100 и отсортируйте результат по completed_revenue по убыванию, затем по customer_name по возрастанию.",
+    "stack_focus_en": "SQL joins, filtered aggregations, and deterministic reporting output",
+    "stack_focus_ru": "SQL joins, filtered aggregations и детерминированный reporting output",
+    "preferred_language": "sql",
+    "workspace_hint_en": "Focus on join logic, filters, aggregate correctness, and predictable ordering.",
+    "workspace_hint_ru": "Сфокусируйтесь на логике join, фильтрах, корректности агрегаций и предсказуемой сортировке.",
 }
+
+
+def _build_scenario_catalog(*sources: dict[str, dict[str, str]], default_scenario: dict[str, str]) -> dict[str, dict[str, str]]:
+    catalog: dict[str, dict[str, str]] = {}
+    for source in sources:
+        for scenario in source.values():
+            scenario_id = str(scenario.get("scenario_id") or "").strip()
+            if scenario_id:
+                catalog[scenario_id] = dict(scenario)
+    default_id = str(default_scenario.get("scenario_id") or "").strip()
+    if default_id:
+        catalog[default_id] = dict(default_scenario)
+    return catalog
+
+
+_SYSTEM_DESIGN_SCENARIO_CATALOG = _build_scenario_catalog(
+    _SYSTEM_DESIGN_SCENARIOS,
+    default_scenario=_SYSTEM_DESIGN_DEFAULT_SCENARIO,
+)
+_CODING_TASK_SCENARIO_CATALOG = _build_scenario_catalog(
+    _CODING_TASK_SCENARIOS,
+    default_scenario=_CODING_TASK_DEFAULT_SCENARIO,
+)
+_SQL_LIVE_SCENARIO_CATALOG = _build_scenario_catalog(
+    _SQL_LIVE_SCENARIOS,
+    _SQL_LIVE_EXTRA_SCENARIOS,
+    default_scenario=_SQL_LIVE_DEFAULT_SCENARIO,
+)
+
+
+def _resolve_scenario_definition(
+    *,
+    target_role: str,
+    requested_id: str | None,
+    role_scenarios: dict[str, dict[str, str]],
+    default_scenario: dict[str, str],
+    catalog: dict[str, dict[str, str]],
+) -> dict[str, str]:
+    normalized_requested_id = str(requested_id or "").strip()
+    if normalized_requested_id and normalized_requested_id in catalog:
+        return dict(catalog[normalized_requested_id])
+    return dict(role_scenarios.get(target_role, default_scenario))
 
 
 def _module_title_fallback(module_type: str) -> str:
@@ -381,10 +452,13 @@ def _select_system_design_scenario(
     module_config: dict[str, Any] | None,
 ) -> dict[str, str]:
     config = module_config if isinstance(module_config, dict) else {}
-    scenario = dict(_SYSTEM_DESIGN_SCENARIOS.get(target_role, _SYSTEM_DESIGN_DEFAULT_SCENARIO))
-    requested_id = str(config.get("scenario_id") or "").strip()
-    if requested_id and requested_id == scenario.get("scenario_id"):
-        pass
+    scenario = _resolve_scenario_definition(
+        target_role=target_role,
+        requested_id=str(config.get("scenario_id") or "").strip() or None,
+        role_scenarios=_SYSTEM_DESIGN_SCENARIOS,
+        default_scenario=_SYSTEM_DESIGN_DEFAULT_SCENARIO,
+        catalog=_SYSTEM_DESIGN_SCENARIO_CATALOG,
+    )
     title_override = str(config.get("scenario_title") or "").strip()
     prompt_override = str(config.get("scenario_prompt") or "").strip()
     is_en = language == "en"
@@ -401,12 +475,18 @@ def _select_coding_task_scenario(
     module_config: dict[str, Any] | None,
 ) -> dict[str, str]:
     config = module_config if isinstance(module_config, dict) else {}
-    scenario = dict(_CODING_TASK_SCENARIOS.get(target_role, _CODING_TASK_DEFAULT_SCENARIO))
+    scenario = _resolve_scenario_definition(
+        target_role=target_role,
+        requested_id=str(config.get("scenario_id") or "").strip() or None,
+        role_scenarios=_CODING_TASK_SCENARIOS,
+        default_scenario=_CODING_TASK_DEFAULT_SCENARIO,
+        catalog=_CODING_TASK_SCENARIO_CATALOG,
+    )
     title_override = str(config.get("scenario_title") or "").strip()
     prompt_override = str(config.get("scenario_prompt") or "").strip()
     is_en = language == "en"
     return {
-        "scenario_id": str(config.get("scenario_id") or scenario["scenario_id"]).strip() or scenario["scenario_id"],
+        "scenario_id": scenario["scenario_id"],
         "title": title_override or (scenario["title_en"] if is_en else scenario["title_ru"]),
         "prompt": prompt_override or (scenario["prompt_en"] if is_en else scenario["prompt_ru"]),
         "stack_focus": str(scenario["stack_focus_en"] if is_en else scenario["stack_focus_ru"]).strip() or None,
@@ -421,14 +501,23 @@ def _select_sql_live_scenario(
     module_config: dict[str, Any] | None,
 ) -> dict[str, str]:
     config = module_config if isinstance(module_config, dict) else {}
-    scenario = dict(_SQL_LIVE_SCENARIOS.get(target_role, _SQL_LIVE_DEFAULT_SCENARIO))
+    scenario = _resolve_scenario_definition(
+        target_role=target_role,
+        requested_id=str(config.get("scenario_id") or "").strip() or None,
+        role_scenarios=_SQL_LIVE_SCENARIOS,
+        default_scenario=_SQL_LIVE_DEFAULT_SCENARIO,
+        catalog=_SQL_LIVE_SCENARIO_CATALOG,
+    )
     title_override = str(config.get("scenario_title") or "").strip()
     prompt_override = str(config.get("scenario_prompt") or "").strip()
     is_en = language == "en"
     return {
-        "scenario_id": str(config.get("scenario_id") or scenario["scenario_id"]).strip() or scenario["scenario_id"],
+        "scenario_id": scenario["scenario_id"],
         "title": title_override or (scenario["title_en"] if is_en else scenario["title_ru"]),
         "prompt": prompt_override or (scenario["prompt_en"] if is_en else scenario["prompt_ru"]),
+        "stack_focus": str(scenario["stack_focus_en"] if is_en else scenario["stack_focus_ru"]).strip() or None,
+        "preferred_language": str(scenario.get("preferred_language") or "").strip() or "sql",
+        "workspace_hint": str(scenario["workspace_hint_en"] if is_en else scenario["workspace_hint_ru"]).strip() or None,
     }
 
 
@@ -466,11 +555,83 @@ def build_assessment_module_preview(
             "scenario_id": scenario["scenario_id"],
             "scenario_title": scenario["title"],
             "scenario_prompt": scenario["prompt"],
-            "stack_focus": None,
-            "preferred_language": "sql",
-            "workspace_hint": None,
+            "stack_focus": scenario.get("stack_focus"),
+            "preferred_language": scenario.get("preferred_language") or "sql",
+            "workspace_hint": scenario.get("workspace_hint"),
         }
     return None
+
+
+def is_valid_assessment_module_scenario(
+    *,
+    module_type: str | None,
+    scenario_id: str | None,
+) -> bool:
+    normalized_module_type = str(module_type or "").strip().lower()
+    normalized_scenario_id = str(scenario_id or "").strip()
+    if not normalized_scenario_id:
+        return True
+    if normalized_module_type == _SYSTEM_DESIGN_MODULE_TYPE:
+        return normalized_scenario_id in _SYSTEM_DESIGN_SCENARIO_CATALOG
+    if normalized_module_type == _CODING_TASK_MODULE_TYPE:
+        return normalized_scenario_id in _CODING_TASK_SCENARIO_CATALOG
+    if normalized_module_type == _SQL_LIVE_MODULE_TYPE:
+        return normalized_scenario_id in _SQL_LIVE_SCENARIO_CATALOG
+    return True
+
+
+def list_assessment_module_profile_options(
+    *,
+    target_role: str,
+    language: str,
+) -> dict[str, list[dict[str, Any]]]:
+    is_en = language == "en"
+
+    def _ordered_options(
+        *,
+        role_scenarios: dict[str, dict[str, str]],
+        default_scenario: dict[str, str],
+        catalog: dict[str, dict[str, str]],
+        module_type: str,
+    ) -> list[dict[str, Any]]:
+        recommended_id = str(role_scenarios.get(target_role, default_scenario).get("scenario_id") or "").strip()
+        options = [
+            {
+                "scenario_id": scenario_id,
+                "title": str(item["title_en"] if is_en else item["title_ru"]).strip(),
+                "prompt": str(item["prompt_en"] if is_en else item["prompt_ru"]).strip(),
+                "stack_focus": (
+                    str(item["stack_focus_en"] if is_en else item["stack_focus_ru"]).strip()
+                    if item.get("stack_focus_en") or item.get("stack_focus_ru")
+                    else None
+                ),
+                "preferred_language": str(item.get("preferred_language") or "").strip() or None,
+                "workspace_hint": (
+                    str(item["workspace_hint_en"] if is_en else item["workspace_hint_ru"]).strip()
+                    if item.get("workspace_hint_en") or item.get("workspace_hint_ru")
+                    else None
+                ),
+                "recommended": scenario_id == recommended_id,
+                "module_type": module_type,
+            }
+            for scenario_id, item in catalog.items()
+        ]
+        return sorted(options, key=lambda item: (not bool(item["recommended"]), str(item["title"]).lower()))
+
+    return {
+        "coding_task": _ordered_options(
+            role_scenarios=_CODING_TASK_SCENARIOS,
+            default_scenario=_CODING_TASK_DEFAULT_SCENARIO,
+            catalog=_CODING_TASK_SCENARIO_CATALOG,
+            module_type=_CODING_TASK_MODULE_TYPE,
+        ),
+        "sql_live": _ordered_options(
+            role_scenarios=_SQL_LIVE_SCENARIOS,
+            default_scenario=_SQL_LIVE_DEFAULT_SCENARIO,
+            catalog=_SQL_LIVE_SCENARIO_CATALOG,
+            module_type=_SQL_LIVE_MODULE_TYPE,
+        ),
+    }
 
 
 def _build_system_design_topic_plan(
@@ -686,6 +847,9 @@ def _build_sql_live_topic_plan(
         "scenario_id": scenario["scenario_id"],
         "scenario_title": scenario["title"],
         "scenario_prompt": scenario["prompt"],
+        "stack_focus": scenario.get("stack_focus"),
+        "preferred_language": scenario.get("preferred_language") or "sql",
+        "workspace_hint": scenario.get("workspace_hint"),
         "stage_plan": stage_plan,
         "question_history": [
             {

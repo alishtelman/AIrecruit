@@ -1583,6 +1583,111 @@ _SQL_LIVE_SCENARIO_VALIDATION_DEFS = {
             },
         ),
     },
+    "signup_funnel_rollup": {
+        "schema_statements": (
+            """
+            CREATE TABLE signup_events (
+                id INTEGER PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                event_date TEXT NOT NULL
+            );
+            """,
+        ),
+        "seed_statements": (
+            "INSERT INTO signup_events (id, user_id, event_type, event_date) VALUES (1, 101, 'started', '2024-04-01');",
+            "INSERT INTO signup_events (id, user_id, event_type, event_date) VALUES (2, 102, 'started', '2024-04-01');",
+            "INSERT INTO signup_events (id, user_id, event_type, event_date) VALUES (3, 103, 'started', '2024-04-01');",
+            "INSERT INTO signup_events (id, user_id, event_type, event_date) VALUES (4, 104, 'started', '2024-04-01');",
+            "INSERT INTO signup_events (id, user_id, event_type, event_date) VALUES (5, 101, 'verified', '2024-04-01');",
+            "INSERT INTO signup_events (id, user_id, event_type, event_date) VALUES (6, 102, 'verified', '2024-04-01');",
+            "INSERT INTO signup_events (id, user_id, event_type, event_date) VALUES (7, 104, 'verified', '2024-04-01');",
+            "INSERT INTO signup_events (id, user_id, event_type, event_date) VALUES (8, 201, 'started', '2024-04-02');",
+            "INSERT INTO signup_events (id, user_id, event_type, event_date) VALUES (9, 202, 'started', '2024-04-02');",
+            "INSERT INTO signup_events (id, user_id, event_type, event_date) VALUES (10, 203, 'started', '2024-04-02');",
+            "INSERT INTO signup_events (id, user_id, event_type, event_date) VALUES (11, 201, 'verified', '2024-04-02');",
+            "INSERT INTO signup_events (id, user_id, event_type, event_date) VALUES (12, 301, 'started', '2024-04-03');",
+            "INSERT INTO signup_events (id, user_id, event_type, event_date) VALUES (13, 302, 'started', '2024-04-03');",
+            "INSERT INTO signup_events (id, user_id, event_type, event_date) VALUES (14, 301, 'verified', '2024-04-03');",
+        ),
+        "expected_columns": ("event_date", "started_users", "verified_users", "verified_rate"),
+        "expected_rows": (
+            ("2024-04-01", 4, 3, 0.75),
+            ("2024-04-02", 3, 1, 0.3333),
+        ),
+        "check_defs": (
+            {
+                "check_key": "query_is_select_only",
+                "title_en": "Uses a single SELECT-style query",
+                "title_ru": "Использует один SELECT-style запрос",
+            },
+            {
+                "check_key": "query_executes",
+                "title_en": "Executes successfully against the signup-event sandbox",
+                "title_ru": "Успешно выполняется на sandbox signup events",
+            },
+            {
+                "check_key": "expected_columns",
+                "title_en": "Returns the requested funnel columns",
+                "title_ru": "Возвращает запрошенные колонки funnel-отчёта",
+            },
+            {
+                "check_key": "expected_rows",
+                "title_en": "Returns the expected daily funnel rows and conversion values",
+                "title_ru": "Возвращает ожидаемые дневные funnel-строки и conversion values",
+            },
+        ),
+    },
+    "incident_error_budget_audit": {
+        "schema_statements": (
+            """
+            CREATE TABLE service_daily_metrics (
+                id INTEGER PRIMARY KEY,
+                service_name TEXT NOT NULL,
+                metric_date TEXT NOT NULL,
+                error_rate REAL NOT NULL
+            );
+            """,
+        ),
+        "seed_statements": (
+            "INSERT INTO service_daily_metrics (id, service_name, metric_date, error_rate) VALUES (1, 'auth', '2024-04-01', 0.012);",
+            "INSERT INTO service_daily_metrics (id, service_name, metric_date, error_rate) VALUES (2, 'auth', '2024-04-02', 0.021);",
+            "INSERT INTO service_daily_metrics (id, service_name, metric_date, error_rate) VALUES (3, 'auth', '2024-04-03', 0.011);",
+            "INSERT INTO service_daily_metrics (id, service_name, metric_date, error_rate) VALUES (4, 'payments', '2024-04-01', 0.015);",
+            "INSERT INTO service_daily_metrics (id, service_name, metric_date, error_rate) VALUES (5, 'payments', '2024-04-02', 0.004);",
+            "INSERT INTO service_daily_metrics (id, service_name, metric_date, error_rate) VALUES (6, 'payments', '2024-04-03', 0.013);",
+            "INSERT INTO service_daily_metrics (id, service_name, metric_date, error_rate) VALUES (7, 'search', '2024-04-01', 0.009);",
+            "INSERT INTO service_daily_metrics (id, service_name, metric_date, error_rate) VALUES (8, 'search', '2024-04-02', 0.014);",
+            "INSERT INTO service_daily_metrics (id, service_name, metric_date, error_rate) VALUES (9, 'search', '2024-04-03', 0.008);",
+        ),
+        "expected_columns": ("service_name", "breach_days", "max_error_rate"),
+        "expected_rows": (
+            ("auth", 3, 0.021),
+            ("payments", 2, 0.015),
+        ),
+        "check_defs": (
+            {
+                "check_key": "query_is_select_only",
+                "title_en": "Uses a single SELECT-style query",
+                "title_ru": "Использует один SELECT-style запрос",
+            },
+            {
+                "check_key": "query_executes",
+                "title_en": "Executes successfully against the service-metrics sandbox",
+                "title_ru": "Успешно выполняется на sandbox service metrics",
+            },
+            {
+                "check_key": "expected_columns",
+                "title_en": "Returns the requested audit columns",
+                "title_ru": "Возвращает запрошенные колонки audit-отчёта",
+            },
+            {
+                "check_key": "expected_rows",
+                "title_en": "Returns the expected breached services in the required order",
+                "title_ru": "Возвращает ожидаемые сервисы с breach в нужном порядке",
+            },
+        ),
+    },
 }
 
 _CODING_TASK_RUNNER_TIMEOUT_SECONDS = 2.0

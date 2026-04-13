@@ -16,6 +16,7 @@ import type {
   CompanyShortlist,
   CompanyAssessment,
   CompanyAISettings,
+  AssessmentModuleProfiles,
   CompanyMember,
   CompanyRegisterRequest,
   CompanyRegisterResponse,
@@ -198,6 +199,11 @@ export const companyApi = {
 
   listAssessments: () =>
     request<CompanyAssessment[]>("/api/v1/company/assessments"),
+
+  getAssessmentModuleProfiles: (targetRole: string, language: "ru" | "en" = "ru") =>
+    request<AssessmentModuleProfiles>(
+      `/api/v1/company/assessment-module-profiles?target_role=${encodeURIComponent(targetRole)}&language=${language}`
+    ),
 
   createAssessment: (data: {
     employee_email: string;

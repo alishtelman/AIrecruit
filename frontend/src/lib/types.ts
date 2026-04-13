@@ -103,6 +103,22 @@ export interface CompanyAISettings {
   stored_preference_fields: string[];
 }
 
+export interface AssessmentModuleProfileOption {
+  module_type: string;
+  scenario_id: string;
+  title: string;
+  prompt: string;
+  stack_focus: string | null;
+  preferred_language: string | null;
+  workspace_hint: string | null;
+  recommended: boolean;
+}
+
+export interface AssessmentModuleProfiles {
+  coding_task: AssessmentModuleProfileOption[];
+  sql_live: AssessmentModuleProfileOption[];
+}
+
 export interface CandidateNote {
   note_id: string;
   body: string;
