@@ -875,6 +875,13 @@ async def test_employee_assessment_respects_explicit_module_scenario_overrides(
             },
         ],
     )
+    assert assessment["module_plan"][1]["scenario_id"] == "async_search_state_manager"
+    assert assessment["module_plan"][1]["scenario_title"]
+    assert assessment["module_plan"][1]["preferred_language"] == "typescript"
+    assert "React" in (assessment["module_plan"][1]["stack_focus"] or "")
+    assert assessment["module_plan"][2]["scenario_id"] == "incident_error_budget_audit"
+    assert assessment["module_plan"][2]["scenario_title"]
+    assert assessment["module_plan"][2]["preferred_language"] == "sql"
     candidate_token = await _register_candidate(client, employee_email, "Explicit Override Candidate")
     await _upload_resume(client, candidate_token)
 

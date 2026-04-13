@@ -270,6 +270,8 @@ export default function ReportPage() {
           <p className="text-slate-400 mb-6">{localizeFreeformText(report.interview_summary, locale)}</p>
         )}
 
+        {report.module_session?.scenario_title && <ModuleSessionBanner session={report.module_session} locale={locale} />}
+
         {report.summary_model && <InterviewSummaryPanel summaryModel={report.summary_model} />}
         {report.system_design_summary && <SystemDesignSummaryPanel summary={report.system_design_summary} />}
         {report.coding_task_summary && <CodingTaskSummaryPanel summary={report.coding_task_summary} />}
@@ -369,6 +371,51 @@ export default function ReportPage() {
           {t("generatedBy", {model: report.model_version, date: new Date(report.created_at).toLocaleDateString()})}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ModuleSessionBanner({
+  session,
+  locale,
+}: {
+  session: NonNullable<AssessmentReport["module_session"]>;
+  locale: string;
+}) {
+  const t = useTranslations("report");
+
+  return (
+    <div className="mb-6 rounded-2xl border border-cyan-500/20 bg-cyan-500/10 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.24em] text-cyan-300">{t("moduleSession.eyebrow")}</div>
+          <div className="mt-1 text-sm font-semibold text-white">
+            {localizeFreeformText(session.module_title || t("moduleSession.titleFallback"), locale)}
+          </div>
+          <div className="mt-2 text-lg font-semibold text-white">
+            {localizeFreeformText(session.scenario_title ?? "", locale)}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="rounded-full border border-cyan-400/20 bg-slate-900/50 px-3 py-1 text-slate-200">
+            {t("moduleSession.stageCount", { count: session.stage_count })}
+          </span>
+          {session.preferred_language && (
+            <span className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-slate-300">
+              {t("moduleSession.preferredLanguage")}: {session.preferred_language}
+            </span>
+          )}
+        </div>
+      </div>
+      {session.stack_focus && (
+        <p className="mt-3 text-sm leading-6 text-slate-200">{localizeFreeformText(session.stack_focus, locale)}</p>
+      )}
+      {session.scenario_prompt && (
+        <p className="mt-3 text-sm leading-6 text-slate-300">{localizeFreeformText(session.scenario_prompt, locale)}</p>
+      )}
+      {session.workspace_hint && (
+        <p className="mt-3 text-sm leading-6 text-slate-400">{localizeFreeformText(session.workspace_hint, locale)}</p>
+      )}
     </div>
   );
 }

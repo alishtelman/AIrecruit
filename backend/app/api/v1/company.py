@@ -68,6 +68,7 @@ from app.services.assessment_invite_service import (
     delete_assessment,
     get_current_assessment_module_payload,
     list_company_assessments,
+    serialize_assessment_module_plan_for_response,
 )
 from app.services.interview_service import list_assessment_module_profile_options
 from app.services.shortlist_service import (
@@ -580,6 +581,11 @@ class AssessmentModulePlanItemResponse(BaseModel):
     interview_id: str | None = None
     started_at: str | None = None
     completed_at: str | None = None
+    scenario_id: str | None = None
+    scenario_title: str | None = None
+    stack_focus: str | None = None
+    preferred_language: str | None = None
+    workspace_hint: str | None = None
 
 
 class AssessmentResponse(BaseModel):
@@ -680,7 +686,9 @@ async def create_employee_assessment(
         branding_name=body.branding_name,
         branding_logo_url=body.branding_logo_url,
     )
-    module_plan, current_module_index, current_module = get_current_assessment_module_payload(a)
+    module_plan = serialize_assessment_module_plan_for_response(assessment=a)
+    current_module_index = min(max(int(a.current_module_index or 0), 0), max(len(module_plan) - 1, 0)) if module_plan else 0
+    current_module = module_plan[current_module_index] if module_plan else None
     return AssessmentResponse(
         id=str(a.id),
         employee_email=a.employee_email,

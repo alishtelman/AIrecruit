@@ -209,6 +209,43 @@ def get_current_assessment_module_payload(
     return module_plan, current_idx, current_module
 
 
+def serialize_assessment_module_plan_for_response(
+    *,
+    assessment: CompanyAssessment,
+    language: str = "ru",
+) -> list[dict[str, Any]]:
+    module_plan = normalize_assessment_module_plan(
+        assessment.module_plan,
+        target_role=assessment.target_role,
+        template_id=assessment.template_id,
+    )
+    normalized_language = "en" if str(language).strip().lower() == "en" else "ru"
+    enriched: list[dict[str, Any]] = []
+    for item in module_plan:
+        preview: dict[str, Any] | None = None
+        module_type = str(item.get("module_type") or "").strip().lower()
+        if module_type in {"system_design", "coding_task", "sql_live"}:
+            from app.services.interview_service import build_assessment_module_preview
+
+            preview = build_assessment_module_preview(
+                module_type=module_type,
+                target_role=assessment.target_role,
+                language=normalized_language,
+                module_config=item.get("config") if isinstance(item.get("config"), dict) else None,
+            )
+        enriched.append(
+            {
+                **item,
+                "scenario_id": preview.get("scenario_id") if preview else None,
+                "scenario_title": preview.get("scenario_title") if preview else None,
+                "stack_focus": preview.get("stack_focus") if preview else None,
+                "preferred_language": preview.get("preferred_language") if preview else None,
+                "workspace_hint": preview.get("workspace_hint") if preview else None,
+            }
+        )
+    return enriched
+
+
 def can_start_current_assessment_module_via_interview(
     assessment: CompanyAssessment,
     *,
@@ -326,7 +363,9 @@ async def _serialize_assessment_rows(
 
     rows: list[dict] = []
     for assessment in assessments:
-        module_plan, current_module_index, current_module = get_current_assessment_module_payload(assessment)
+        module_plan = serialize_assessment_module_plan_for_response(assessment=assessment)
+        current_module_index = _normalized_module_index(assessment, module_plan)
+        current_module = module_plan[current_module_index] if module_plan else None
         rows.append(
             {
                 "id": str(assessment.id),

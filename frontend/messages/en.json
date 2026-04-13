@@ -102,7 +102,8 @@
       "opened": "Opened",
       "in_progress": "In progress",
       "completed": "Completed",
-      "expired": "Expired"
+      "expired": "Expired",
+      "blocked": "Blocked"
     },
     "flow": {
       "questionsPrefix": "The flow contains",
@@ -347,6 +348,14 @@
       "notSet": "Not set",
       "adaptiveDefault": "Adaptive default",
       "companyDefault": "Company default"
+    },
+    "moduleProfiles": {
+      "title": "Selected task profiles",
+      "codingTask": "Coding task",
+      "sqlLive": "SQL live",
+      "systemDesign": "System design",
+      "language": "Language",
+      "status": "Module status"
     },
     "actions": {
       "viewReport": "View report",
@@ -1182,6 +1191,12 @@
         "stack_fluency": "Stack fluency",
         "hidden_test_execution": "Hidden test execution"
       }
+    },
+    "moduleSession": {
+      "eyebrow": "Assigned task profile",
+      "titleFallback": "Assessment module",
+      "stageCount": "{count} stages",
+      "preferredLanguage": "Recommended language"
     },
     "sqlLive": {
       "eyebrow": "SQL task evidence",

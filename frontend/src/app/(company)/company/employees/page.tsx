@@ -183,6 +183,12 @@ export default function EmployeesPage() {
     const currentModule = assessment.module_plan[assessment.current_module_index];
     return currentModule?.title ?? t("meta.notSet");
   };
+  const moduleProfileLabel = (moduleType: string): string => {
+    if (moduleType === "coding_task") return t("moduleProfiles.codingTask");
+    if (moduleType === "sql_live") return t("moduleProfiles.sqlLive");
+    if (moduleType === "system_design") return t("moduleProfiles.systemDesign");
+    return moduleType;
+  };
   const selectedCodingProfile = moduleProfiles.coding_task.find((item) => item.scenario_id === form.coding_task_scenario_id) ?? null;
   const selectedSqlProfile = moduleProfiles.sql_live.find((item) => item.scenario_id === form.sql_live_scenario_id) ?? null;
 
@@ -462,6 +468,9 @@ export default function EmployeesPage() {
             {assessments.map((assessment) => {
               const invitePath = `/employee/invite/${assessment.invite_token}`;
               const canDelete = assessment.status !== "completed" && assessment.status !== "in_progress";
+              const selectedProfiles = assessment.module_plan.filter(
+                (module) => module.scenario_title || module.stack_focus || module.preferred_language,
+              );
               return (
                 <div key={assessment.id} className="ai-panel rounded-[1.8rem] p-6">
                   <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
@@ -488,6 +497,41 @@ export default function EmployeesPage() {
                         <Meta label={t("meta.opened")} value={formatDate(assessment.opened_at)} />
                         <Meta label={t("meta.completed")} value={formatDate(assessment.completed_at)} />
                       </div>
+
+                      {selectedProfiles.length > 0 && (
+                        <div className="mt-4 rounded-2xl border border-white/6 bg-slate-950/60 p-4">
+                          <div className="mb-3 text-xs uppercase tracking-[0.16em] text-slate-500">{t("moduleProfiles.title")}</div>
+                          <div className="grid gap-3 xl:grid-cols-2">
+                            {selectedProfiles.map((module) => (
+                              <div key={module.module_id} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2.5 py-1 text-[11px] text-cyan-300">
+                                    {moduleProfileLabel(module.module_type)}
+                                  </span>
+                                  <span className="text-sm font-semibold text-white">
+                                    {module.scenario_title || module.title}
+                                  </span>
+                                </div>
+                                {module.stack_focus && (
+                                  <p className="mt-2 text-sm leading-6 text-slate-300">{module.stack_focus}</p>
+                                )}
+                                <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-400">
+                                  {module.preferred_language && (
+                                    <span className="rounded-full border border-slate-800 bg-slate-950 px-2.5 py-1">
+                                      {t("moduleProfiles.language")}: {module.preferred_language}
+                                    </span>
+                                  )}
+                                  {module.status && (
+                                    <span className="rounded-full border border-slate-800 bg-slate-950 px-2.5 py-1">
+                                      {t("moduleProfiles.status")}: {t(`status.${module.status as CompanyAssessment["status"]}`)}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex flex-wrap gap-2 lg:max-w-sm lg:justify-end">

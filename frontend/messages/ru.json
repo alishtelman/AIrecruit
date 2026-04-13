@@ -102,7 +102,8 @@
       "opened": "Открыто",
       "in_progress": "В процессе",
       "completed": "Завершено",
-      "expired": "Истекло"
+      "expired": "Истекло",
+      "blocked": "Заблокирован"
     },
     "flow": {
       "questionsPrefix": "В этой сессии",
@@ -347,6 +348,14 @@
       "notSet": "Не задано",
       "adaptiveDefault": "Адаптивный по умолчанию",
       "companyDefault": "По умолчанию для компании"
+    },
+    "moduleProfiles": {
+      "title": "Выбранные профили заданий",
+      "codingTask": "Coding task",
+      "sqlLive": "SQL live",
+      "systemDesign": "System design",
+      "language": "Язык",
+      "status": "Статус модуля"
     },
     "actions": {
       "viewReport": "Открыть отчёт",
@@ -1182,6 +1191,12 @@
         "stack_fluency": "Владение стеком",
         "hidden_test_execution": "Скрытые тесты"
       }
+    },
+    "moduleSession": {
+      "eyebrow": "Назначенный профиль задания",
+      "titleFallback": "Модуль оценки",
+      "stageCount": "{count} этапа",
+      "preferredLanguage": "Рекомендуемый язык"
     },
     "sqlLive": {
       "eyebrow": "Evidence по SQL task",

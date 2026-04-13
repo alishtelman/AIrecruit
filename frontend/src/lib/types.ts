@@ -22,6 +22,11 @@ export interface AssessmentModulePlanItem {
   interview_id: string | null;
   started_at: string | null;
   completed_at: string | null;
+  scenario_id?: string | null;
+  scenario_title?: string | null;
+  stack_focus?: string | null;
+  preferred_language?: string | null;
+  workspace_hint?: string | null;
 }
 
 export interface CompanyAssessment {
