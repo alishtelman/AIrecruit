@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Link, useRouter } from "@/i18n/navigation";
 import { authApi, companyAuthApi } from "@/lib/api";
+import { getDefaultRouteForRole } from "@/lib/roleRedirect";
 
 export default function CompanyRegisterPage() {
   const t = useTranslations("companyAuth.register");
@@ -11,7 +12,7 @@ export default function CompanyRegisterPage() {
   const [form, setForm] = useState({ email: "", password: "", company_name: "" });
 
   useEffect(() => {
-    authApi.me().then(() => router.replace("/company/dashboard")).catch(() => null);
+    authApi.me().then((user) => router.replace(getDefaultRouteForRole(user.role))).catch(() => null);
   }, [router]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -23,7 +24,8 @@ export default function CompanyRegisterPage() {
     try {
       await companyAuthApi.register(form);
       await authApi.login({ email: form.email, password: form.password });
-      router.push("/company/dashboard");
+      const user = await authApi.me();
+      router.push(getDefaultRouteForRole(user.role));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t("failed"));
     } finally {

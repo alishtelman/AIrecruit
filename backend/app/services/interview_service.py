@@ -2142,15 +2142,23 @@ async def _get_next_question_with_dev_fallback(
     ctx: InterviewContext,
     model_preference: str | None = None,
 ) -> str:
+    async def _call_with_optional_override(client: Any) -> str:
+        if model_preference is None:
+            return await client.get_next_question(ctx)
+        try:
+            return await client.get_next_question(ctx, model_override=model_preference)
+        except TypeError:
+            return await client.get_next_question(ctx)
+
     try:
-        return await interviewer.get_next_question(ctx, model_override=model_preference)
+        return await _call_with_optional_override(interviewer)
     except Exception as exc:
         if settings.is_local_or_test:
             logger.exception(
                 "Interviewer generation failed in local/test mode; using deterministic fallback",
             )
             try:
-                return await MockInterviewer().get_next_question(ctx, model_override=model_preference)
+                return await _call_with_optional_override(MockInterviewer())
             except Exception:
                 logger.exception("Deterministic interviewer fallback also failed")
         raise RuntimeError("AI interviewer request failed") from exc

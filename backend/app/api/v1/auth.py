@@ -65,6 +65,9 @@ async def _build_user_response(db: AsyncSession, user: User) -> UserResponse:
         if membership:
             company_id = membership.company_id
             company_member_role = "recruiter" if membership.role == "member" else membership.role
+    elif user.role == "platform_admin":
+        company_member_role = None
+        company_id = None
 
     return UserResponse(
         id=user.id,

@@ -18,6 +18,104 @@
       "copyFailed": "Не удалось скопировать"
     }
   },
+  "admin": {
+    "nav": {
+      "workspace": "Панель платформы",
+      "dashboard": "Обзор"
+    },
+    "login": {
+      "badge": "Системная админка",
+      "title": "Управляйте платформой из одного контура.",
+      "description": "Отдельный workspace для контроля роста продукта, качества интервью и системного состояния без смешивания с кабинетами кандидатов и компаний.",
+      "feature1Title": "Платформенные метрики",
+      "feature1Body": "Следите за пользователями, компаниями, интервью и отчётами в одном месте.",
+      "feature2Title": "Операционный контроль",
+      "feature2Body": "Быстро проверяйте состояние окружения, режим ИИ и общую загрузку системы.",
+      "formTitle": "Вход администратора",
+      "formSubtitle": "Используйте отдельные admin credentials платформы.",
+      "email": "Email",
+      "password": "Пароль",
+      "submit": "Войти в админку",
+      "submitting": "Входим...",
+      "failed": "Не удалось войти в админку",
+      "note": "Для локальной среды используется отдельный платформенный администратор.",
+      "backHome": "Вернуться на главную"
+    },
+    "dashboard": {
+      "loading": "Загружаем обзор платформы...",
+      "active": "Активен",
+      "inactive": "Неактивен",
+      "noOwner": "Владелец не назначен",
+      "reportReady": "Отчёт готов",
+      "reportPending": "Отчёт в работе",
+      "errors": {
+        "load": "Не удалось загрузить обзор админки"
+      },
+      "hero": {
+        "badge": "Контур платформы",
+        "title": "Операционный обзор AI Recruit",
+        "description": "Следите за ростом базы, нагрузкой интервью и системным состоянием без погружения в отдельные рабочие пространства.",
+        "session": "Текущая сессия",
+        "role": "Платформенный администратор"
+      },
+      "metrics": {
+        "users": "Пользователи",
+        "usersHelp": "Все аккаунты в системе",
+        "candidates": "Кандидаты",
+        "candidatesHelp": "Публичные и приватные профили",
+        "companies": "Компании",
+        "companiesHelp": "Активные компании в системе",
+        "reports": "Отчёты",
+        "reportsHelp": "Сгенерированные assessment reports"
+      },
+      "runtime": {
+        "title": "Runtime и режимы",
+        "subtitle": "Быстрый срез окружения и системных переключателей.",
+        "environment": "Окружение",
+        "mockAi": "Mock AI",
+        "rateLimit": "Rate limiting",
+        "bootstrap": "Bootstrap admin",
+        "enabled": "Включено",
+        "disabled": "Выключено"
+      },
+      "throughput": {
+        "title": "Нагрузка платформы",
+        "subtitle": "Как движется интервью-воронка на уровне всей системы.",
+        "interviews": "Все интервью",
+        "completed": "Завершено",
+        "members": "Участники компаний"
+      },
+      "recentUsers": {
+        "title": "Последние пользователи",
+        "subtitle": "Новые аккаунты и их роли."
+      },
+      "recentCompanies": {
+        "title": "Последние компании",
+        "subtitle": "Новые workspace-компании и их владельцы."
+      },
+      "recentInterviews": {
+        "title": "Последние интервью",
+        "subtitle": "Свежие candidate interview sessions."
+      },
+      "recentReports": {
+        "title": "Последние отчёты",
+        "subtitle": "Последние assessment reports по интервью."
+      },
+      "roles": {
+        "candidate": "Кандидат",
+        "company_admin": "Администратор компании",
+        "company_member": "Участник компании",
+        "platform_admin": "Администратор платформы"
+      },
+      "statuses": {
+        "created": "Создано",
+        "in_progress": "В процессе",
+        "completed": "Завершено",
+        "report_generated": "Отчёт готов",
+        "failed": "Сбой"
+      }
+    }
+  },
   "systemPages": {
     "notFound": {
       "title": "Страница не найдена",

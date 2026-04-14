@@ -3,7 +3,7 @@
 export interface User {
   id: string;
   email: string;
-  role: "candidate" | "company_admin" | "company_member";
+  role: "candidate" | "company_admin" | "company_member" | "platform_admin";
   company_member_role?: "admin" | "recruiter" | "viewer" | null;
   company_id?: string | null;
   is_active: boolean;
@@ -12,6 +12,68 @@ export interface User {
 
 export type AssessmentType = "employee_internal" | "candidate_external";
 export type AssessmentModuleStatus = "pending" | "in_progress" | "completed" | "blocked";
+
+export interface AdminOverviewMetrics {
+  total_users: number;
+  active_candidates: number;
+  active_companies: number;
+  company_members: number;
+  interviews_total: number;
+  interviews_completed: number;
+  reports_generated: number;
+}
+
+export interface AdminRuntimeStatus {
+  app_env: string;
+  mock_ai_enabled: boolean;
+  rate_limit_enabled: boolean;
+  platform_admin_bootstrap_enabled: boolean;
+}
+
+export interface AdminRecentUser {
+  id: string;
+  email: string;
+  role: User["role"];
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AdminRecentCompany {
+  id: string;
+  name: string;
+  owner_email: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AdminRecentInterview {
+  id: string;
+  candidate_name: string;
+  target_role: string;
+  status: string;
+  language: string;
+  created_at: string;
+  completed_at: string | null;
+  report_ready: boolean;
+}
+
+export interface AdminRecentReport {
+  id: string;
+  candidate_name: string;
+  target_role: string;
+  overall_score: number | null;
+  hiring_recommendation: "strong_yes" | "yes" | "maybe" | "no";
+  created_at: string;
+}
+
+export interface AdminOverview {
+  metrics: AdminOverviewMetrics;
+  runtime: AdminRuntimeStatus;
+  recent_users: AdminRecentUser[];
+  recent_companies: AdminRecentCompany[];
+  recent_interviews: AdminRecentInterview[];
+  recent_reports: AdminRecentReport[];
+}
 
 export interface AssessmentModulePlanItem {
   module_id: string;

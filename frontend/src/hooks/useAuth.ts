@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { authApi } from "@/lib/api";
 import type { User } from "@/lib/types";
+import { getDefaultRouteForRole } from "@/lib/roleRedirect";
 
 type UseAuthOptions = {
   redirectTo?: string;
@@ -27,7 +28,7 @@ export function useAuth(options: string | UseAuthOptions = "/candidate/login") {
       .then((nextUser) => {
         if (cancelled) return;
         if (allowedRoles && !allowedRoles.includes(nextUser.role)) {
-          router.replace(unauthorizedRedirectTo);
+          router.replace(nextUser.role === "platform_admin" ? getDefaultRouteForRole(nextUser.role) : unauthorizedRedirectTo);
           return;
         }
         setUser(nextUser);

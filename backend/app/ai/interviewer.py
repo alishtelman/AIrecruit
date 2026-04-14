@@ -661,8 +661,8 @@ def _resume_anchored_first_question(ctx: InterviewContext) -> str:
                 f"To start, briefly tell me about yourself, your experience, and how '{anchor}' reflects your background: "
                 "what was your role and what did you own?"
             )
-        return (
-            "To start, briefly tell me about yourself, your experience, and the kind of work that best represents your background."
+        return _trim_question(
+            "Based on your resume, briefly tell me about yourself, your experience, and the kind of work that best represents your background?"
         )
 
     if anchor:

@@ -3,6 +3,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.security import hash_password, verify_password, create_access_token
 from app.models.company import Company
 from app.models.user import User
@@ -18,6 +19,34 @@ class EmailAlreadyExistsError(Exception):
 
 class InvalidCredentialsError(Exception):
     pass
+
+
+async def ensure_platform_admin(
+    db: AsyncSession,
+    email: str | None = None,
+) -> User | None:
+    target_email = email or settings.platform_admin_email
+    if (
+        not settings.platform_admin_bootstrap_enabled
+        or not target_email
+        or target_email.lower() != settings.platform_admin_email.lower()
+    ):
+        return None
+
+    existing = await db.scalar(select(User).where(User.email == target_email))
+    if existing:
+        return existing
+
+    user = User(
+        id=uuid.uuid4(),
+        email=target_email,
+        hashed_password=hash_password(settings.platform_admin_password),
+        role="platform_admin",
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
 
 
 async def register_candidate(
@@ -84,6 +113,7 @@ async def login(
     email: str,
     password: str,
 ) -> TokenResponse:
+    await ensure_platform_admin(db, email=email)
     user = await db.scalar(select(User).where(User.email == email))
     if not user or not verify_password(password, user.hashed_password):
         raise InvalidCredentialsError()

@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     APP_URL: str = "http://localhost:3000"
     CORS_ORIGINS: str = "http://localhost:3000"
     PROCTORING_POLICY_MODE: str = "observe_only"
+    PLATFORM_ADMIN_EMAIL: str = ""
+    PLATFORM_ADMIN_PASSWORD: str = ""
+    PLATFORM_ADMIN_BOOTSTRAP: bool = False
 
     @property
     def cors_origins(self) -> list[str]:
@@ -69,6 +72,28 @@ class Settings(BaseSettings):
     @property
     def rate_limit_enabled(self) -> bool:
         return self.RATE_LIMIT_ENABLED and not self.is_local_or_test
+
+    @property
+    def platform_admin_email(self) -> str:
+        if self.PLATFORM_ADMIN_EMAIL:
+            return self.PLATFORM_ADMIN_EMAIL
+        if self.is_local_or_test:
+            return "admin@airecruit.dev"
+        return ""
+
+    @property
+    def platform_admin_password(self) -> str:
+        if self.PLATFORM_ADMIN_PASSWORD:
+            return self.PLATFORM_ADMIN_PASSWORD
+        if self.is_local_or_test:
+            return "Admin12345!"
+        return ""
+
+    @property
+    def platform_admin_bootstrap_enabled(self) -> bool:
+        return (self.is_local_or_test or self.PLATFORM_ADMIN_BOOTSTRAP) and bool(
+            self.platform_admin_email and self.platform_admin_password
+        )
 
     def validate_security_settings(self) -> None:
         insecure_defaults = {

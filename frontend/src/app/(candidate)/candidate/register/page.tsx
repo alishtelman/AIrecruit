@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Link, useRouter } from "@/i18n/navigation";
 import { authApi } from "@/lib/api";
+import { getDefaultRouteForRole } from "@/lib/roleRedirect";
 import { getSafeRedirect } from "@/lib/safeRedirect";
 
 function RegisterPageInner() {
@@ -15,7 +16,10 @@ function RegisterPageInner() {
   const [form, setForm] = useState({ full_name: "", email: "", password: "" });
 
   useEffect(() => {
-    authApi.me().then(() => router.replace(redirect)).catch(() => null);
+    authApi
+      .me()
+      .then((user) => router.replace(user.role === "candidate" ? redirect : getDefaultRouteForRole(user.role)))
+      .catch(() => null);
   }, [router, redirect]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -31,7 +35,8 @@ function RegisterPageInner() {
         email: form.email,
         password: form.password,
       });
-      router.push(redirect);
+      const user = await authApi.me();
+      router.push(user.role === "candidate" ? redirect : getDefaultRouteForRole(user.role));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t("failed"));
     } finally {

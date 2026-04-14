@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Link, useRouter } from "@/i18n/navigation";
 import { authApi } from "@/lib/api";
+import { getDefaultRouteForRole } from "@/lib/roleRedirect";
 
 export default function CompanyLoginPage() {
   const t = useTranslations("companyAuth.login");
@@ -13,7 +14,7 @@ export default function CompanyLoginPage() {
   useEffect(() => {
     authApi
       .me()
-      .then((user) => router.replace(user.role === "candidate" ? "/candidate/dashboard" : "/company/dashboard"))
+      .then((user) => router.replace(getDefaultRouteForRole(user.role)))
       .catch(() => null);
   }, [router]);
   const [error, setError] = useState("");
@@ -26,7 +27,7 @@ export default function CompanyLoginPage() {
     try {
       await authApi.login(form);
       const user = await authApi.me();
-      router.push(user.role === "candidate" ? "/candidate/dashboard" : "/company/dashboard");
+      router.push(getDefaultRouteForRole(user.role));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t("failed"));
     } finally {

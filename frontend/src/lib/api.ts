@@ -1,5 +1,6 @@
 import type {
   ActiveResume,
+  AdminOverview,
   AnalyticsFunnel,
   AnalyticsOverview,
   AnalyticsSalary,
@@ -124,6 +125,10 @@ export const companyAuthApi = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+};
+
+export const adminApi = {
+  getOverview: () => request<AdminOverview>("/api/v1/admin/overview"),
 };
 
 // ── Company Candidates ────────────────────────────────────────────────────────

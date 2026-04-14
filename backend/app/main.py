@@ -8,6 +8,8 @@ from fastapi.responses import JSONResponse
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.rate_limit import match_rule, rate_limiter
+from app.core.database import AsyncSessionLocal
+from app.services.auth_service import ensure_platform_admin
 
 cors_origins = settings.cors_origins
 audit_logger = logging.getLogger("security.audit")
@@ -98,6 +100,9 @@ async def startup_event():
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     os.makedirs(settings.RESUME_STORAGE_DIR, exist_ok=True)
     os.makedirs(settings.RECORDING_STORAGE_DIR, exist_ok=True)
+    if settings.platform_admin_bootstrap_enabled:
+        async with AsyncSessionLocal() as db:
+            await ensure_platform_admin(db)
 
 
 @app.get("/health")

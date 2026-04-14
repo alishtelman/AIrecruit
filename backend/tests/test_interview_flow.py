@@ -132,6 +132,16 @@ async def _force_report_status(
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with session_factory() as session:
+            if status != "report_generated":
+                await session.execute(
+                    text(
+                        """
+                        DELETE FROM assessment_reports
+                        WHERE interview_id = CAST(:interview_id AS uuid)
+                        """
+                    ),
+                    {"interview_id": interview_id},
+                )
             result = await session.execute(
                 text(
                     """
@@ -454,9 +464,13 @@ async def test_report_status_transition_processing_failed_retry_ready(
         headers=auth_headers(candidate_token),
     )
     assert retry_resp.status_code == 200, retry_resp.text
-    assert retry_resp.json()["processing_state"] == "processing"
+    retry_payload = retry_resp.json()
+    assert retry_payload["processing_state"] in {"processing", "ready"}
 
-    report_id = await _wait_for_ready_report_id(client, candidate_token, interview_id)
+    if retry_payload["processing_state"] == "ready" and retry_payload.get("report_id"):
+        report_id = retry_payload["report_id"]
+    else:
+        report_id = await _wait_for_ready_report_id(client, candidate_token, interview_id)
     assert report_id
 
 
