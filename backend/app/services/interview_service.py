@@ -43,6 +43,7 @@ from app.schemas.interview import (
     CodingTaskArtifactResponse,
     FinishInterviewResponse,
     InterviewDetailResponse,
+    InterviewStageResponse,
     InterviewModuleSessionResponse,
     InterviewReportStatusResponse,
     InterviewMessageResponse,
@@ -53,6 +54,7 @@ from app.schemas.interview import (
     ReportSummary,
     SendMessageResponse,
     StartInterviewResponse,
+    WrittenArtifactResponse,
 )
 from app.services.candidate_access_service import has_company_candidate_workspace_access
 from app.services.platform_settings_service import build_effective_workspace_ai_settings
@@ -92,6 +94,10 @@ class ReportRetryNotAllowedError(Exception):
 
 class CodingTaskArtifactUnavailableError(Exception):
     """Operation requires a coding_task interview module."""
+
+
+class WrittenArtifactUnavailableError(Exception):
+    """Operation requires a written_communication interview module."""
 
 
 # ---------------------------------------------------------------------------
@@ -147,12 +153,20 @@ async def _get_assessment_progress(
 
 
 _SYSTEM_DESIGN_MODULE_TYPE = "system_design"
+_BEHAVIORAL_INTERVIEW_MODULE_TYPE = "behavioral_interview"
 _CODING_TASK_MODULE_TYPE = "coding_task"
 _SQL_LIVE_MODULE_TYPE = "sql_live"
+_WRITTEN_COMMUNICATION_MODULE_TYPE = "written_communication"
 _SYSTEM_DESIGN_STAGE_KEYS = (
     "requirements",
     "high_level_design",
     "tradeoffs",
+)
+_BEHAVIORAL_INTERVIEW_STAGE_KEYS = (
+    "ownership",
+    "collaboration",
+    "leadership",
+    "reflection",
 )
 _CODING_TASK_STAGE_KEYS = (
     "task_brief",
@@ -163,6 +177,11 @@ _SQL_LIVE_STAGE_KEYS = (
     "schema_review",
     "query_authoring",
     "result_review",
+)
+_WRITTEN_COMMUNICATION_STAGE_KEYS = (
+    "brief_alignment",
+    "drafting",
+    "editing",
 )
 _SYSTEM_DESIGN_SCENARIOS: dict[str, dict[str, str]] = {
     "backend_engineer": {
@@ -228,6 +247,71 @@ _SYSTEM_DESIGN_DEFAULT_SCENARIO = {
     "title_ru": "общую внутреннюю платформу",
     "prompt_en": "Design a shared platform used by multiple internal teams with role-based access, observability, and reliability constraints.",
     "prompt_ru": "Спроектируйте общую платформу для нескольких внутренних команд с role-based access, observability и требованиями к надёжности.",
+}
+_BEHAVIORAL_INTERVIEW_SCENARIOS: dict[str, dict[str, str]] = {
+    "backend_engineer": {
+        "scenario_id": "production_incident_ownership",
+        "title_en": "a production incident ownership discussion",
+        "title_ru": "разбор ownership в production-инциденте",
+        "prompt_en": "Use concrete examples about taking ownership during a production incident, coordinating across teams, influencing the response, and reflecting on what changed afterward.",
+        "prompt_ru": "Опирайтесь на конкретные примеры про ownership во время production-инцидента, координацию между командами, влияние на ход реакции и выводы о том, что изменилось после него.",
+    },
+    "frontend_engineer": {
+        "scenario_id": "cross_team_delivery_conflict",
+        "title_en": "a cross-team delivery conflict",
+        "title_ru": "кросс-командный конфликт вокруг релиза",
+        "prompt_en": "Use concrete examples about navigating delivery pressure, aligning with design and product, pushing back constructively, and improving collaboration after the conflict.",
+        "prompt_ru": "Опирайтесь на конкретные примеры про давление дедлайна, выравнивание с design и product, конструктивный pushback и то, как вы улучшили взаимодействие после конфликта.",
+    },
+    "qa_engineer": {
+        "scenario_id": "release_risk_escalation",
+        "title_en": "a release-risk escalation",
+        "title_ru": "эскалация релизного риска",
+        "prompt_en": "Use concrete examples about escalating release risk, influencing the final decision, managing disagreement with delivery stakeholders, and learning from the outcome.",
+        "prompt_ru": "Опирайтесь на конкретные примеры про эскалацию релизного риска, влияние на итоговое решение, работу с несогласием delivery-стейкхолдеров и выводы по итогам ситуации.",
+    },
+    "devops_engineer": {
+        "scenario_id": "oncall_pressure_alignment",
+        "title_en": "an on-call pressure alignment case",
+        "title_ru": "кейс выравнивания под on-call давлением",
+        "prompt_en": "Use concrete examples about incident pressure, operational ownership, cross-functional coordination, and the choices you made when time and reliability were both constrained.",
+        "prompt_ru": "Опирайтесь на конкретные примеры про инцидентное давление, операционный ownership, кросс-функциональную координацию и решения, которые вы принимали при одновременном дефиците времени и требований к надёжности.",
+    },
+    "data_scientist": {
+        "scenario_id": "experiment_tradeoff_discussion",
+        "title_en": "an experiment trade-off discussion",
+        "title_ru": "обсуждение trade-off по эксперименту",
+        "prompt_en": "Use concrete examples about defending an evidence-based recommendation, aligning product and business stakeholders, handling disagreement, and reflecting on a miss or revision.",
+        "prompt_ru": "Опирайтесь на конкретные примеры про защиту data-driven рекомендации, выравнивание product и business-стейкхолдеров, работу с несогласием и рефлексию над ошибкой или пересмотром решения.",
+    },
+    "product_manager": {
+        "scenario_id": "stakeholder_priority_reset",
+        "title_en": "a stakeholder priority reset",
+        "title_ru": "пересборка приоритетов со стейкхолдерами",
+        "prompt_en": "Use concrete examples about resetting priorities under pressure, aligning engineering and business stakeholders, leading without formal authority, and learning from a difficult call.",
+        "prompt_ru": "Опирайтесь на конкретные примеры про пересборку приоритетов под давлением, выравнивание engineering и business-стейкхолдеров, лидерство без формальной власти и уроки из сложного решения.",
+    },
+    "mobile_engineer": {
+        "scenario_id": "mobile_hotfix_coordination",
+        "title_en": "a mobile hotfix coordination case",
+        "title_ru": "координация mobile hotfix",
+        "prompt_en": "Use concrete examples about handling crash pressure, coordinating with support and product, influencing the rollout plan, and reflecting on what you would change next time.",
+        "prompt_ru": "Опирайтесь на конкретные примеры про давление из-за mobile-crash, координацию с support и product, влияние на rollout plan и рефлексию о том, что вы бы изменили в следующий раз.",
+    },
+    "designer": {
+        "scenario_id": "design_feedback_conflict",
+        "title_en": "a design feedback conflict",
+        "title_ru": "конфликт вокруг design-feedback",
+        "prompt_en": "Use concrete examples about balancing user advocacy with stakeholder pressure, collaborating through disagreement, influencing the final direction, and learning from the outcome.",
+        "prompt_ru": "Опирайтесь на конкретные примеры про баланс между user advocacy и давлением стейкхолдеров, работу через конфликт, влияние на итоговое направление и выводы по итогам ситуации.",
+    },
+}
+_BEHAVIORAL_INTERVIEW_DEFAULT_SCENARIO = {
+    "scenario_id": "cross_functional_pressure_case",
+    "title_en": "a cross-functional pressure case",
+    "title_ru": "кейс кросс-функционального давления",
+    "prompt_en": "Use concrete examples about ownership, collaboration, influence, and reflection in a high-pressure cross-functional situation.",
+    "prompt_ru": "Опирайтесь на конкретные примеры про ownership, collaboration, влияние и рефлексию в напряжённой кросс-функциональной ситуации.",
 }
 _CODING_TASK_SCENARIOS: dict[str, dict[str, str]] = {
     "backend_engineer": {
@@ -391,6 +475,89 @@ _SQL_LIVE_DEFAULT_SCENARIO = {
     "workspace_hint_en": "Focus on join logic, filters, aggregate correctness, and predictable ordering.",
     "workspace_hint_ru": "Сфокусируйтесь на логике join, фильтрах, корректности агрегаций и предсказуемой сортировке.",
 }
+_WRITTEN_COMMUNICATION_SCENARIOS: dict[str, dict[str, str]] = {
+    "backend_engineer": {
+        "scenario_id": "incident_stakeholder_update",
+        "title_en": "an incident stakeholder update",
+        "title_ru": "апдейт для стейкхолдеров по инциденту",
+        "prompt_en": "Draft a concise written update for product and engineering leadership after a production incident caused delayed notifications for enterprise customers. Explain impact, current status, immediate mitigation, and the next update cadence without overpromising.",
+        "prompt_ru": "Подготовьте краткий письменный апдейт для product и engineering leadership после production-инцидента, из-за которого enterprise-клиенты получали уведомления с задержкой. Объясните impact, текущий статус, немедленные меры и ритм следующих апдейтов без лишних обещаний.",
+        "workspace_hint_en": "Use the workspace to draft the actual message. Aim for a calm tone, clear ownership, and explicit next steps for a mixed technical and business audience.",
+        "workspace_hint_ru": "Используйте workspace для самого текста сообщения. Держите спокойный тон, явный ownership и понятные следующие шаги для смешанной технической и бизнес-аудитории.",
+    },
+    "frontend_engineer": {
+        "scenario_id": "design_system_migration_note",
+        "title_en": "a design system migration note",
+        "title_ru": "записка о миграции на design system",
+        "prompt_en": "Write a rollout note for frontend engineers and product designers about moving a key surface to a new design system component set. Clarify what changes now, migration risks, and how teams should adopt the update safely.",
+        "prompt_ru": "Напишите rollout-note для frontend-инженеров и product-дизайнеров о переводе ключевого продукта на новый набор design system компонентов. Объясните, что меняется сейчас, какие есть migration risks и как командам безопасно внедрять обновление.",
+        "workspace_hint_en": "Structure the note so busy product teams can scan it quickly: what changed, what to do, and where the risk sits.",
+        "workspace_hint_ru": "Постройте записку так, чтобы занятые продуктовые команды быстро считали: что изменилось, что делать и где лежит риск.",
+    },
+    "qa_engineer": {
+        "scenario_id": "release_risk_recommendation",
+        "title_en": "a release-risk recommendation",
+        "title_ru": "рекомендация по релизному риску",
+        "prompt_en": "Draft a written recommendation for an engineering manager about whether to ship a release that still has one intermittent checkout bug and two lower-severity UI issues. Explain the risk, trade-offs, and your recommended release decision.",
+        "prompt_ru": "Подготовьте письменную рекомендацию для engineering manager о том, стоит ли выпускать релиз, в котором остался один плавающий баг в checkout и две UI-проблемы меньшей критичности. Объясните риск, trade-offs и рекомендованное решение по релизу.",
+        "workspace_hint_en": "Make the recommendation actionable: state the decision, why it is justified, and what mitigation or follow-up is required.",
+        "workspace_hint_ru": "Сделайте рекомендацию actionable: зафиксируйте решение, почему оно оправдано и какие mitigation или follow-up нужны дальше.",
+    },
+    "devops_engineer": {
+        "scenario_id": "change_freeze_request",
+        "title_en": "a change-freeze request",
+        "title_ru": "запрос на change freeze",
+        "prompt_en": "Write a short proposal to leadership requesting a temporary change freeze after repeated deployment instability across two regions. Explain the operational risk, what the freeze enables, and how you will decide when to lift it.",
+        "prompt_ru": "Напишите короткое предложение для leadership с запросом на временный change freeze после повторяющейся нестабильности деплоев в двух регионах. Объясните операционный риск, что даст freeze и по каким сигналам вы будете его снимать.",
+        "workspace_hint_en": "Keep the tone operational and credible. Leadership should understand both the urgency and the exit criteria.",
+        "workspace_hint_ru": "Сохраните операционный и убедительный тон. Leadership должно понять и срочность, и критерии выхода из freeze.",
+    },
+    "data_scientist": {
+        "scenario_id": "experiment_readout_note",
+        "title_en": "an experiment readout note",
+        "title_ru": "записка по итогам эксперимента",
+        "prompt_en": "Draft a short readout for product leadership summarizing an experiment that improved activation but reduced short-term monetization. Explain the result, uncertainty, and what decision you recommend next.",
+        "prompt_ru": "Подготовьте короткий readout для product leadership по эксперименту, который улучшил activation, но снизил краткосрочную монетизацию. Объясните результат, неопределённость и какое следующее решение вы рекомендуете.",
+        "workspace_hint_en": "Balance evidence and uncertainty. The message should help leaders make a decision, not just restate the metrics.",
+        "workspace_hint_ru": "Сбалансируйте evidence и неопределённость. Сообщение должно помогать лидерам принять решение, а не просто повторять метрики.",
+    },
+    "product_manager": {
+        "scenario_id": "stakeholder_alignment_brief",
+        "title_en": "a stakeholder alignment brief",
+        "title_ru": "brief для выравнивания стейкхолдеров",
+        "prompt_en": "Write a stakeholder brief explaining why a planned roadmap item should be delayed by one sprint because discovery uncovered a bigger integration dependency. Clarify impact, options, and the decision you want from leadership.",
+        "prompt_ru": "Напишите stakeholder brief о том, почему запланированный roadmap item нужно сдвинуть на один спринт, потому что discovery выявил более крупную интеграционную зависимость. Проясните impact, варианты и какое решение вы ждёте от leadership.",
+        "workspace_hint_en": "Optimize for alignment: make the trade-off explicit, keep the ask concrete, and avoid vague product language.",
+        "workspace_hint_ru": "Оптимизируйте текст под выравнивание: явно покажите trade-off, сформулируйте конкретный запрос и избегайте расплывчатого продуктового языка.",
+    },
+    "mobile_engineer": {
+        "scenario_id": "mobile_release_hotfix_note",
+        "title_en": "a mobile hotfix note",
+        "title_ru": "записка по mobile hotfix",
+        "prompt_en": "Draft a note for support and product teams explaining a mobile hotfix for a crash affecting a subset of Android users. Describe impact, workaround status, and what teams should communicate externally until the fix is fully rolled out.",
+        "prompt_ru": "Подготовьте записку для support и product команд о mobile hotfix для крэша, затрагивающего часть Android-пользователей. Опишите impact, статус workaround и что командам нужно коммуницировать наружу, пока фикс полностью не раскатан.",
+        "workspace_hint_en": "Write for cross-functional readers who need a usable message quickly. Keep status, impact, and external communication guidance easy to scan.",
+        "workspace_hint_ru": "Пишите для кросс-функциональной аудитории, которой нужен быстро применимый текст. Статус, impact и рекомендации для внешней коммуникации должны легко сканироваться.",
+    },
+    "designer": {
+        "scenario_id": "design_rationale_note",
+        "title_en": "a design rationale note",
+        "title_ru": "design rationale note",
+        "prompt_en": "Write a short rationale note explaining a controversial UX change that reduces customization in order to improve usability and support burden. Clarify who benefits, what trade-off was made, and how you would address likely objections.",
+        "prompt_ru": "Напишите короткую rationale note, объясняющую спорное UX-изменение, которое уменьшает кастомизацию ради лучшей usability и снижения нагрузки на поддержку. Объясните, кто выигрывает, какой trade-off был принят и как вы ответите на ожидаемые возражения.",
+        "workspace_hint_en": "Aim for a persuasive but measured tone. The note should show empathy for objections while still defending the decision clearly.",
+        "workspace_hint_ru": "Держите убедительный, но сдержанный тон. Записка должна показывать эмпатию к возражениям и при этом ясно защищать решение.",
+    },
+}
+_WRITTEN_COMMUNICATION_DEFAULT_SCENARIO = {
+    "scenario_id": "cross_functional_status_note",
+    "title_en": "a cross-functional status note",
+    "title_ru": "кросс-функциональный статус-апдейт",
+    "prompt_en": "Draft a concise update for mixed business and technical stakeholders about a delayed initiative. Explain status, impact, next steps, and the one key decision or expectation you need from the audience.",
+    "prompt_ru": "Подготовьте краткий апдейт для смешанной бизнес- и технической аудитории по задержавшейся инициативе. Объясните статус, impact, следующие шаги и одно ключевое решение или ожидание, которое вам нужно от аудитории.",
+    "workspace_hint_en": "Keep the structure explicit: context, impact, next steps, and ask. The writing should be easy to skim and hard to misinterpret.",
+    "workspace_hint_ru": "Сделайте структуру явной: контекст, impact, следующие шаги и запрос. Текст должен легко сканироваться и не допускать двусмысленности.",
+}
 
 
 def _build_scenario_catalog(*sources: dict[str, dict[str, str]], default_scenario: dict[str, str]) -> dict[str, dict[str, str]]:
@@ -410,6 +577,10 @@ _SYSTEM_DESIGN_SCENARIO_CATALOG = _build_scenario_catalog(
     _SYSTEM_DESIGN_SCENARIOS,
     default_scenario=_SYSTEM_DESIGN_DEFAULT_SCENARIO,
 )
+_BEHAVIORAL_INTERVIEW_SCENARIO_CATALOG = _build_scenario_catalog(
+    _BEHAVIORAL_INTERVIEW_SCENARIOS,
+    default_scenario=_BEHAVIORAL_INTERVIEW_DEFAULT_SCENARIO,
+)
 _CODING_TASK_SCENARIO_CATALOG = _build_scenario_catalog(
     _CODING_TASK_SCENARIOS,
     default_scenario=_CODING_TASK_DEFAULT_SCENARIO,
@@ -418,6 +589,10 @@ _SQL_LIVE_SCENARIO_CATALOG = _build_scenario_catalog(
     _SQL_LIVE_SCENARIOS,
     _SQL_LIVE_EXTRA_SCENARIOS,
     default_scenario=_SQL_LIVE_DEFAULT_SCENARIO,
+)
+_WRITTEN_COMMUNICATION_SCENARIO_CATALOG = _build_scenario_catalog(
+    _WRITTEN_COMMUNICATION_SCENARIOS,
+    default_scenario=_WRITTEN_COMMUNICATION_DEFAULT_SCENARIO,
 )
 
 
@@ -440,11 +615,21 @@ def _module_title_fallback(module_type: str) -> str:
 
 
 def _is_staged_module_type(module_type: str | None) -> bool:
-    return module_type in {_SYSTEM_DESIGN_MODULE_TYPE, _CODING_TASK_MODULE_TYPE, _SQL_LIVE_MODULE_TYPE}
+    return module_type in {
+        _SYSTEM_DESIGN_MODULE_TYPE,
+        _BEHAVIORAL_INTERVIEW_MODULE_TYPE,
+        _CODING_TASK_MODULE_TYPE,
+        _SQL_LIVE_MODULE_TYPE,
+        _WRITTEN_COMMUNICATION_MODULE_TYPE,
+    }
 
 
 def _is_workspace_artifact_module_type(module_type: str | None) -> bool:
     return module_type in {_CODING_TASK_MODULE_TYPE, _SQL_LIVE_MODULE_TYPE}
+
+
+def _is_written_artifact_module_type(module_type: str | None) -> bool:
+    return module_type == _WRITTEN_COMMUNICATION_MODULE_TYPE
 
 
 def _select_system_design_scenario(
@@ -459,6 +644,29 @@ def _select_system_design_scenario(
         role_scenarios=_SYSTEM_DESIGN_SCENARIOS,
         default_scenario=_SYSTEM_DESIGN_DEFAULT_SCENARIO,
         catalog=_SYSTEM_DESIGN_SCENARIO_CATALOG,
+    )
+    title_override = str(config.get("scenario_title") or "").strip()
+    prompt_override = str(config.get("scenario_prompt") or "").strip()
+    is_en = language == "en"
+    return {
+        "scenario_id": scenario["scenario_id"],
+        "title": title_override or (scenario["title_en"] if is_en else scenario["title_ru"]),
+        "prompt": prompt_override or (scenario["prompt_en"] if is_en else scenario["prompt_ru"]),
+    }
+
+
+def _select_behavioral_interview_scenario(
+    target_role: str,
+    language: str,
+    module_config: dict[str, Any] | None,
+) -> dict[str, str]:
+    config = module_config if isinstance(module_config, dict) else {}
+    scenario = _resolve_scenario_definition(
+        target_role=target_role,
+        requested_id=str(config.get("scenario_id") or "").strip() or None,
+        role_scenarios=_BEHAVIORAL_INTERVIEW_SCENARIOS,
+        default_scenario=_BEHAVIORAL_INTERVIEW_DEFAULT_SCENARIO,
+        catalog=_BEHAVIORAL_INTERVIEW_SCENARIO_CATALOG,
     )
     title_override = str(config.get("scenario_title") or "").strip()
     prompt_override = str(config.get("scenario_prompt") or "").strip()
@@ -522,6 +730,30 @@ def _select_sql_live_scenario(
     }
 
 
+def _select_written_communication_scenario(
+    target_role: str,
+    language: str,
+    module_config: dict[str, Any] | None,
+) -> dict[str, str]:
+    config = module_config if isinstance(module_config, dict) else {}
+    scenario = _resolve_scenario_definition(
+        target_role=target_role,
+        requested_id=str(config.get("scenario_id") or "").strip() or None,
+        role_scenarios=_WRITTEN_COMMUNICATION_SCENARIOS,
+        default_scenario=_WRITTEN_COMMUNICATION_DEFAULT_SCENARIO,
+        catalog=_WRITTEN_COMMUNICATION_SCENARIO_CATALOG,
+    )
+    title_override = str(config.get("scenario_title") or "").strip()
+    prompt_override = str(config.get("scenario_prompt") or "").strip()
+    is_en = language == "en"
+    return {
+        "scenario_id": scenario["scenario_id"],
+        "title": title_override or (scenario["title_en"] if is_en else scenario["title_ru"]),
+        "prompt": prompt_override or (scenario["prompt_en"] if is_en else scenario["prompt_ru"]),
+        "workspace_hint": str(scenario["workspace_hint_en"] if is_en else scenario["workspace_hint_ru"]).strip() or None,
+    }
+
+
 def build_assessment_module_preview(
     *,
     module_type: str | None,
@@ -532,6 +764,16 @@ def build_assessment_module_preview(
     normalized_module_type = str(module_type or "").strip().lower()
     if normalized_module_type == _SYSTEM_DESIGN_MODULE_TYPE:
         scenario = _select_system_design_scenario(target_role, language, module_config)
+        return {
+            "scenario_id": scenario["scenario_id"],
+            "scenario_title": scenario["title"],
+            "scenario_prompt": scenario["prompt"],
+            "stack_focus": None,
+            "preferred_language": None,
+            "workspace_hint": None,
+        }
+    if normalized_module_type == _BEHAVIORAL_INTERVIEW_MODULE_TYPE:
+        scenario = _select_behavioral_interview_scenario(target_role, language, module_config)
         return {
             "scenario_id": scenario["scenario_id"],
             "scenario_title": scenario["title"],
@@ -560,6 +802,16 @@ def build_assessment_module_preview(
             "preferred_language": scenario.get("preferred_language") or "sql",
             "workspace_hint": scenario.get("workspace_hint"),
         }
+    if normalized_module_type == _WRITTEN_COMMUNICATION_MODULE_TYPE:
+        scenario = _select_written_communication_scenario(target_role, language, module_config)
+        return {
+            "scenario_id": scenario["scenario_id"],
+            "scenario_title": scenario["title"],
+            "scenario_prompt": scenario["prompt"],
+            "stack_focus": None,
+            "preferred_language": None,
+            "workspace_hint": scenario.get("workspace_hint"),
+        }
     return None
 
 
@@ -574,10 +826,14 @@ def is_valid_assessment_module_scenario(
         return True
     if normalized_module_type == _SYSTEM_DESIGN_MODULE_TYPE:
         return normalized_scenario_id in _SYSTEM_DESIGN_SCENARIO_CATALOG
+    if normalized_module_type == _BEHAVIORAL_INTERVIEW_MODULE_TYPE:
+        return normalized_scenario_id in _BEHAVIORAL_INTERVIEW_SCENARIO_CATALOG
     if normalized_module_type == _CODING_TASK_MODULE_TYPE:
         return normalized_scenario_id in _CODING_TASK_SCENARIO_CATALOG
     if normalized_module_type == _SQL_LIVE_MODULE_TYPE:
         return normalized_scenario_id in _SQL_LIVE_SCENARIO_CATALOG
+    if normalized_module_type == _WRITTEN_COMMUNICATION_MODULE_TYPE:
+        return normalized_scenario_id in _WRITTEN_COMMUNICATION_SCENARIO_CATALOG
     return True
 
 
@@ -694,6 +950,87 @@ def _build_system_design_topic_plan(
     ]
     module_context = {
         "module_type": _SYSTEM_DESIGN_MODULE_TYPE,
+        "scenario_id": scenario["scenario_id"],
+        "scenario_title": scenario["title"],
+        "scenario_prompt": scenario["prompt"],
+        "stage_plan": stage_plan,
+        "question_history": [
+            {
+                "assistant_turn": 1,
+                "stage_key": stage_plan[0]["stage_key"],
+                "stage_title": stage_plan[0]["stage_title"],
+            }
+        ],
+    }
+    return topic_plan, module_context
+
+
+def _build_behavioral_interview_topic_plan(
+    *,
+    target_role: str,
+    language: str,
+    module_config: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    scenario = _select_behavioral_interview_scenario(target_role, language, module_config)
+    is_en = language == "en"
+    stage_titles = {
+        "ownership": "Ownership Under Ambiguity" if is_en else "Ownership в неоднозначности",
+        "collaboration": "Cross-Functional Collaboration" if is_en else "Кросс-функциональное взаимодействие",
+        "leadership": "Influence Under Pressure" if is_en else "Влияние под давлением",
+        "reflection": "Reflection & Growth" if is_en else "Рефлексия и рост",
+    }
+    stage_prompts = {
+        "ownership": (
+            "Ask for a concrete situation where scope, expectations, or constraints were unclear and the candidate still had to take responsibility and decide what to do next."
+            if is_en
+            else "Спросите о конкретной ситуации, где scope, ожидания или ограничения были неясны, но кандидату всё равно пришлось взять ответственность и решить, что делать дальше."
+        ),
+        "collaboration": (
+            "Ask for a concrete example of disagreement, tension, or dependency with another team or stakeholder and how the candidate handled alignment."
+            if is_en
+            else "Спросите о конкретном примере несогласия, напряжения или зависимости с другой командой или стейкхолдером и о том, как кандидат выстраивал выравнивание."
+        ),
+        "leadership": (
+            "Ask for a concrete situation where the candidate had to influence others, create clarity, or lead a response under time pressure without relying only on formal authority."
+            if is_en
+            else "Спросите о конкретной ситуации, где кандидату пришлось влиять на других, наводить ясность или вести реакцию под давлением времени, не опираясь только на формальную власть."
+        ),
+        "reflection": (
+            "Ask for a concrete mistake, piece of tough feedback, or failed judgment call and what changed in the candidate's behavior afterward."
+            if is_en
+            else "Спросите о конкретной ошибке, жёсткой обратной связи или неудачном решении и о том, что изменилось в поведении кандидата после этого."
+        ),
+    }
+    competencies_by_stage = {
+        "ownership": ["Ownership & Growth Mindset", "Technical Communication"],
+        "collaboration": ["Collaboration & Cross-functional Work", "Stakeholder Communication"],
+        "leadership": ["Leadership & Influence", "Technical Communication"],
+        "reflection": ["Ownership & Growth Mindset", "Analytical Problem Solving"],
+    }
+    stage_plan = [
+        {
+            "stage_key": stage_key,
+            "stage_title": stage_titles[stage_key],
+            "stage_prompt": stage_prompts[stage_key],
+        }
+        for stage_key in _BEHAVIORAL_INTERVIEW_STAGE_KEYS
+    ]
+    topic_plan = [
+        {
+            "competencies": competencies_by_stage[item["stage_key"]],
+            "resume_anchor": None,
+            "verification_target": None,
+            "stage_key": item["stage_key"],
+            "stage_title": item["stage_title"],
+            "stage_prompt": item["stage_prompt"],
+            "scenario_id": scenario["scenario_id"],
+            "scenario_title": scenario["title"],
+            "scenario_prompt": scenario["prompt"],
+        }
+        for item in stage_plan
+    ]
+    module_context = {
+        "module_type": _BEHAVIORAL_INTERVIEW_MODULE_TYPE,
         "scenario_id": scenario["scenario_id"],
         "scenario_title": scenario["title"],
         "scenario_prompt": scenario["prompt"],
@@ -863,6 +1200,81 @@ def _build_sql_live_topic_plan(
     return topic_plan, module_context
 
 
+def _build_written_communication_topic_plan(
+    *,
+    target_role: str,
+    language: str,
+    module_config: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    scenario = _select_written_communication_scenario(target_role, language, module_config)
+    is_en = language == "en"
+    stage_titles = {
+        "brief_alignment": "Audience & Goal" if is_en else "Аудитория и цель",
+        "drafting": "Drafting" if is_en else "Подготовка черновика",
+        "editing": "Revision & Tone" if is_en else "Редактура и тон",
+    }
+    stage_prompts = {
+        "brief_alignment": (
+            "Clarify the audience, the decision or alignment goal, the key facts to include, and what must stay explicit from the start."
+            if is_en
+            else "Уточните аудиторию, цель сообщения, ключевые факты, которые нужно включить, и что должно быть явно проговорено с самого начала."
+        ),
+        "drafting": (
+            "Draft the core message in the workspace, keeping the structure crisp, the ownership clear, and the main ask easy to find."
+            if is_en
+            else "Соберите основной текст в workspace так, чтобы структура была чёткой, ownership понятным, а главный запрос легко находился."
+        ),
+        "editing": (
+            "Revise for clarity, tone, and audience fit: remove ambiguity, tighten weak sections, and make the next steps explicit."
+            if is_en
+            else "Отредактируйте текст под ясность, тон и соответствие аудитории: уберите двусмысленность, усилите слабые места и явно зафиксируйте следующие шаги."
+        ),
+    }
+    competencies_by_stage = {
+        "brief_alignment": ["Technical Communication", "Problem Solving"],
+        "drafting": ["Technical Communication", "Ownership & Growth Mindset"],
+        "editing": ["Technical Communication", "Debugging & Problem Decomposition"],
+    }
+    stage_plan = [
+        {
+            "stage_key": stage_key,
+            "stage_title": stage_titles[stage_key],
+            "stage_prompt": stage_prompts[stage_key],
+        }
+        for stage_key in _WRITTEN_COMMUNICATION_STAGE_KEYS
+    ]
+    topic_plan = [
+        {
+            "competencies": competencies_by_stage[item["stage_key"]],
+            "resume_anchor": None,
+            "verification_target": None,
+            "stage_key": item["stage_key"],
+            "stage_title": item["stage_title"],
+            "stage_prompt": item["stage_prompt"],
+            "scenario_id": scenario["scenario_id"],
+            "scenario_title": scenario["title"],
+            "scenario_prompt": scenario["prompt"],
+        }
+        for item in stage_plan
+    ]
+    module_context = {
+        "module_type": _WRITTEN_COMMUNICATION_MODULE_TYPE,
+        "scenario_id": scenario["scenario_id"],
+        "scenario_title": scenario["title"],
+        "scenario_prompt": scenario["prompt"],
+        "workspace_hint": scenario.get("workspace_hint"),
+        "stage_plan": stage_plan,
+        "question_history": [
+            {
+                "assistant_turn": 1,
+                "stage_key": stage_plan[0]["stage_key"],
+                "stage_title": stage_plan[0]["stage_title"],
+            }
+        ],
+    }
+    return topic_plan, module_context
+
+
 def _build_interview_module_session_payload(interview: Interview) -> InterviewModuleSessionResponse | None:
     state = interview.interview_state if isinstance(interview.interview_state, dict) else {}
     module_type = str(state.get("module_type") or "").strip().lower()
@@ -891,6 +1303,73 @@ def _build_interview_module_session_payload(interview: Interview) -> InterviewMo
     )
 
 
+_INTERVIEW_PHASE_TITLES = {
+    "intro": {
+        "en": "Self-introduction",
+        "ru": "О себе и опыте",
+    },
+    "resume_followup": {
+        "en": "Resume follow-up",
+        "ru": "Разбор опыта из резюме",
+    },
+    "technical": {
+        "en": "Technical validation",
+        "ru": "Техническая валидация",
+    },
+    "behavioral_closing": {
+        "en": "Behavioral closing",
+        "ru": "Финальный behavioral-блок",
+    },
+}
+
+
+def _phase_title(phase_key: str | None, language: str) -> str:
+    normalized_phase = str(phase_key or "").strip().lower()
+    normalized_language = "en" if str(language).strip().lower() == "en" else "ru"
+    title = _INTERVIEW_PHASE_TITLES.get(normalized_phase, {}).get(normalized_language)
+    if title:
+        return title
+    if not normalized_phase:
+        return "Interview stage" if normalized_language == "en" else "Этап интервью"
+    return normalized_phase.replace("_", " ").strip().title()
+
+
+def _build_interview_stage_payload(interview: Interview) -> InterviewStageResponse | None:
+    state = interview.interview_state if isinstance(interview.interview_state, dict) else {}
+    module_type = str(state.get("module_type") or "").strip().lower()
+    if _is_staged_module_type(module_type):
+        return None
+
+    topic_plan_raw = state.get("topic_plan")
+    topic_plan = topic_plan_raw if isinstance(topic_plan_raw, list) else []
+    if not topic_plan:
+        return None
+
+    current_topic_index = min(
+        max(_safe_int(state.get("current_topic_index"), max(interview.question_count - 1, 0)), 0),
+        max(len(topic_plan) - 1, 0),
+    )
+    current_target = topic_plan[current_topic_index] if topic_plan else {}
+    if not isinstance(current_target, dict):
+        return None
+
+    phase_key = str(current_target.get("phase") or "").strip().lower() or "technical"
+    raw_competencies = current_target.get("competencies")
+    competency_targets: list[str] = []
+    if isinstance(raw_competencies, list):
+        competency_targets = [str(item).strip() for item in raw_competencies if str(item).strip()]
+
+    return InterviewStageResponse(
+        phase_key=phase_key,
+        phase_title=_phase_title(phase_key, interview.language),
+        slot_number=current_topic_index + 1,
+        slot_count=len(topic_plan),
+        competency_targets=competency_targets,
+        resume_anchor=str(current_target.get("resume_anchor") or "") or None,
+        verification_target=str(current_target.get("verification_target") or "") or None,
+    )
+
+
 def _normalize_coding_task_language(value: Any) -> str:
     normalized = str(value or "").strip().lower()
     if not normalized:
@@ -916,11 +1395,35 @@ def _build_coding_task_artifact_response(interview: Interview) -> CodingTaskArti
     )
 
 
+def _get_written_artifact_state(state: dict[str, Any]) -> dict[str, Any]:
+    raw = state.get("written_artifact")
+    if not isinstance(raw, dict):
+        return {}
+    return raw
+
+
+def _build_written_artifact_response(interview: Interview) -> WrittenArtifactResponse:
+    state = interview.interview_state if isinstance(interview.interview_state, dict) else {}
+    artifact = _get_written_artifact_state(state)
+    return WrittenArtifactResponse(
+        interview_id=interview.id,
+        content=str(artifact.get("content") or ""),
+        updated_at=_parse_iso_datetime(artifact.get("updated_at")),
+    )
+
+
 def _ensure_coding_task_interview(interview: Interview) -> None:
     state = interview.interview_state if isinstance(interview.interview_state, dict) else {}
     module_type = str(state.get("module_type") or "").strip().lower()
     if not _is_workspace_artifact_module_type(module_type):
         raise CodingTaskArtifactUnavailableError("Task workspace artifact is only available for coding_task or sql_live interviews.")
+
+
+def _ensure_written_interview(interview: Interview) -> None:
+    state = interview.interview_state if isinstance(interview.interview_state, dict) else {}
+    module_type = str(state.get("module_type") or "").strip().lower()
+    if not _is_written_artifact_module_type(module_type):
+        raise WrittenArtifactUnavailableError("Written artifact is only available for written_communication interviews.")
 
 
 def _build_module_stage_map(interview: Interview) -> dict[int, dict[str, str]]:
@@ -2293,6 +2796,15 @@ async def start_interview(
         max_q = len(topic_plan)
         role_max_cap = max_q
         min_questions_before_early_stop = max_q
+    elif normalized_module_type == _BEHAVIORAL_INTERVIEW_MODULE_TYPE:
+        topic_plan, module_context = _build_behavioral_interview_topic_plan(
+            target_role=target_role,
+            language=language,
+            module_config=safe_module_config,
+        )
+        max_q = len(topic_plan)
+        role_max_cap = max_q
+        min_questions_before_early_stop = max_q
     elif normalized_module_type == _CODING_TASK_MODULE_TYPE:
         topic_plan, module_context = _build_coding_task_topic_plan(
             target_role=target_role,
@@ -2304,6 +2816,15 @@ async def start_interview(
         min_questions_before_early_stop = max_q
     elif normalized_module_type == _SQL_LIVE_MODULE_TYPE:
         topic_plan, module_context = _build_sql_live_topic_plan(
+            target_role=target_role,
+            language=language,
+            module_config=safe_module_config,
+        )
+        max_q = len(topic_plan)
+        role_max_cap = max_q
+        min_questions_before_early_stop = max_q
+    elif normalized_module_type == _WRITTEN_COMMUNICATION_MODULE_TYPE:
+        topic_plan, module_context = _build_written_communication_topic_plan(
             target_role=target_role,
             language=language,
             module_config=safe_module_config,
@@ -2475,6 +2996,7 @@ async def start_interview(
         max_questions=interview.max_questions,
         current_question=first_question,
         language=interview.language,
+        interview_stage=_build_interview_stage_payload(interview),
     )
 
 
@@ -2547,6 +3069,7 @@ async def add_candidate_message(
         # ── Load persistent interview state ────────────────────────────────
         state: dict = interview.interview_state or {}
         coding_task_artifact = _get_coding_task_artifact_state(state)
+        written_artifact = _get_written_artifact_state(state)
         turn_count: int = int(state.get("turn_count", interview.question_count))
         current_topic_index: int = int(state.get("current_topic_index", max(interview.question_count - 1, 0)))
         topic_turns: int = int(state.get("topic_turns", interview.followup_depth or 0))
@@ -3049,6 +3572,11 @@ async def add_candidate_message(
                 "code": str(coding_task_artifact.get("code") or "")[:50000],
                 "updated_at": coding_task_artifact.get("updated_at"),
             }
+        if written_artifact and _is_written_artifact_module_type(module_type):
+            interview.interview_state["written_artifact"] = {
+                "content": str(written_artifact.get("content") or "")[:50000],
+                "updated_at": written_artifact.get("updated_at"),
+            }
         if next_q:
             db.add(InterviewMessage(
                 id=uuid.uuid4(),
@@ -3073,6 +3601,7 @@ async def add_candidate_message(
         current_question=current_question,
         is_followup=response_is_followup,
         question_type=question_type,
+        interview_stage=_build_interview_stage_payload(interview),
         module_session=_build_interview_module_session_payload(interview),
     )
 
@@ -3101,6 +3630,7 @@ async def finish_interview(
                 interview_summary=existing_report.interview_summary,
             ),
             assessment_progress=assessment_progress,
+            interview_stage=_build_interview_stage_payload(interview),
             module_session=_build_interview_module_session_payload(interview),
         )
     if interview.status == "report_processing":
@@ -3111,6 +3641,7 @@ async def finish_interview(
             report_id=None,
             summary=None,
             assessment_progress=assessment_progress,
+            interview_stage=_build_interview_stage_payload(interview),
             module_session=_build_interview_module_session_payload(interview),
         )
     if interview.status != "in_progress":
@@ -3195,6 +3726,7 @@ async def finish_interview(
                 interview_summary=report.interview_summary,
             ),
             assessment_progress=await _get_assessment_progress(db, interview) or assessment_progress,
+            interview_stage=_build_interview_stage_payload(interview),
             module_session=_build_interview_module_session_payload(interview),
         )
     except asyncio.TimeoutError:
@@ -3219,6 +3751,7 @@ async def finish_interview(
             report_id=None,
             summary=None,
             assessment_progress=await _get_assessment_progress(db, interview) or assessment_progress,
+            interview_stage=_build_interview_stage_payload(interview),
             module_session=_build_interview_module_session_payload(interview),
         )
     except Exception as exc:
@@ -3247,6 +3780,7 @@ async def finish_interview(
             report_id=None,
             summary=None,
             assessment_progress=await _get_assessment_progress(db, interview) or assessment_progress,
+            interview_stage=_build_interview_stage_payload(interview),
             module_session=_build_interview_module_session_payload(interview),
         )
 
@@ -3660,6 +4194,7 @@ async def get_interview_report_status(
             failure_reason=None,
             diagnostics=diagnostics,
             assessment_progress=assessment_progress,
+            interview_stage=_build_interview_stage_payload(interview),
             module_session=_build_interview_module_session_payload(interview),
         )
 
@@ -3687,6 +4222,7 @@ async def get_interview_report_status(
         failure_reason=failure_reason,
         diagnostics=diagnostics,
         assessment_progress=assessment_progress,
+        interview_stage=_build_interview_stage_payload(interview),
         module_session=_build_interview_module_session_payload(interview),
     )
 
@@ -3742,6 +4278,7 @@ async def retry_interview_report_generation(
         failure_reason=None,
         diagnostics=_read_report_diagnostics(interview),
         assessment_progress=await _get_assessment_progress(db, interview),
+        interview_stage=_build_interview_stage_payload(interview),
         module_session=_build_interview_module_session_payload(interview),
     )
 
@@ -3781,6 +4318,7 @@ async def get_interview_detail(
         has_report=report is not None,
         report_id=report.id if report else None,
         assessment_progress=assessment_progress,
+        interview_stage=_build_interview_stage_payload(interview),
         module_session=_build_interview_module_session_payload(interview),
     )
 
@@ -3818,6 +4356,39 @@ async def save_coding_task_artifact(
     await db.commit()
     await db.refresh(interview)
     return _build_coding_task_artifact_response(interview)
+
+
+async def get_written_artifact(
+    db: AsyncSession,
+    candidate: Candidate,
+    interview_id: uuid.UUID,
+) -> WrittenArtifactResponse:
+    interview = await _get_interview(db, interview_id, candidate.id)
+    _ensure_written_interview(interview)
+    return _build_written_artifact_response(interview)
+
+
+async def save_written_artifact(
+    db: AsyncSession,
+    candidate: Candidate,
+    interview_id: uuid.UUID,
+    *,
+    content: str,
+) -> WrittenArtifactResponse:
+    interview = await _get_interview(db, interview_id, candidate.id)
+    _ensure_written_interview(interview)
+    if interview.status != "in_progress":
+        raise InterviewNotActiveError()
+
+    state = dict(interview.interview_state or {})
+    state["written_artifact"] = {
+        "content": str(content or "")[:50000],
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    interview.interview_state = state
+    await db.commit()
+    await db.refresh(interview)
+    return _build_written_artifact_response(interview)
 
 
 async def save_interview_recording(

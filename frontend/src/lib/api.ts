@@ -48,6 +48,7 @@ import type {
   StartInterviewResponse,
   TokenResponse,
   User,
+  WrittenArtifact,
 } from "./types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -505,6 +506,15 @@ export const interviewApi = {
 
   saveCodingTaskArtifact: (id: string, data: { language?: string | null; code: string }) =>
     request<CodingTaskArtifact>(`/api/v1/interviews/${id}/coding-artifact`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  getWrittenArtifact: (id: string) =>
+    request<WrittenArtifact>(`/api/v1/interviews/${id}/written-artifact`),
+
+  saveWrittenArtifact: (id: string, data: { content: string }) =>
+    request<WrittenArtifact>(`/api/v1/interviews/${id}/written-artifact`, {
       method: "PUT",
       body: JSON.stringify(data),
     }),

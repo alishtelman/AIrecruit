@@ -36,27 +36,32 @@ from app.schemas.interview import (
     SendMessageResponse,
     StartInterviewRequest,
     StartInterviewResponse,
+    WrittenArtifactRequest,
+    WrittenArtifactResponse,
 )
 from app.schemas.template import TemplateResponse
 from app.services.interview_service import (
+    CodingTaskArtifactUnavailableError,
     InterviewAlreadyFinishedError,
     InterviewNotActiveError,
     InterviewNotFoundError,
     MaxQuestionsNotReachedError,
     MaxQuestionsReachedError,
     NoActiveResumeError,
-    CodingTaskArtifactUnavailableError,
     ReportRetryNotAllowedError,
+    WrittenArtifactUnavailableError,
     add_candidate_message,
     finish_interview,
     get_coding_task_artifact,
     get_interview_detail,
     get_interview_report_status,
+    get_written_artifact,
     list_interviews,
     retry_interview_report_generation,
     save_behavioral_signals,
     save_coding_task_artifact,
     save_interview_recording,
+    save_written_artifact,
     start_interview,
 )
 from app.services.template_service import list_public_templates
@@ -310,6 +315,53 @@ async def save_coding_artifact(
             detail="Interview is not active.",
         )
     except CodingTaskArtifactUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+@router.get(
+    "/{interview_id}/written-artifact",
+    response_model=WrittenArtifactResponse,
+    summary="Get the saved written artifact for a written communication interview",
+)
+async def get_saved_written_artifact(
+    interview_id: uuid.UUID,
+    candidate: Candidate = Depends(_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await get_written_artifact(db, candidate, interview_id)
+    except InterviewNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
+    except WrittenArtifactUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+@router.put(
+    "/{interview_id}/written-artifact",
+    response_model=WrittenArtifactResponse,
+    summary="Save the written artifact for a written communication interview",
+)
+async def save_written_task_artifact(
+    interview_id: uuid.UUID,
+    body: WrittenArtifactRequest,
+    candidate: Candidate = Depends(_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await save_written_artifact(
+            db,
+            candidate,
+            interview_id,
+            content=body.content,
+        )
+    except InterviewNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
+    except InterviewNotActiveError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Interview is not active.",
+        )
+    except WrittenArtifactUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 

@@ -63,6 +63,9 @@ class InterviewSummaryModel(BaseModel):
         signal: str
         outcome: str
         verification_target: str | None = None
+        resume_anchor: str | None = None
+        evidence_hint: str | None = None
+        phase: str | None = None
 
     role: str
     core_topics: int
@@ -197,6 +200,72 @@ class SqlLiveSummary(BaseModel):
     has_query_submission: bool = False
 
 
+class WrittenCommunicationStageSummary(BaseModel):
+    stage_key: str
+    stage_title: str
+    question_numbers: list[int] = []
+    average_answer_quality: float | None = None
+    stage_score: float | None = None
+    evidence_items: list[str] = []
+
+
+class WrittenCommunicationRubricScore(BaseModel):
+    rubric_key: str
+    score: float | None = None
+
+
+class WrittenCommunicationSummary(BaseModel):
+    module_title: str | None = None
+    scenario_id: str | None = None
+    scenario_title: str | None = None
+    scenario_prompt: str | None = None
+    workspace_hint: str | None = None
+    stage_count: int = 0
+    overall_score: float | None = None
+    clarity_score: float | None = None
+    structure_score: float | None = None
+    audience_awareness_score: float | None = None
+    rubric_scores: list[WrittenCommunicationRubricScore] = []
+    stages: list[WrittenCommunicationStageSummary] = []
+    writing_excerpt: str | None = None
+    has_draft_submission: bool = False
+    strengths: list[str] = []
+    gaps: list[str] = []
+    next_steps: list[str] = []
+
+
+class BehavioralInterviewStageSummary(BaseModel):
+    stage_key: str
+    stage_title: str
+    question_numbers: list[int] = []
+    average_answer_quality: float | None = None
+    stage_score: float | None = None
+    evidence_items: list[str] = []
+
+
+class BehavioralInterviewRubricScore(BaseModel):
+    rubric_key: str
+    score: float | None = None
+
+
+class BehavioralInterviewSummary(BaseModel):
+    module_title: str | None = None
+    scenario_id: str | None = None
+    scenario_title: str | None = None
+    scenario_prompt: str | None = None
+    stage_count: int = 0
+    overall_score: float | None = None
+    ownership_score: float | None = None
+    collaboration_score: float | None = None
+    leadership_score: float | None = None
+    reflection_score: float | None = None
+    rubric_scores: list[BehavioralInterviewRubricScore] = []
+    stages: list[BehavioralInterviewStageSummary] = []
+    strengths: list[str] = []
+    gaps: list[str] = []
+    next_steps: list[str] = []
+
+
 class AssessmentReportResponse(BaseModel):
     id: uuid.UUID
     interview_id: uuid.UUID
@@ -232,8 +301,10 @@ class AssessmentReportResponse(BaseModel):
     summary_model: InterviewSummaryModel | None = None
     module_session: ReportModuleSession | None = None
     system_design_summary: SystemDesignSummary | None = None
+    behavioral_interview_summary: BehavioralInterviewSummary | None = None
     coding_task_summary: CodingTaskSummary | None = None
     sql_live_summary: SqlLiveSummary | None = None
+    written_communication_summary: WrittenCommunicationSummary | None = None
 
     model_config = {"from_attributes": True}
 
@@ -257,6 +328,19 @@ class AssessmentReportResponse(BaseModel):
         if isinstance(full_report_json, dict):
             summary_model = full_report_json.get("summary_model")
             _set_value(data, "summary_model", summary_model)
+
+            competency_scores = _get_value(data, "competency_scores")
+            if isinstance(competency_scores, list) and isinstance(per_question_analysis, list):
+                from app.ai.assessor import _compute_confidence_metrics
+
+                confidence_metrics = _compute_confidence_metrics(
+                    competency_scores,
+                    per_question_analysis,
+                )
+                _set_value(data, "overall_confidence", confidence_metrics["overall_confidence"])
+                _set_value(data, "competency_confidence", confidence_metrics["competency_confidence"])
+                _set_value(data, "confidence_reasons", confidence_metrics["confidence_reasons"])
+                _set_value(data, "evidence_coverage", confidence_metrics["evidence_coverage"])
 
             interview_meta = full_report_json.get("interview_meta")
             if isinstance(interview_meta, dict):
@@ -433,6 +517,188 @@ class AssessmentReportResponse(BaseModel):
                             "overall_score": overall_score,
                             "rubric_scores": rubric_scores,
                             "stages": stages,
+                        },
+                    )
+                elif module_type == "behavioral_interview":
+                    question_history = interview_meta.get("module_question_history") if isinstance(interview_meta.get("module_question_history"), list) else []
+                    stage_map: dict[int, dict[str, str | None]] = {}
+                    for item in question_history:
+                        if not isinstance(item, dict):
+                            continue
+                        try:
+                            assistant_turn = int(item.get("assistant_turn") or 0)
+                        except (TypeError, ValueError):
+                            assistant_turn = 0
+                        if assistant_turn <= 0:
+                            continue
+                        stage_map[assistant_turn] = {
+                            "stage_key": str(item.get("stage_key") or "").strip() or None,
+                            "stage_title": str(item.get("stage_title") or "").strip() or None,
+                        }
+
+                    enriched_per_q: list[dict] = []
+                    if isinstance(per_question_analysis, list):
+                        for raw_item in per_question_analysis:
+                            if isinstance(raw_item, dict):
+                                question_number = raw_item.get("question_number")
+                                try:
+                                    question_number = int(question_number or 0)
+                                except (TypeError, ValueError):
+                                    question_number = 0
+                                stage_meta = stage_map.get(question_number, {})
+                                enriched = dict(raw_item)
+                                if stage_meta.get("stage_key"):
+                                    enriched["stage_key"] = stage_meta["stage_key"]
+                                if stage_meta.get("stage_title"):
+                                    enriched["stage_title"] = stage_meta["stage_title"]
+                                enriched_per_q.append(enriched)
+                            else:
+                                enriched_per_q.append(raw_item)
+                        _set_value(data, "per_question_analysis", enriched_per_q)
+                    else:
+                        enriched_per_q = []
+
+                    explicit_evaluation = (
+                        full_report_json.get("behavioral_interview_evaluation")
+                        if isinstance(full_report_json.get("behavioral_interview_evaluation"), dict)
+                        else None
+                    )
+                    stages: list[dict] = []
+                    rubric_scores = []
+                    overall_score = None
+                    ownership_score = None
+                    collaboration_score = None
+                    leadership_score = None
+                    reflection_score = None
+                    strengths: list[str] = []
+                    gaps: list[str] = []
+                    next_steps: list[str] = []
+                    if explicit_evaluation:
+                        explicit_stages = explicit_evaluation.get("stages")
+                        if isinstance(explicit_stages, list):
+                            for stage in explicit_stages:
+                                if not isinstance(stage, dict):
+                                    continue
+                                stages.append(
+                                    {
+                                        "stage_key": str(stage.get("stage_key") or "").strip(),
+                                        "stage_title": str(stage.get("stage_title") or "").strip(),
+                                        "question_numbers": [
+                                            int(item)
+                                            for item in stage.get("question_numbers", [])
+                                            if isinstance(item, int)
+                                        ],
+                                        "average_answer_quality": stage.get("average_answer_quality"),
+                                        "stage_score": stage.get("stage_score"),
+                                        "evidence_items": [
+                                            str(item).strip()
+                                            for item in stage.get("evidence_items", [])
+                                            if str(item).strip()
+                                        ],
+                                    }
+                                )
+                        explicit_rubrics = explicit_evaluation.get("rubric_scores")
+                        if isinstance(explicit_rubrics, list):
+                            rubric_scores = [
+                                {
+                                    "rubric_key": str(item.get("rubric_key") or "").strip(),
+                                    "score": item.get("score"),
+                                }
+                                for item in explicit_rubrics
+                                if isinstance(item, dict) and str(item.get("rubric_key") or "").strip()
+                            ]
+                        overall_score = explicit_evaluation.get("overall_score")
+                        ownership_score = explicit_evaluation.get("ownership_score")
+                        collaboration_score = explicit_evaluation.get("collaboration_score")
+                        leadership_score = explicit_evaluation.get("leadership_score")
+                        reflection_score = explicit_evaluation.get("reflection_score")
+                        strengths = [
+                            str(item).strip()
+                            for item in explicit_evaluation.get("strengths", [])
+                            if str(item).strip()
+                        ]
+                        gaps = [
+                            str(item).strip()
+                            for item in explicit_evaluation.get("gaps", [])
+                            if str(item).strip()
+                        ]
+                        next_steps = [
+                            str(item).strip()
+                            for item in explicit_evaluation.get("next_steps", [])
+                            if str(item).strip()
+                        ]
+                    else:
+                        for stage in stage_plan:
+                            if not isinstance(stage, dict):
+                                continue
+                            stage_key = str(stage.get("stage_key") or "").strip()
+                            stage_title = str(stage.get("stage_title") or "").strip()
+                            if not stage_key or not stage_title:
+                                continue
+                            stage_questions = [
+                                item for item in enriched_per_q
+                                if isinstance(item, dict) and item.get("stage_key") == stage_key
+                            ]
+                            qualities = [
+                                float(item.get("answer_quality"))
+                                for item in stage_questions
+                                if isinstance(item.get("answer_quality"), (int, float))
+                            ]
+                            evidence_items = [
+                                str(item.get("evidence") or "").strip()
+                                for item in stage_questions
+                                if str(item.get("evidence") or "").strip()
+                            ]
+                            stages.append(
+                                {
+                                    "stage_key": stage_key,
+                                    "stage_title": stage_title,
+                                    "question_numbers": [
+                                        int(item.get("question_number"))
+                                        for item in stage_questions
+                                        if isinstance(item.get("question_number"), int)
+                                    ],
+                                    "average_answer_quality": round(sum(qualities) / len(qualities), 2) if qualities else None,
+                                    "stage_score": None,
+                                    "evidence_items": evidence_items[:3],
+                                }
+                            )
+
+                    _set_value(
+                        data,
+                        "behavioral_interview_summary",
+                        {
+                            "module_title": (
+                                explicit_evaluation.get("module_title")
+                                if explicit_evaluation and explicit_evaluation.get("module_title")
+                                else module_title
+                            ),
+                            "scenario_id": (
+                                explicit_evaluation.get("scenario_id")
+                                if explicit_evaluation and explicit_evaluation.get("scenario_id")
+                                else module_session["scenario_id"] if module_session else None
+                            ),
+                            "scenario_title": (
+                                explicit_evaluation.get("scenario_title")
+                                if explicit_evaluation and explicit_evaluation.get("scenario_title")
+                                else module_session["scenario_title"] if module_session else None
+                            ),
+                            "scenario_prompt": (
+                                explicit_evaluation.get("scenario_prompt")
+                                if explicit_evaluation and explicit_evaluation.get("scenario_prompt")
+                                else module_session["scenario_prompt"] if module_session else None
+                            ),
+                            "stage_count": int(explicit_evaluation.get("stage_count") or len(stage_plan)) if explicit_evaluation else len(stage_plan),
+                            "overall_score": overall_score,
+                            "ownership_score": ownership_score,
+                            "collaboration_score": collaboration_score,
+                            "leadership_score": leadership_score,
+                            "reflection_score": reflection_score,
+                            "rubric_scores": rubric_scores,
+                            "stages": stages,
+                            "strengths": strengths,
+                            "gaps": gaps,
+                            "next_steps": next_steps,
                         },
                     )
                 elif module_type == "coding_task":
@@ -856,6 +1122,196 @@ class AssessmentReportResponse(BaseModel):
                             "stages": stages,
                             "query_excerpt": query_excerpt,
                             "has_query_submission": has_query_submission,
+                        },
+                    )
+                elif module_type == "written_communication":
+                    question_history = interview_meta.get("module_question_history") if isinstance(interview_meta.get("module_question_history"), list) else []
+                    stage_map: dict[int, dict[str, str | None]] = {}
+                    for item in question_history:
+                        if not isinstance(item, dict):
+                            continue
+                        try:
+                            assistant_turn = int(item.get("assistant_turn") or 0)
+                        except (TypeError, ValueError):
+                            assistant_turn = 0
+                        if assistant_turn <= 0:
+                            continue
+                        stage_map[assistant_turn] = {
+                            "stage_key": str(item.get("stage_key") or "").strip() or None,
+                            "stage_title": str(item.get("stage_title") or "").strip() or None,
+                        }
+
+                    enriched_per_q: list[dict] = []
+                    if isinstance(per_question_analysis, list):
+                        for raw_item in per_question_analysis:
+                            if isinstance(raw_item, dict):
+                                question_number = raw_item.get("question_number")
+                                try:
+                                    question_number = int(question_number or 0)
+                                except (TypeError, ValueError):
+                                    question_number = 0
+                                stage_meta = stage_map.get(question_number, {})
+                                enriched = dict(raw_item)
+                                if stage_meta.get("stage_key"):
+                                    enriched["stage_key"] = stage_meta["stage_key"]
+                                if stage_meta.get("stage_title"):
+                                    enriched["stage_title"] = stage_meta["stage_title"]
+                                enriched_per_q.append(enriched)
+                            else:
+                                enriched_per_q.append(raw_item)
+                        _set_value(data, "per_question_analysis", enriched_per_q)
+                    else:
+                        enriched_per_q = []
+
+                    explicit_evaluation = (
+                        full_report_json.get("written_communication_evaluation")
+                        if isinstance(full_report_json.get("written_communication_evaluation"), dict)
+                        else None
+                    )
+                    stages: list[dict] = []
+                    rubric_scores = []
+                    overall_score = None
+                    clarity_score = None
+                    structure_score = None
+                    audience_awareness_score = None
+                    writing_excerpt = None
+                    has_draft_submission = False
+                    strengths: list[str] = []
+                    gaps: list[str] = []
+                    next_steps: list[str] = []
+                    if explicit_evaluation:
+                        explicit_stages = explicit_evaluation.get("stages")
+                        if isinstance(explicit_stages, list):
+                            for stage in explicit_stages:
+                                if not isinstance(stage, dict):
+                                    continue
+                                stages.append(
+                                    {
+                                        "stage_key": str(stage.get("stage_key") or "").strip(),
+                                        "stage_title": str(stage.get("stage_title") or "").strip(),
+                                        "question_numbers": [
+                                            int(item)
+                                            for item in stage.get("question_numbers", [])
+                                            if isinstance(item, int)
+                                        ],
+                                        "average_answer_quality": stage.get("average_answer_quality"),
+                                        "stage_score": stage.get("stage_score"),
+                                        "evidence_items": [
+                                            str(item).strip()
+                                            for item in stage.get("evidence_items", [])
+                                            if str(item).strip()
+                                        ],
+                                    }
+                                )
+                        explicit_rubrics = explicit_evaluation.get("rubric_scores")
+                        if isinstance(explicit_rubrics, list):
+                            rubric_scores = [
+                                {
+                                    "rubric_key": str(item.get("rubric_key") or "").strip(),
+                                    "score": item.get("score"),
+                                }
+                                for item in explicit_rubrics
+                                if isinstance(item, dict) and str(item.get("rubric_key") or "").strip()
+                            ]
+                        overall_score = explicit_evaluation.get("overall_score")
+                        clarity_score = explicit_evaluation.get("clarity_score")
+                        structure_score = explicit_evaluation.get("structure_score")
+                        audience_awareness_score = explicit_evaluation.get("audience_awareness_score")
+                        writing_excerpt = str(explicit_evaluation.get("writing_excerpt") or "").strip() or None
+                        has_draft_submission = bool(explicit_evaluation.get("has_draft_submission"))
+                        strengths = [
+                            str(item).strip()
+                            for item in explicit_evaluation.get("strengths", [])
+                            if str(item).strip()
+                        ]
+                        gaps = [
+                            str(item).strip()
+                            for item in explicit_evaluation.get("gaps", [])
+                            if str(item).strip()
+                        ]
+                        next_steps = [
+                            str(item).strip()
+                            for item in explicit_evaluation.get("next_steps", [])
+                            if str(item).strip()
+                        ]
+                    else:
+                        for stage in stage_plan:
+                            if not isinstance(stage, dict):
+                                continue
+                            stage_key = str(stage.get("stage_key") or "").strip()
+                            stage_title = str(stage.get("stage_title") or "").strip()
+                            if not stage_key or not stage_title:
+                                continue
+                            stage_questions = [
+                                item for item in enriched_per_q
+                                if isinstance(item, dict) and item.get("stage_key") == stage_key
+                            ]
+                            qualities = [
+                                float(item.get("answer_quality"))
+                                for item in stage_questions
+                                if isinstance(item.get("answer_quality"), (int, float))
+                            ]
+                            evidence_items = [
+                                str(item.get("evidence") or "").strip()
+                                for item in stage_questions
+                                if str(item.get("evidence") or "").strip()
+                            ]
+                            stages.append(
+                                {
+                                    "stage_key": stage_key,
+                                    "stage_title": stage_title,
+                                    "question_numbers": [
+                                        int(item.get("question_number"))
+                                        for item in stage_questions
+                                        if isinstance(item.get("question_number"), int)
+                                    ],
+                                    "average_answer_quality": round(sum(qualities) / len(qualities), 2) if qualities else None,
+                                    "stage_score": None,
+                                    "evidence_items": evidence_items[:3],
+                                }
+                            )
+
+                    _set_value(
+                        data,
+                        "written_communication_summary",
+                        {
+                            "module_title": (
+                                explicit_evaluation.get("module_title")
+                                if explicit_evaluation and explicit_evaluation.get("module_title")
+                                else module_title
+                            ),
+                            "scenario_id": (
+                                explicit_evaluation.get("scenario_id")
+                                if explicit_evaluation and explicit_evaluation.get("scenario_id")
+                                else module_session["scenario_id"] if module_session else None
+                            ),
+                            "scenario_title": (
+                                explicit_evaluation.get("scenario_title")
+                                if explicit_evaluation and explicit_evaluation.get("scenario_title")
+                                else module_session["scenario_title"] if module_session else None
+                            ),
+                            "scenario_prompt": (
+                                explicit_evaluation.get("scenario_prompt")
+                                if explicit_evaluation and explicit_evaluation.get("scenario_prompt")
+                                else module_session["scenario_prompt"] if module_session else None
+                            ),
+                            "workspace_hint": (
+                                explicit_evaluation.get("workspace_hint")
+                                if explicit_evaluation and explicit_evaluation.get("workspace_hint")
+                                else module_session["workspace_hint"] if module_session else None
+                            ),
+                            "stage_count": int(explicit_evaluation.get("stage_count") or len(stage_plan)) if explicit_evaluation else len(stage_plan),
+                            "overall_score": overall_score,
+                            "clarity_score": clarity_score,
+                            "structure_score": structure_score,
+                            "audience_awareness_score": audience_awareness_score,
+                            "rubric_scores": rubric_scores,
+                            "stages": stages,
+                            "writing_excerpt": writing_excerpt,
+                            "has_draft_submission": has_draft_submission,
+                            "strengths": strengths,
+                            "gaps": gaps,
+                            "next_steps": next_steps,
                         },
                     )
         return data

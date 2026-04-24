@@ -1115,6 +1115,300 @@ ORDER BY completed_revenue DESC, customer_name ASC
 
 
 @pytest.mark.asyncio
+async def test_employee_assessment_supports_written_communication_module_and_report_summary(
+    client: AsyncClient,
+    company_token: str,
+):
+    employee_email = f"writtencomm_{uuid.uuid4().hex[:8]}@example.com"
+    assessment = await _create_assessment(
+        client,
+        company_token,
+        employee_email,
+        "Written Communication Candidate",
+        module_plan=[
+            {
+                "module_type": "adaptive_interview",
+                "title": "Core Interview",
+            },
+            {
+                "module_id": "written_communication_main",
+                "module_type": "written_communication",
+                "title": "Written Communication",
+            },
+        ],
+    )
+    candidate_token = await _register_candidate(client, employee_email, "Written Communication Candidate")
+    await _upload_resume(client, candidate_token)
+
+    first_start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert first_start_resp.status_code == 200, first_start_resp.text
+    first_interview_id = first_start_resp.json()["interview_id"]
+    await _answer_all_questions(client, candidate_token, first_interview_id)
+
+    first_finish_resp = await client.post(
+        f"/api/v1/interviews/{first_interview_id}/finish",
+        headers=auth_headers(candidate_token),
+    )
+    assert first_finish_resp.status_code == 200, first_finish_resp.text
+    first_finish_data = first_finish_resp.json()
+    assert first_finish_data["assessment_progress"] is not None
+    assert first_finish_data["assessment_progress"]["has_remaining_modules"] is True
+    assert first_finish_data["assessment_progress"]["current_module_type"] == "written_communication"
+
+    written_invite_resp = await client.get(
+        f"/api/v1/employee/invite/{assessment['invite_token']}",
+        params={"language": "en"},
+    )
+    assert written_invite_resp.status_code == 200, written_invite_resp.text
+    written_invite = written_invite_resp.json()
+    assert written_invite["current_module_type"] == "written_communication"
+    assert written_invite["can_start_current_module"] is True
+    assert written_invite["current_module_preview"] is not None
+    assert written_invite["current_module_preview"]["scenario_title"]
+    assert written_invite["current_module_preview"]["workspace_hint"]
+
+    written_start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert written_start_resp.status_code == 200, written_start_resp.text
+    written_interview_id = written_start_resp.json()["interview_id"]
+
+    detail_resp = await client.get(
+        f"/api/v1/interviews/{written_interview_id}",
+        headers=auth_headers(candidate_token),
+    )
+    assert detail_resp.status_code == 200, detail_resp.text
+    detail = detail_resp.json()
+    assert detail["module_session"] is not None
+    assert detail["module_session"]["module_type"] == "written_communication"
+    assert detail["module_session"]["module_title"] == "Written Communication"
+    assert detail["module_session"]["scenario_title"]
+    assert detail["module_session"]["workspace_hint"]
+    assert detail["module_session"]["stage_key"] == "brief_alignment"
+    assert detail["module_session"]["stage_count"] == 3
+
+    artifact_resp = await client.put(
+        f"/api/v1/interviews/{written_interview_id}/written-artifact",
+        headers=auth_headers(candidate_token),
+        json={
+            "content": """Status: Notification delays affected a subset of enterprise customers for 47 minutes.
+
+Impact: Messages were queued but not delivered on time, so customer-facing alerts arrived late.
+
+What we did: We paused the failing worker pool, drained the backlog through the healthy region, and added manual monitoring on queue depth.
+
+Next steps: Engineering owns a permanent fix today, support should use the prepared incident wording, and leadership will get the next update at 14:30 UTC.""",
+        },
+    )
+    assert artifact_resp.status_code == 200, artifact_resp.text
+    artifact = artifact_resp.json()
+    assert artifact["content"]
+    assert "Status:" in artifact["content"]
+    assert artifact["updated_at"] is not None
+
+    artifact_fetch_resp = await client.get(
+        f"/api/v1/interviews/{written_interview_id}/written-artifact",
+        headers=auth_headers(candidate_token),
+    )
+    assert artifact_fetch_resp.status_code == 200, artifact_fetch_resp.text
+    assert artifact_fetch_resp.json()["content"] == artifact["content"]
+
+    written_answer = (
+        "I would make the audience explicit up front, keep the message calm, separate impact from mitigation, "
+        "and end with one concrete update time so leadership and support know exactly what happens next."
+    )
+    await _answer_all_questions(
+        client,
+        candidate_token,
+        written_interview_id,
+        message=written_answer,
+    )
+
+    final_finish_resp = await client.post(
+        f"/api/v1/interviews/{written_interview_id}/finish",
+        headers=auth_headers(candidate_token),
+    )
+    assert final_finish_resp.status_code == 200, final_finish_resp.text
+    final_finish_data = final_finish_resp.json()
+    final_report_id = final_finish_data.get("report_id")
+    if not final_report_id:
+        final_report_id = await _wait_for_report_id(client, candidate_token, written_interview_id)
+
+    company_report_resp = await client.get(
+        f"/api/v1/company/reports/{final_report_id}",
+        headers=auth_headers(company_token),
+    )
+    assert company_report_resp.status_code == 200, company_report_resp.text
+    company_report = company_report_resp.json()
+    assert company_report["module_session"] is not None
+    assert company_report["module_session"]["module_type"] == "written_communication"
+    assert company_report["written_communication_summary"] is not None
+    summary = company_report["written_communication_summary"]
+    assert summary["stage_count"] == 3
+    assert summary["overall_score"] is not None
+    assert summary["clarity_score"] is not None
+    assert summary["structure_score"] is not None
+    assert summary["audience_awareness_score"] is not None
+    assert len(summary["rubric_scores"]) == 4
+    assert summary["writing_excerpt"] is not None
+    assert "Status:" in summary["writing_excerpt"]
+    assert summary["has_draft_submission"] is True
+    assert len(summary["stages"]) == 3
+    assert all(stage["stage_title"] for stage in summary["stages"])
+    assert company_report["per_question_analysis"]
+    assert any(item.get("stage_title") for item in company_report["per_question_analysis"])
+
+    completed_assessments_resp = await client.get(
+        "/api/v1/company/assessments",
+        headers=auth_headers(company_token),
+    )
+    assert completed_assessments_resp.status_code == 200, completed_assessments_resp.text
+    completed = next(row for row in completed_assessments_resp.json() if row["id"] == assessment["id"])
+    assert completed["status"] == "completed"
+    assert completed["interview_id"] == written_interview_id
+    assert completed["module_plan"][1]["status"] == "completed"
+    assert completed["module_plan"][1]["interview_id"] == written_interview_id
+
+
+@pytest.mark.asyncio
+async def test_employee_assessment_supports_behavioral_interview_module_and_report_summary(
+    client: AsyncClient,
+    company_token: str,
+):
+    employee_email = f"behavioral_{uuid.uuid4().hex[:8]}@example.com"
+    assessment = await _create_assessment(
+        client,
+        company_token,
+        employee_email,
+        "Behavioral Candidate",
+        module_plan=[
+            {
+                "module_type": "adaptive_interview",
+                "title": "Core Interview",
+            },
+            {
+                "module_id": "behavioral_interview_main",
+                "module_type": "behavioral_interview",
+                "title": "Behavioral Interview",
+            },
+        ],
+    )
+    candidate_token = await _register_candidate(client, employee_email, "Behavioral Candidate")
+    await _upload_resume(client, candidate_token)
+
+    first_start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert first_start_resp.status_code == 200, first_start_resp.text
+    first_interview_id = first_start_resp.json()["interview_id"]
+    await _answer_all_questions(client, candidate_token, first_interview_id)
+
+    first_finish_resp = await client.post(
+        f"/api/v1/interviews/{first_interview_id}/finish",
+        headers=auth_headers(candidate_token),
+    )
+    assert first_finish_resp.status_code == 200, first_finish_resp.text
+    first_finish_data = first_finish_resp.json()
+    assert first_finish_data["assessment_progress"] is not None
+    assert first_finish_data["assessment_progress"]["has_remaining_modules"] is True
+    assert first_finish_data["assessment_progress"]["current_module_type"] == "behavioral_interview"
+
+    behavioral_invite_resp = await client.get(
+        f"/api/v1/employee/invite/{assessment['invite_token']}",
+        params={"language": "en"},
+    )
+    assert behavioral_invite_resp.status_code == 200, behavioral_invite_resp.text
+    behavioral_invite = behavioral_invite_resp.json()
+    assert behavioral_invite["current_module_type"] == "behavioral_interview"
+    assert behavioral_invite["can_start_current_module"] is True
+    assert behavioral_invite["current_module_preview"] is not None
+    assert behavioral_invite["current_module_preview"]["scenario_title"]
+    assert behavioral_invite["current_module_preview"]["scenario_prompt"]
+
+    behavioral_start_resp = await client.post(
+        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+        headers=auth_headers(candidate_token),
+        json={"language": "en"},
+    )
+    assert behavioral_start_resp.status_code == 200, behavioral_start_resp.text
+    behavioral_interview_id = behavioral_start_resp.json()["interview_id"]
+
+    detail_resp = await client.get(
+        f"/api/v1/interviews/{behavioral_interview_id}",
+        headers=auth_headers(candidate_token),
+    )
+    assert detail_resp.status_code == 200, detail_resp.text
+    detail = detail_resp.json()
+    assert detail["module_session"] is not None
+    assert detail["module_session"]["module_type"] == "behavioral_interview"
+    assert detail["module_session"]["module_title"] == "Behavioral Interview"
+    assert detail["module_session"]["scenario_title"]
+    assert detail["module_session"]["stage_key"] == "ownership"
+    assert detail["module_session"]["stage_count"] == 4
+
+    behavioral_answer = (
+        "I took ownership by clarifying the decision, naming the risk, aligning the cross-functional team, "
+        "and explaining what I changed after feedback so the next incident had a faster resolution."
+    )
+    await _answer_all_questions(
+        client,
+        candidate_token,
+        behavioral_interview_id,
+        message=behavioral_answer,
+    )
+
+    final_finish_resp = await client.post(
+        f"/api/v1/interviews/{behavioral_interview_id}/finish",
+        headers=auth_headers(candidate_token),
+    )
+    assert final_finish_resp.status_code == 200, final_finish_resp.text
+    final_finish_data = final_finish_resp.json()
+    final_report_id = final_finish_data.get("report_id")
+    if not final_report_id:
+        final_report_id = await _wait_for_report_id(client, candidate_token, behavioral_interview_id)
+
+    company_report_resp = await client.get(
+        f"/api/v1/company/reports/{final_report_id}",
+        headers=auth_headers(company_token),
+    )
+    assert company_report_resp.status_code == 200, company_report_resp.text
+    company_report = company_report_resp.json()
+    assert company_report["module_session"] is not None
+    assert company_report["module_session"]["module_type"] == "behavioral_interview"
+    assert company_report["behavioral_interview_summary"] is not None
+    summary = company_report["behavioral_interview_summary"]
+    assert summary["stage_count"] == 4
+    assert summary["overall_score"] is not None
+    assert summary["ownership_score"] is not None
+    assert summary["leadership_score"] is not None
+    assert len(summary["rubric_scores"]) == 4
+    assert len(summary["stages"]) == 4
+    assert all(stage["stage_title"] for stage in summary["stages"])
+    assert summary["strengths"] or summary["gaps"] or summary["next_steps"]
+    assert company_report["per_question_analysis"]
+    assert any(item.get("stage_title") for item in company_report["per_question_analysis"])
+
+    completed_assessments_resp = await client.get(
+        "/api/v1/company/assessments",
+        headers=auth_headers(company_token),
+    )
+    assert completed_assessments_resp.status_code == 200, completed_assessments_resp.text
+    completed = next(row for row in completed_assessments_resp.json() if row["id"] == assessment["id"])
+    assert completed["status"] == "completed"
+    assert completed["interview_id"] == behavioral_interview_id
+    assert completed["module_plan"][1]["status"] == "completed"
+    assert completed["module_plan"][1]["interview_id"] == behavioral_interview_id
+
+
+@pytest.mark.asyncio
 async def test_employee_assessment_rejects_module_plan_without_initial_adaptive_interview(
     client: AsyncClient,
     company_token: str,

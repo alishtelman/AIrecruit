@@ -269,6 +269,7 @@ export interface AssessmentModuleProfileOption {
 export interface AssessmentModuleProfiles {
   coding_task: AssessmentModuleProfileOption[];
   sql_live: AssessmentModuleProfileOption[];
+  written_communication: AssessmentModuleProfileOption[];
 }
 
 export interface CandidateNote {
@@ -440,6 +441,7 @@ export interface StartInterviewResponse {
   question_count: number;
   max_questions: number;
   current_question: string;
+  interview_stage?: InterviewStage | null;
 }
 
 export interface SendMessageRequest {
@@ -454,6 +456,7 @@ export interface SendMessageResponse {
   current_question: string | null;
   is_followup: boolean;
   question_type: string;
+  interview_stage?: InterviewStage | null;
   module_session: InterviewModuleSession | null;
 }
 
@@ -488,6 +491,7 @@ export interface InterviewDetail {
   has_report: boolean;
   report_id: string | null;
   assessment_progress: AssessmentProgress | null;
+  interview_stage?: InterviewStage | null;
   module_session: InterviewModuleSession | null;
 }
 
@@ -509,6 +513,7 @@ export interface FinishInterviewResponse {
   report_id: string | null;
   summary: ReportSummary | null;
   assessment_progress: AssessmentProgress | null;
+  interview_stage?: InterviewStage | null;
   module_session: InterviewModuleSession | null;
 }
 
@@ -534,6 +539,7 @@ export interface InterviewReportStatusResponse {
   failure_reason?: string | null;
   diagnostics?: ReportProcessingDiagnostics | null;
   assessment_progress: AssessmentProgress | null;
+  interview_stage?: InterviewStage | null;
   module_session: InterviewModuleSession | null;
 }
 
@@ -563,10 +569,26 @@ export interface InterviewModuleSession {
   stage_count: number;
 }
 
+export interface InterviewStage {
+  phase_key: string;
+  phase_title: string;
+  slot_number: number;
+  slot_count: number;
+  competency_targets: string[];
+  resume_anchor: string | null;
+  verification_target: string | null;
+}
+
 export interface CodingTaskArtifact {
   interview_id: string;
   language: string | null;
   code: string;
+  updated_at: string | null;
+}
+
+export interface WrittenArtifact {
+  interview_id: string;
+  content: string;
   updated_at: string | null;
 }
 
@@ -811,6 +833,9 @@ export interface InterviewSummaryModel {
     signal: string;
     outcome: string;
     verification_target: string | null;
+    resume_anchor: string | null;
+    evidence_hint: string | null;
+    phase: string | null;
   }>;
   role: string;
   core_topics: number;
@@ -905,8 +930,10 @@ export interface AssessmentReport {
   summary_model: InterviewSummaryModel | null;
   module_session: ReportModuleSession | null;
   system_design_summary: SystemDesignSummary | null;
+  behavioral_interview_summary: BehavioralInterviewSummary | null;
   coding_task_summary: CodingTaskSummary | null;
   sql_live_summary: SqlLiveSummary | null;
+  written_communication_summary: WrittenCommunicationSummary | null;
 }
 
 export interface ReportModuleSession {
@@ -947,6 +974,38 @@ export interface SystemDesignSummary {
   overall_score: number | null;
   rubric_scores: SystemDesignRubricScore[];
   stages: SystemDesignStageSummary[];
+}
+
+export interface BehavioralInterviewStageSummary {
+  stage_key: string;
+  stage_title: string;
+  question_numbers: number[];
+  average_answer_quality: number | null;
+  stage_score: number | null;
+  evidence_items: string[];
+}
+
+export interface BehavioralInterviewRubricScore {
+  rubric_key: string;
+  score: number | null;
+}
+
+export interface BehavioralInterviewSummary {
+  module_title: string | null;
+  scenario_id: string | null;
+  scenario_title: string | null;
+  scenario_prompt: string | null;
+  stage_count: number;
+  overall_score: number | null;
+  ownership_score: number | null;
+  collaboration_score: number | null;
+  leadership_score: number | null;
+  reflection_score: number | null;
+  rubric_scores: BehavioralInterviewRubricScore[];
+  stages: BehavioralInterviewStageSummary[];
+  strengths: string[];
+  gaps: string[];
+  next_steps: string[];
 }
 
 export interface CodingTaskStageSummary {
@@ -1024,4 +1083,38 @@ export interface SqlLiveSummary {
   stages: SqlLiveStageSummary[];
   query_excerpt: string | null;
   has_query_submission: boolean;
+}
+
+export interface WrittenCommunicationStageSummary {
+  stage_key: string;
+  stage_title: string;
+  question_numbers: number[];
+  average_answer_quality: number | null;
+  stage_score: number | null;
+  evidence_items: string[];
+}
+
+export interface WrittenCommunicationRubricScore {
+  rubric_key: string;
+  score: number | null;
+}
+
+export interface WrittenCommunicationSummary {
+  module_title: string | null;
+  scenario_id: string | null;
+  scenario_title: string | null;
+  scenario_prompt: string | null;
+  workspace_hint: string | null;
+  stage_count: number;
+  overall_score: number | null;
+  clarity_score: number | null;
+  structure_score: number | null;
+  audience_awareness_score: number | null;
+  rubric_scores: WrittenCommunicationRubricScore[];
+  stages: WrittenCommunicationStageSummary[];
+  writing_excerpt: string | null;
+  has_draft_submission: boolean;
+  strengths: string[];
+  gaps: string[];
+  next_steps: string[];
 }

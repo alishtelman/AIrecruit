@@ -643,6 +643,9 @@ async def test_interview_starts_with_self_intro_and_moves_to_resume_followup(
     assert start_resp.status_code == 201, start_resp.text
     start_data = start_resp.json()
     assert "расскажите о себе" in start_data["current_question"].lower()
+    assert start_data["interview_stage"]["phase_key"] == "intro"
+    assert start_data["interview_stage"]["slot_number"] == 1
+    assert start_data["interview_stage"]["slot_count"] >= 3
 
     interview_id = start_data["interview_id"]
     next_resp = await client.post(
@@ -660,6 +663,9 @@ async def test_interview_starts_with_self_intro_and_moves_to_resume_followup(
     assert next_data["question_count"] == 2
     assert next_data["is_followup"] is False
     assert next_data["question_type"] == "main"
+    assert next_data["interview_stage"]["phase_key"] == "resume_followup"
+    assert next_data["interview_stage"]["slot_number"] == 2
+    assert next_data["interview_stage"]["resume_anchor"]
     assert any(
         token in (next_data["current_question"] or "").lower()
         for token in ("в резюме", "какую роль", "самое сложное техническое решение")

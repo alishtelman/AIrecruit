@@ -62,6 +62,12 @@ _QUESTION_WORD_HINTS = (
 )
 
 
+def _localized_role_label(target_role: str, language: str) -> str:
+    if language == "en":
+        return target_role.replace("_", " ")
+    return _ROLE_LABELS.get(target_role, target_role.replace("_", " "))
+
+
 @dataclass
 class InterviewContext:
     target_role: str
@@ -637,8 +643,9 @@ def _normalize_question_output(raw: str, ctx: InterviewContext) -> str:
 
 
 def _resume_anchored_first_question(ctx: InterviewContext) -> str:
-    """Deterministic first question for self-intro plus resume context."""
+    """Deterministic opening question focused on resume fit for the target role."""
     anchor = ctx.resume_anchor
+    role_label = _localized_role_label(ctx.target_role, ctx.language)
     if ctx.resume_text:
         if not anchor:
             for raw_line in ctx.resume_text.splitlines():
@@ -658,20 +665,18 @@ def _resume_anchored_first_question(ctx: InterviewContext) -> str:
     if ctx.language == "en":
         if anchor:
             return _trim_question(
-                f"To start, briefly tell me about yourself, your experience, and how '{anchor}' reflects your background: "
-                "what was your role and what did you own?"
+                f"For this {role_label} role, why is '{anchor}' relevant to the position, what did you personally own there, and where is your experience still thinner?"
             )
         return _trim_question(
-            "Based on your resume, briefly tell me about yourself, your experience, and the kind of work that best represents your background?"
+            f"For this {role_label} role, which parts of your resume best match the position, what did you personally own, and where is your experience still thinner?"
         )
 
     if anchor:
         return _trim_question(
-            f"Для начала кратко расскажите о себе, своём опыте и о том, как опыт «{anchor}» вас лучше всего характеризует: "
-            "какая у вас была роль и за что вы отвечали?"
+            f"По резюме и роли «{role_label}»: почему опыт «{anchor}» релевантен этой позиции, за что вы там отвечали и где опыта пока меньше?"
         )
-    return (
-        "Для начала кратко расскажите о себе, своём опыте и о том, какой тип задач лучше всего отражает ваш профессиональный путь."
+    return _trim_question(
+        f"По резюме и роли «{role_label}»: какие части вашего опыта лучше всего подходят под позицию, за что вы лично отвечали и где опыта пока меньше?"
     )
 
 
@@ -698,9 +703,38 @@ def _resume_anchored_main_question(ctx: InterviewContext) -> str | None:
 
 
 def _behavioral_closing_question(ctx: InterviewContext) -> str:
+    competency_targets = [item.lower() for item in (ctx.competency_targets or []) if item]
+    leadership_focus = any(token in name for name in competency_targets for token in ("leadership", "influence"))
+    collaboration_focus = any(token in name for name in competency_targets for token in ("collaboration", "partnership", "code review"))
+    ownership_focus = any(token in name for name in competency_targets for token in ("ownership", "growth mindset"))
+
     if ctx.language == "en":
+        if leadership_focus:
+            return _trim_question(
+                "To close, tell me about a high-pressure situation where you had to lead or influence others: how did you communicate, align the team, and handle the pressure?"
+            )
+        if collaboration_focus:
+            return _trim_question(
+                "To close, tell me about a difficult cross-team situation: how did you communicate, resolve tension, and keep the team moving under pressure?"
+            )
+        if ownership_focus:
+            return _trim_question(
+                "To close, tell me about a difficult work situation where you had to take ownership: how did you communicate, handle pressure, and drive the outcome?"
+            )
         return _trim_question(
             "To close, tell me about a difficult work situation: how you communicated, handled pressure, and influenced the outcome for the team."
+        )
+    if leadership_focus:
+        return _trim_question(
+            "В завершение расскажите о напряжённой рабочей ситуации, где нужно было вести за собой или влиять на других: как вы коммуницировали, выравнивали команду и справлялись с давлением?"
+        )
+    if collaboration_focus:
+        return _trim_question(
+            "В завершение расскажите о сложной кросс-командной ситуации: как вы коммуницировали, снимали напряжение и помогали команде двигаться дальше под давлением?"
+        )
+    if ownership_focus:
+        return _trim_question(
+            "В завершение расскажите о сложной рабочей ситуации, где вам пришлось взять ownership: как вы коммуницировали, справлялись со стрессом и довели дело до результата?"
         )
     return _trim_question(
         "В завершение расскажите о сложной рабочей ситуации: как вы коммуницировали, справлялись со стрессом и повлияли на итог для команды?"
@@ -762,6 +796,10 @@ def _fallback_question_for_context(ctx: InterviewContext, *, prefer_secondary_ma
             system_design_depth = _system_design_depth_question(ctx)
             if system_design_depth:
                 return system_design_depth
+        if ctx.module_type == "behavioral_interview":
+            behavioral_depth = _behavioral_interview_depth_question(ctx)
+            if behavioral_depth:
+                return behavioral_depth
         if ctx.module_type == "coding_task":
             coding_task_depth = _coding_task_depth_question(ctx)
             if coding_task_depth:
@@ -770,11 +808,19 @@ def _fallback_question_for_context(ctx: InterviewContext, *, prefer_secondary_ma
             sql_live_depth = _sql_live_depth_question(ctx)
             if sql_live_depth:
                 return sql_live_depth
+        if ctx.module_type == "written_communication":
+            written_depth = _written_communication_depth_question(ctx)
+            if written_depth:
+                return written_depth
         return _trim_question(get_depth_escalation_question(ctx.language))
     if ctx.module_type == "system_design":
         system_design_main = _system_design_main_question(ctx)
         if system_design_main:
             return system_design_main
+    if ctx.module_type == "behavioral_interview":
+        behavioral_main = _behavioral_interview_main_question(ctx)
+        if behavioral_main:
+            return behavioral_main
     if ctx.module_type == "coding_task":
         coding_task_main = _coding_task_main_question(ctx)
         if coding_task_main:
@@ -783,6 +829,10 @@ def _fallback_question_for_context(ctx: InterviewContext, *, prefer_secondary_ma
         sql_live_main = _sql_live_main_question(ctx)
         if sql_live_main:
             return sql_live_main
+    if ctx.module_type == "written_communication":
+        written_main = _written_communication_main_question(ctx)
+        if written_main:
+            return written_main
 
     anchored = _competency_anchored_main_question(ctx, preference_index=1 if prefer_secondary_main_topic else 0)
     if anchored:
@@ -863,6 +913,88 @@ def _system_design_depth_question(ctx: InterviewContext) -> str | None:
                 f'Which part of your design for "{scenario_title}" would you revisit first after launch, and why?'
                 if ctx.language == "en"
                 else f'Какую часть вашего дизайна для «{scenario_title}» вы бы пересмотрели первой после запуска и почему?'
+            )
+    return _trim_question(question)
+
+
+def _behavioral_interview_main_question(ctx: InterviewContext) -> str | None:
+    if ctx.module_type != "behavioral_interview":
+        return None
+
+    scenario_title = ctx.module_scenario_title or (
+        "the behavioral scenario" if ctx.language == "en" else "behavioral-сценарий"
+    )
+    match ctx.module_stage_key:
+        case "ownership":
+            question = (
+                f'For "{scenario_title}", tell me about a real situation where the scope or expectations were unclear but you still had to take ownership. What did you decide and why?'
+                if ctx.language == "en"
+                else f'Для сценария «{scenario_title}» расскажите о реальной ситуации, где scope или ожидания были неясны, но вам всё равно пришлось взять ownership. Что вы решили и почему?'
+            )
+        case "collaboration":
+            question = (
+                f'In "{scenario_title}", tell me about a difficult situation with another team or stakeholder. Where did the tension come from and how did you handle it?'
+                if ctx.language == "en"
+                else f'В контексте «{scenario_title}» расскажите о сложной ситуации с другой командой или стейкхолдером. Откуда возникло напряжение и как вы с ним работали?'
+            )
+        case "leadership":
+            question = (
+                f'For "{scenario_title}", tell me about a time you had to influence others or create clarity under pressure. How did you move people toward a decision?'
+                if ctx.language == "en"
+                else f'Для сценария «{scenario_title}» расскажите о моменте, когда вам пришлось влиять на других или наводить ясность под давлением. Как вы сдвинули людей к решению?'
+            )
+        case "reflection":
+            question = (
+                f'Looking back on "{scenario_title}", tell me about a mistake, a tough piece of feedback, or a call you would handle differently today. What changed after that?'
+                if ctx.language == "en"
+                else f'Оглядываясь на «{scenario_title}», расскажите об ошибке, жёсткой обратной связи или решении, которое сегодня вы бы провели иначе. Что после этого изменилось?'
+            )
+        case _:
+            question = (
+                f'Walk me through a real behavioral case from "{scenario_title}" with concrete actions, trade-offs, and outcome.'
+                if ctx.language == "en"
+                else f'Разберите реальный behavioral-кейс из «{scenario_title}» с конкретными действиями, trade-offs и итогом.'
+            )
+    return _trim_question(question)
+
+
+def _behavioral_interview_depth_question(ctx: InterviewContext) -> str | None:
+    if ctx.module_type != "behavioral_interview":
+        return None
+
+    scenario_title = ctx.module_scenario_title or (
+        "the behavioral scenario" if ctx.language == "en" else "этот behavioral-сценарий"
+    )
+    match ctx.module_stage_key:
+        case "ownership":
+            question = (
+                f'In "{scenario_title}", what risk did you personally own, what alternatives did you reject, and what signal told you your decision was working?'
+                if ctx.language == "en"
+                else f'В рамках «{scenario_title}» какой риск вы лично взяли на себя, какие альтернативы отвергли и по какому сигналу поняли, что решение работает?'
+            )
+        case "collaboration":
+            question = (
+                f'In "{scenario_title}", what exactly did you say or do to reduce tension, and how did you know the other side was actually aligned?'
+                if ctx.language == "en"
+                else f'В рамках «{scenario_title}» что именно вы сказали или сделали, чтобы снять напряжение, и как поняли, что другая сторона действительно выровнялась?'
+            )
+        case "leadership":
+            question = (
+                f'In "{scenario_title}", where did people initially resist you, and what changed their mind without you relying only on authority?'
+                if ctx.language == "en"
+                else f'В рамках «{scenario_title}» где люди сначала сопротивлялись, и что изменило их позицию без опоры только на формальную власть?'
+            )
+        case "reflection":
+            question = (
+                f'After "{scenario_title}", what specific behavior, habit, or decision rule changed in how you work, and where have you applied it since?'
+                if ctx.language == "en"
+                else f'После «{scenario_title}» какое конкретное поведение, привычка или decision rule изменились у вас в работе и где вы с тех пор это применяли?'
+            )
+        case _:
+            question = (
+                f'What is the hardest judgment call inside "{scenario_title}", and what does it reveal about how you work with people?'
+                if ctx.language == "en"
+                else f'Какой самый сложный judgment call внутри «{scenario_title}» и что он показывает о вашем стиле работы с людьми?'
             )
     return _trim_question(question)
 
@@ -1007,6 +1139,76 @@ def _sql_live_depth_question(ctx: InterviewContext) -> str | None:
     return _trim_question(question)
 
 
+def _written_communication_main_question(ctx: InterviewContext) -> str | None:
+    if ctx.module_type != "written_communication":
+        return None
+
+    scenario_title = ctx.module_scenario_title or (
+        "the written communication task" if ctx.language == "en" else "задачу на письменную коммуникацию"
+    )
+    match ctx.module_stage_key:
+        case "brief_alignment":
+            question = (
+                f'For the writing task "{scenario_title}", who is the audience, what decision or alignment do you need, and what must be explicit from the start?'
+                if ctx.language == "en"
+                else f'Для письменной задачи «{scenario_title}» кто аудитория, какого решения или выравнивания вы добиваетесь и что должно быть явно сказано с самого начала?'
+            )
+        case "drafting":
+            question = (
+                f'Please draft the core message for "{scenario_title}" in the workspace and explain how you are structuring it for this audience.'
+                if ctx.language == "en"
+                else f'Пожалуйста, соберите основной текст для «{scenario_title}» в workspace и объясните, как вы структурируете его под эту аудиторию.'
+            )
+        case "editing":
+            question = (
+                f'How would you revise your draft for "{scenario_title}" so the tone stays calm, the ask is clear, and the next steps are hard to miss?'
+                if ctx.language == "en"
+                else f'Как бы вы доработали черновик для «{scenario_title}», чтобы тон оставался спокойным, запрос был ясным, а следующие шаги было сложно пропустить?'
+            )
+        case _:
+            question = (
+                f'Walk me through how you would write "{scenario_title}" for a mixed audience and what structure you would choose.'
+                if ctx.language == "en"
+                else f'Проведите меня по тому, как вы бы написали «{scenario_title}» для смешанной аудитории и какую структуру выбрали бы.'
+            )
+    return _trim_question(question)
+
+
+def _written_communication_depth_question(ctx: InterviewContext) -> str | None:
+    if ctx.module_type != "written_communication":
+        return None
+
+    scenario_title = ctx.module_scenario_title or (
+        "the written communication task" if ctx.language == "en" else "эту письменную задачу"
+    )
+    match ctx.module_stage_key:
+        case "brief_alignment":
+            question = (
+                f'What misunderstanding is most likely in "{scenario_title}", and how would you prevent it in the opening lines?'
+                if ctx.language == "en"
+                else f'Какое недопонимание в задаче «{scenario_title}» наиболее вероятно и как вы снимете его уже в первых строках?'
+            )
+        case "drafting":
+            question = (
+                f'Which paragraph or section in your draft for "{scenario_title}" carries the real decision, and why is it placed there?'
+                if ctx.language == "en"
+                else f'Какой абзац или блок в вашем тексте для «{scenario_title}» несёт главное решение и почему вы расположили его именно там?'
+            )
+        case "editing":
+            question = (
+                f'Which sentence or section in "{scenario_title}" would you cut or rewrite first to improve clarity for the audience?'
+                if ctx.language == "en"
+                else f'Какое предложение или секцию в «{scenario_title}» вы бы сократили или переписали первым делом, чтобы повысить ясность для аудитории?'
+            )
+        case _:
+            question = (
+                f'What part of your written approach to "{scenario_title}" is still weakest, and how would you make it more actionable?'
+                if ctx.language == "en"
+                else f'Какая часть вашего письменного подхода к «{scenario_title}» пока самая слабая и как вы сделали бы её более actionable?'
+            )
+    return _trim_question(question)
+
+
 # ---------------------------------------------------------------------------
 # LLM implementation (Groq)
 # ---------------------------------------------------------------------------
@@ -1080,6 +1282,21 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
             prompt += f"Текущий этап: {ctx.module_stage_title}\n"
         if ctx.module_stage_prompt:
             prompt += f"Фокус этапа: {ctx.module_stage_prompt}\n"
+    if ctx.module_type == "behavioral_interview":
+        prompt += (
+            "\n## Режим модуля: Behavioral Interview\n"
+            "Ты ведёшь отдельный behavioral interview модуль. Держись одного сценарного контекста до конца модуля.\n"
+            "Не возвращайся к resume-driven техническим вопросам и не соскальзывай в общие карьерные рассуждения.\n"
+            "Требуй конкретный кейс, конкретные действия кандидата, реальные trade-offs, напряжение между сторонами и наблюдаемый результат.\n"
+        )
+        if ctx.module_scenario_title:
+            prompt += f"Behavioral-сценарий: {ctx.module_scenario_title}\n"
+        if ctx.module_scenario_prompt:
+            prompt += f"Контекст сценария: {ctx.module_scenario_prompt}\n"
+        if ctx.module_stage_title:
+            prompt += f"Текущий этап: {ctx.module_stage_title}\n"
+        if ctx.module_stage_prompt:
+            prompt += f"Фокус этапа: {ctx.module_stage_prompt}\n"
     if ctx.module_type == "coding_task":
         prompt += (
             "\n## Режим модуля: Coding Task\n"
@@ -1102,6 +1319,21 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
             prompt += f"SQL-задача: {ctx.module_scenario_title}\n"
         if ctx.module_scenario_prompt:
             prompt += f"Описание SQL-задачи: {ctx.module_scenario_prompt}\n"
+        if ctx.module_stage_title:
+            prompt += f"Текущий этап: {ctx.module_stage_title}\n"
+        if ctx.module_stage_prompt:
+            prompt += f"Фокус этапа: {ctx.module_stage_prompt}\n"
+    if ctx.module_type == "written_communication":
+        prompt += (
+            "\n## Режим модуля: Written Communication\n"
+            "Ты ведёшь интервью по письменной коммуникации. Кандидат может собирать сам текст в workspace и параллельно объяснять свои решения в чате.\n"
+            "Держись одного письменного сценария до конца модуля. Не переключайся обратно на resume-driven вопросы и не уводи разговор в общие карьерные темы.\n"
+            "Если кандидат уже написал черновик, проси объяснить структуру, адресность, ясность формулировок и то, как он редактирует текст под аудиторию.\n"
+        )
+        if ctx.module_scenario_title:
+            prompt += f"Письменная задача: {ctx.module_scenario_title}\n"
+        if ctx.module_scenario_prompt:
+            prompt += f"Описание задачи: {ctx.module_scenario_prompt}\n"
         if ctx.module_stage_title:
             prompt += f"Текущий этап: {ctx.module_stage_title}\n"
         if ctx.module_stage_prompt:
@@ -1386,6 +1618,10 @@ class LLMInterviewer:
             system_design_main = _system_design_main_question(ctx)
             if system_design_main:
                 return system_design_main
+        if ctx.module_type == "behavioral_interview" and ctx.question_type == "main":
+            behavioral_main = _behavioral_interview_main_question(ctx)
+            if behavioral_main:
+                return behavioral_main
         if ctx.module_type == "coding_task" and ctx.question_type == "main":
             coding_task_main = _coding_task_main_question(ctx)
             if coding_task_main:
@@ -1394,6 +1630,10 @@ class LLMInterviewer:
             sql_live_main = _sql_live_main_question(ctx)
             if sql_live_main:
                 return sql_live_main
+        if ctx.module_type == "written_communication" and ctx.question_type == "main":
+            written_main = _written_communication_main_question(ctx)
+            if written_main:
+                return written_main
         if ctx.topic_phase == "intro" and not ctx.is_followup_mode:
             return _resume_anchored_first_question(ctx)
         if ctx.topic_phase == "behavioral_closing" and ctx.question_type == "main":
@@ -1571,6 +1811,10 @@ class MockInterviewer:
                     system_design_depth = _system_design_depth_question(ctx)
                     if system_design_depth:
                         return system_design_depth
+                if ctx.module_type == "behavioral_interview":
+                    behavioral_depth = _behavioral_interview_depth_question(ctx)
+                    if behavioral_depth:
+                        return behavioral_depth
                 if ctx.module_type == "coding_task":
                     coding_task_depth = _coding_task_depth_question(ctx)
                     if coding_task_depth:
@@ -1579,12 +1823,20 @@ class MockInterviewer:
                     sql_live_depth = _sql_live_depth_question(ctx)
                     if sql_live_depth:
                         return sql_live_depth
+                if ctx.module_type == "written_communication":
+                    written_depth = _written_communication_depth_question(ctx)
+                    if written_depth:
+                        return written_depth
                 return get_depth_escalation_question(ctx.language)
             case _:
                 if ctx.module_type == "system_design":
                     system_design_main = _system_design_main_question(ctx)
                     if system_design_main:
                         return system_design_main
+                if ctx.module_type == "behavioral_interview":
+                    behavioral_main = _behavioral_interview_main_question(ctx)
+                    if behavioral_main:
+                        return behavioral_main
                 if ctx.module_type == "coding_task":
                     coding_task_main = _coding_task_main_question(ctx)
                     if coding_task_main:
@@ -1593,6 +1845,10 @@ class MockInterviewer:
                     sql_live_main = _sql_live_main_question(ctx)
                     if sql_live_main:
                         return sql_live_main
+                if ctx.module_type == "written_communication":
+                    written_main = _written_communication_main_question(ctx)
+                    if written_main:
+                        return written_main
                 if ctx.topic_phase == "intro":
                     return _resume_anchored_first_question(ctx)
                 if ctx.topic_phase == "behavioral_closing":

@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useParams } from "next/navigation";
 import { useRouter } from "@/i18n/navigation";
 import { CompanyWorkspaceHeader } from "@/components/company-workspace-header";
 import { useAuth } from "@/hooks/useAuth";
 import { companyApi } from "@/lib/api";
-import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ProctoringTimeline, ProctoringTimelineEvent, SystemDesignStageSummary, SystemDesignRubricScore, CodingTaskStageSummary, CodingTaskRubricScore, CodingTaskCoverageCheck, SqlLiveStageSummary, SqlLiveRubricScore } from "@/lib/types";
+import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ProctoringTimeline, ProctoringTimelineEvent, SystemDesignStageSummary, SystemDesignRubricScore, BehavioralInterviewStageSummary, BehavioralInterviewRubricScore, CodingTaskStageSummary, CodingTaskRubricScore, CodingTaskCoverageCheck, SqlLiveStageSummary, SqlLiveRubricScore } from "@/lib/types";
 
 const RECOMMENDATION_CONFIG: Record<HiringRecommendation, { color: string; bg: string }> = {
   strong_yes: { color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
@@ -42,6 +42,7 @@ const TIMELINE_RISK_STYLES: Record<"low" | "medium" | "high", string> = {
 };
 
 export default function CompanyReportPage() {
+  const locale = useLocale();
   const t = useTranslations("report");
   const dashboardT = useTranslations("companyDashboard");
   const { id } = useParams<{ id: string }>();
@@ -111,8 +112,10 @@ export default function CompanyReportPage() {
 
         {report.summary_model && <InterviewSummaryPanel summaryModel={report.summary_model} />}
         {report.system_design_summary && <SystemDesignSummaryPanel summary={report.system_design_summary} />}
+        {report.behavioral_interview_summary && <BehavioralInterviewSummaryPanel summary={report.behavioral_interview_summary} />}
         {report.coding_task_summary && <CodingTaskSummaryPanel summary={report.coding_task_summary} />}
         {report.sql_live_summary && <SqlLiveSummaryPanel summary={report.sql_live_summary} />}
+        {report.written_communication_summary && <WrittenCommunicationSummaryPanel summary={report.written_communication_summary} />}
 
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
           <ScoreCard label={t("overallScore")} score={report.overall_score} highlight />
@@ -122,6 +125,8 @@ export default function CompanyReportPage() {
           <ScoreCard label={t("problemSolving")} score={report.problem_solving_score} />
           {report.response_consistency != null && <ScoreCard label={t("consistency")} score={report.response_consistency} />}
         </div>
+
+        <ConfidencePanel report={report} locale={locale} />
 
         {report.competency_scores && report.competency_scores.length > 0 && (
           <Section title={t("competencyHeatmap")} color="blue">
@@ -651,6 +656,255 @@ function SqlLiveRubricCard({ rubric }: { rubric: SqlLiveRubricScore }) {
   );
 }
 
+function WrittenCommunicationSummaryPanel({ summary }: { summary: NonNullable<AssessmentReport["written_communication_summary"]> }) {
+  const t = useTranslations("report");
+
+  return (
+    <div className="mb-6 rounded-2xl border border-sky-500/20 bg-sky-500/10 p-5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.24em] text-sky-300">{t("writtenCommunication.eyebrow")}</div>
+          <div className="text-sm font-semibold text-white">{summary.module_title || t("writtenCommunication.title")}</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full border border-sky-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
+            {t("writtenCommunication.stageCount", { count: summary.stage_count })}
+          </span>
+          {summary.overall_score != null && (
+            <span className="rounded-full border border-sky-400/20 bg-sky-950/40 px-3 py-1 text-xs font-semibold text-sky-200">
+              {t("writtenCommunication.overallScore")}: {summary.overall_score.toFixed(1)}/10
+            </span>
+          )}
+          {summary.clarity_score != null && (
+            <span className="rounded-full border border-emerald-400/20 bg-emerald-950/40 px-3 py-1 text-xs font-semibold text-emerald-200">
+              {t("writtenCommunication.clarityScore")}: {summary.clarity_score.toFixed(1)}/10
+            </span>
+          )}
+          {summary.structure_score != null && (
+            <span className="rounded-full border border-violet-400/20 bg-violet-950/40 px-3 py-1 text-xs font-semibold text-violet-200">
+              {t("writtenCommunication.structureScore")}: {summary.structure_score.toFixed(1)}/10
+            </span>
+          )}
+          {summary.audience_awareness_score != null && (
+            <span className="rounded-full border border-amber-400/20 bg-amber-950/40 px-3 py-1 text-xs font-semibold text-amber-200">
+              {t("writtenCommunication.audienceScore")}: {summary.audience_awareness_score.toFixed(1)}/10
+            </span>
+          )}
+        </div>
+      </div>
+
+      {summary.scenario_title && (
+        <div className="mb-3">
+          <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("writtenCommunication.task")}</div>
+          <div className="mt-1 text-sm font-medium text-white">{summary.scenario_title}</div>
+        </div>
+      )}
+      {summary.scenario_prompt && <p className="mb-4 text-sm leading-6 text-slate-300">{summary.scenario_prompt}</p>}
+      {summary.workspace_hint && <p className="mb-4 text-sm leading-6 text-slate-400">{summary.workspace_hint}</p>}
+
+      {summary.rubric_scores.length > 0 && (
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {summary.rubric_scores.map((rubric) => (
+            <WrittenCommunicationRubricCard key={rubric.rubric_key} rubric={rubric} />
+          ))}
+        </div>
+      )}
+
+      {(summary.strengths.length > 0 || summary.gaps.length > 0 || summary.next_steps.length > 0) && (
+        <div className="mb-4 grid gap-3 lg:grid-cols-3">
+          <CodingTaskInsightList title={t("writtenCommunication.strengths")} tone="emerald" items={summary.strengths} />
+          <CodingTaskInsightList title={t("writtenCommunication.gaps")} tone="amber" items={summary.gaps} />
+          <CodingTaskInsightList title={t("writtenCommunication.nextSteps")} tone="blue" items={summary.next_steps} />
+        </div>
+      )}
+
+      {summary.writing_excerpt && (
+        <div className="mb-4 rounded-xl border border-slate-700 bg-slate-950/70 p-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">{t("writtenCommunication.writingExcerpt")}</div>
+          <pre className="overflow-x-auto whitespace-pre-wrap text-sm leading-6 text-slate-200">{summary.writing_excerpt}</pre>
+        </div>
+      )}
+
+      <div className="grid gap-3 md:grid-cols-3">
+        {summary.stages.map((stage) => (
+          <WrittenCommunicationStageCard key={stage.stage_key} stage={stage} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WrittenCommunicationStageCard({ stage }: { stage: NonNullable<AssessmentReport["written_communication_summary"]>["stages"][number] }) {
+  const t = useTranslations("report");
+
+  return (
+    <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-sm font-semibold text-white">{stage.stage_title}</div>
+        <div className="text-right">
+          {stage.stage_score != null && (
+            <div className="text-sm font-bold text-sky-300">
+              {t("writtenCommunication.stageScore")}: {stage.stage_score.toFixed(1)}
+            </div>
+          )}
+          {stage.average_answer_quality != null && (
+            <div className="text-[11px] text-slate-500">
+              {t("writtenCommunication.answerQuality")}: {stage.average_answer_quality.toFixed(1)}
+            </div>
+          )}
+        </div>
+      </div>
+      {stage.question_numbers.length > 0 && (
+        <div className="mt-2 text-xs text-slate-500">
+          {t("writtenCommunication.questionsCovered", { count: stage.question_numbers.length })}: {stage.question_numbers.join(", ")}
+        </div>
+      )}
+      <div className="mt-3 space-y-2">
+        {stage.evidence_items.length > 0 ? stage.evidence_items.map((item, index) => (
+          <div key={index} className="text-sm leading-6 text-slate-300">
+            {item}
+          </div>
+        )) : (
+          <div className="text-sm text-slate-500">{t("writtenCommunication.noEvidence")}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WrittenCommunicationRubricCard({ rubric }: { rubric: NonNullable<AssessmentReport["written_communication_summary"]>["rubric_scores"][number] }) {
+  const t = useTranslations("report");
+
+  return (
+    <div className="rounded-xl border border-sky-500/15 bg-slate-900/60 px-3 py-3">
+      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+        {t(`writtenCommunication.rubrics.${rubric.rubric_key}`)}
+      </div>
+      <div className="mt-1 text-xl font-semibold text-white">
+        {rubric.score != null ? `${rubric.score.toFixed(1)}/10` : "—"}
+      </div>
+    </div>
+  );
+}
+
+function BehavioralInterviewSummaryPanel({ summary }: { summary: NonNullable<AssessmentReport["behavioral_interview_summary"]> }) {
+  const t = useTranslations("report");
+
+  return (
+    <div className="mb-6 rounded-2xl border border-orange-500/20 bg-orange-500/10 p-5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.24em] text-orange-300">{t("behavioralInterview.eyebrow")}</div>
+          <div className="text-sm font-semibold text-white">{summary.module_title || t("behavioralInterview.title")}</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full border border-orange-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
+            {t("behavioralInterview.stageCount", { count: summary.stage_count })}
+          </span>
+          {summary.overall_score != null && (
+            <span className="rounded-full border border-orange-400/20 bg-orange-950/40 px-3 py-1 text-xs font-semibold text-orange-200">
+              {t("behavioralInterview.overallScore")}: {summary.overall_score.toFixed(1)}/10
+            </span>
+          )}
+          {summary.ownership_score != null && (
+            <span className="rounded-full border border-emerald-400/20 bg-emerald-950/40 px-3 py-1 text-xs font-semibold text-emerald-200">
+              {t("behavioralInterview.ownershipScore")}: {summary.ownership_score.toFixed(1)}/10
+            </span>
+          )}
+          {summary.leadership_score != null && (
+            <span className="rounded-full border border-violet-400/20 bg-violet-950/40 px-3 py-1 text-xs font-semibold text-violet-200">
+              {t("behavioralInterview.leadershipScore")}: {summary.leadership_score.toFixed(1)}/10
+            </span>
+          )}
+        </div>
+      </div>
+
+      {summary.scenario_title && (
+        <div className="mb-3">
+          <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("behavioralInterview.scenario")}</div>
+          <div className="mt-1 text-sm font-medium text-white">{summary.scenario_title}</div>
+        </div>
+      )}
+      {summary.scenario_prompt && <p className="mb-4 text-sm leading-6 text-slate-300">{summary.scenario_prompt}</p>}
+
+      {summary.rubric_scores.length > 0 && (
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {summary.rubric_scores.map((rubric) => (
+            <BehavioralInterviewRubricCard key={rubric.rubric_key} rubric={rubric} />
+          ))}
+        </div>
+      )}
+
+      {(summary.strengths.length > 0 || summary.gaps.length > 0 || summary.next_steps.length > 0) && (
+        <div className="mb-4 grid gap-3 lg:grid-cols-3">
+          <CodingTaskInsightList title={t("behavioralInterview.strengths")} tone="emerald" items={summary.strengths} />
+          <CodingTaskInsightList title={t("behavioralInterview.gaps")} tone="amber" items={summary.gaps} />
+          <CodingTaskInsightList title={t("behavioralInterview.nextSteps")} tone="blue" items={summary.next_steps} />
+        </div>
+      )}
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {summary.stages.map((stage) => (
+          <BehavioralInterviewStageCard key={stage.stage_key} stage={stage} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BehavioralInterviewStageCard({ stage }: { stage: BehavioralInterviewStageSummary }) {
+  const t = useTranslations("report");
+
+  return (
+    <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-sm font-semibold text-white">{stage.stage_title}</div>
+        <div className="text-right">
+          {stage.stage_score != null && (
+            <div className="text-sm font-bold text-orange-300">
+              {t("behavioralInterview.stageScore")}: {stage.stage_score.toFixed(1)}
+            </div>
+          )}
+          {stage.average_answer_quality != null && (
+            <div className="text-[11px] text-slate-500">
+              {t("behavioralInterview.answerQuality")}: {stage.average_answer_quality.toFixed(1)}
+            </div>
+          )}
+        </div>
+      </div>
+      {stage.question_numbers.length > 0 && (
+        <div className="mt-2 text-xs text-slate-500">
+          {t("behavioralInterview.questionsCovered", { count: stage.question_numbers.length })}: {stage.question_numbers.join(", ")}
+        </div>
+      )}
+      <div className="mt-3 space-y-2">
+        {stage.evidence_items.length > 0 ? stage.evidence_items.map((item, index) => (
+          <div key={index} className="text-sm leading-6 text-slate-300">
+            {item}
+          </div>
+        )) : (
+          <div className="text-sm text-slate-500">{t("behavioralInterview.noEvidence")}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BehavioralInterviewRubricCard({ rubric }: { rubric: BehavioralInterviewRubricScore }) {
+  const t = useTranslations("report");
+
+  return (
+    <div className="rounded-xl border border-orange-500/15 bg-slate-900/60 px-3 py-3">
+      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+        {t(`behavioralInterview.rubrics.${rubric.rubric_key}`)}
+      </div>
+      <div className="mt-1 text-xl font-semibold text-white">
+        {rubric.score != null ? `${rubric.score.toFixed(1)}/10` : "—"}
+      </div>
+    </div>
+  );
+}
+
 function SystemDesignSummaryPanel({ summary }: { summary: NonNullable<AssessmentReport["system_design_summary"]> }) {
   const t = useTranslations("report");
 
@@ -784,6 +1038,161 @@ function InterviewSummaryPanel({ summaryModel }: { summaryModel: AssessmentRepor
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function localizeConfidenceReason(text: string, locale: string) {
+  if (locale !== "ru") return text;
+
+  const translations: Record<string, string> = {
+    "No per-question evidence extracted; confidence is limited.": "По ответам не удалось извлечь достаточно evidence, поэтому confidence ограничен.",
+    "Low concrete evidence coverage reduced confidence.": "Низкое покрытие конкретными evidence снизило confidence.",
+    "High evidence coverage increased confidence.": "Высокое покрытие evidence повысило confidence.",
+    "Multiple low-confidence answers reduced certainty.": "Несколько слабых ответов снизили уверенность в выводах.",
+    "Several answers contained high-confidence evidence.": "Несколько ответов содержали сильные evidence.",
+    "High AI-likelihood signal lowered confidence.": "Высокий AI-likelihood сигнал снизил confidence.",
+    "Low AI-likelihood signal improved confidence.": "Низкий AI-likelihood сигнал повысил confidence.",
+    "Confidence derived from mixed evidence quality signals.": "Confidence сформирован на основе смешанного качества evidence.",
+  };
+
+  return translations[text] ?? text;
+}
+
+function getEvidenceMetric(
+  evidenceCoverage: Record<string, unknown> | null | undefined,
+  key: string,
+): number | null {
+  const raw = evidenceCoverage?.[key];
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+}
+
+function formatPercent(value: number | null): string {
+  if (value == null) return "—";
+  return `${Math.round(value * 100)}%`;
+}
+
+function getConfidenceLevel(value: number | null): "high" | "medium" | "low" | null {
+  if (value == null) return null;
+  if (value >= 0.75) return "high";
+  if (value >= 0.5) return "medium";
+  return "low";
+}
+
+function ConfidencePanel({ report, locale }: { report: AssessmentReport; locale: string }) {
+  const t = useTranslations("report");
+  const overallConfidence = typeof report.overall_confidence === "number" ? report.overall_confidence : null;
+  const confidenceLevel = getConfidenceLevel(overallConfidence);
+  const competencyConfidence = Object.entries(report.competency_confidence ?? {})
+    .filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]))
+    .sort((a, b) => b[1] - a[1]);
+  const questionsAnalyzed = getEvidenceMetric(report.evidence_coverage, "questions_analyzed");
+  const highConfidenceQuestions = getEvidenceMetric(report.evidence_coverage, "high_confidence_questions");
+  const lowConfidenceQuestions = getEvidenceMetric(report.evidence_coverage, "low_confidence_questions");
+  const concreteEvidenceRatio = getEvidenceMetric(report.evidence_coverage, "concrete_evidence_ratio");
+  const avgAiLikelihood = getEvidenceMetric(report.evidence_coverage, "avg_ai_likelihood");
+  const confidenceReasons = (report.confidence_reasons ?? []).filter(Boolean);
+
+  const hasData = Boolean(
+    overallConfidence != null ||
+    report.decision_policy_version ||
+    competencyConfidence.length > 0 ||
+    questionsAnalyzed != null ||
+    highConfidenceQuestions != null ||
+    lowConfidenceQuestions != null ||
+    concreteEvidenceRatio != null ||
+    avgAiLikelihood != null ||
+    confidenceReasons.length > 0,
+  );
+
+  if (!hasData) return null;
+
+  const levelStyles: Record<NonNullable<typeof confidenceLevel>, string> = {
+    high: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+    medium: "border-yellow-500/30 bg-yellow-500/10 text-yellow-200",
+    low: "border-rose-500/30 bg-rose-500/10 text-rose-200",
+  };
+
+  return (
+    <div className="mb-6 rounded-2xl border border-sky-500/20 bg-sky-500/10 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.24em] text-sky-300">{t("confidence.eyebrow")}</div>
+          <div className="text-sm font-semibold text-white">{t("confidence.title")}</div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          {confidenceLevel && (
+            <span className={`rounded-full border px-3 py-1 ${levelStyles[confidenceLevel]}`}>
+              {t(`confidence.levels.${confidenceLevel}`)}
+            </span>
+          )}
+          <span className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-slate-300">
+            {t("confidence.policyVersion")}: {report.decision_policy_version ?? t("confidence.notAvailable")}
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <ConfidenceStatCard label={t("confidence.overall")} value={formatPercent(overallConfidence)} highlight />
+        <ConfidenceStatCard label={t("confidence.questionsAnalyzed")} value={questionsAnalyzed != null ? String(questionsAnalyzed) : "—"} />
+        <ConfidenceStatCard label={t("confidence.highConfidenceQuestions")} value={highConfidenceQuestions != null ? String(highConfidenceQuestions) : "—"} />
+        <ConfidenceStatCard label={t("confidence.lowConfidenceQuestions")} value={lowConfidenceQuestions != null ? String(lowConfidenceQuestions) : "—"} />
+        <ConfidenceStatCard label={t("confidence.concreteEvidenceRatio")} value={formatPercent(concreteEvidenceRatio)} />
+      </div>
+
+      <div className="mt-3">
+        <ConfidenceStatCard label={t("confidence.avgAiLikelihood")} value={formatPercent(avgAiLikelihood)} />
+      </div>
+
+      {confidenceReasons.length > 0 && (
+        <div className="mt-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.18em] text-sky-300">{t("confidence.reasons")}</div>
+          <div className="space-y-2">
+            {confidenceReasons.map((reason) => (
+              <div key={reason} className="flex gap-2 rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-slate-300">
+                <span className="mt-1 shrink-0 text-sky-300">•</span>
+                <span>{localizeConfidenceReason(reason, locale)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {competencyConfidence.length > 0 && (
+        <div className="mt-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.18em] text-sky-300">{t("confidence.competency")}</div>
+          <div className="grid gap-2 md:grid-cols-2">
+            {competencyConfidence.map(([name, value]) => (
+              <div key={name} className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm text-white">{name}</div>
+                  <div className="text-xs font-semibold text-sky-300">{formatPercent(value)}</div>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-700">
+                  <div className="h-full rounded-full bg-sky-400" style={{ width: `${Math.round(value * 100)}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConfidenceStatCard({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div className={`rounded-xl border px-3 py-3 ${highlight ? "border-sky-400/30 bg-sky-950/40" : "border-slate-700 bg-slate-900/60"}`}>
+      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{label}</div>
+      <div className={`mt-1 text-xl font-semibold ${highlight ? "text-sky-200" : "text-white"}`}>{value}</div>
     </div>
   );
 }

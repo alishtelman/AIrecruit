@@ -2,7 +2,7 @@
 
 AIRecruit is a FastAPI + Next.js recruiting platform where candidates pass structured AI interviews and companies work with scored, replayable interview evidence.
 
-## What Changed Recently (March 2026)
+## What Changed Recently (March-April 2026)
 
 - Adaptive interview engine with per-topic follow-ups, claim verification, and depth escalation.
 - Interview runtime state persisted in DB (`followup_depth`, `interview_state`) to avoid repeated generic questioning.
@@ -11,6 +11,13 @@ AIRecruit is a FastAPI + Next.js recruiting platform where candidates pass struc
 - Candidate privacy model expanded (`private`, `marketplace`, `direct_link`, `request_only`) with access request approvals.
 - Frontend internationalization added with `next-intl` (`en` + `ru`) and unified workspace UI refresh.
 - Voice stack stabilized: Groq core AI, optional ElevenLabs TTS provider with backend fallback chain.
+- Company assessment campaigns now support ordered `module_plan` flows with adaptive interview plus staged `system_design`, `coding_task`, and `sql_live` modules.
+- Invite landing pages now expose branding, current-module preview metadata, and resume/start or resume-in-progress behavior for internal and external campaigns.
+- Role-aware task profiles now drive coding task and SQL live modules via scenario title, stack focus, preferred language, and workspace hints.
+- Coding task and SQL live runtimes persist draft workspace artifacts and feed module-aware summaries into the final report payload.
+- Company settings now expose AI workspace controls for proctoring policy plus interviewer and assessor model preferences.
+- Company report view can now surface proctoring timeline evidence alongside replayable interview content.
+- A separate platform admin workspace landed on `origin/main`; verified notes, routes, and bootstrap details live in [`docs/platform-admin.md`](docs/platform-admin.md).
 
 ---
 
@@ -19,10 +26,12 @@ AIRecruit is a FastAPI + Next.js recruiting platform where candidates pass struc
 ### Candidate side
 
 1. Register/login, upload resume, manage salary and privacy visibility.
-2. Start AI interview (role + optional template + language).
+2. Start direct AI interviews or resume company invite flows for internal/external assessment campaigns.
 3. Interview flow supports auto-start screen/camera/mic capture attempts, persistent camera self-preview, voice input, and TTS playback.
-4. Receive structured report with competency scores, confidence, and skill tags.
-5. Publish profile via marketplace/direct link or require explicit company approval.
+4. Complete adaptive interview plus staged module flows such as system design, coding task, and SQL live.
+5. Use saved task workspaces for coding and SQL modules while keeping reasoning and trade-offs in the answer stream.
+6. Receive structured reports with competency scores, confidence metadata, skill tags, and module-specific summaries.
+7. Publish profile via marketplace/direct link or require explicit company approval.
 
 ### Company side
 
@@ -31,7 +40,18 @@ AIRecruit is a FastAPI + Next.js recruiting platform where candidates pass struc
 3. Access report + interview replay within access scope/privacy rules.
 4. Track outcomes and analytics (overview, funnel, salary).
 5. Invite members with roles (`admin`, `recruiter`, `viewer`).
-6. Run internal/external assessment campaigns.
+6. Run internal/external assessment campaigns with branding, deadlines, expiry, and ordered module plans.
+7. Attach role-aware coding task / SQL live task profiles and preview them before sending invite links.
+8. Review proctoring timeline evidence and manage workspace-level AI runtime preferences.
+
+### Platform admin side
+
+Verified on `origin/main` in [`docs/platform-admin.md`](docs/platform-admin.md):
+
+1. Sign in as `platform_admin` through `/admin/login`.
+2. Open `/admin/dashboard` for platform-wide metrics across users, companies, interviews, and reports.
+3. Inspect runtime flags such as environment, mock-AI mode, rate limiting, and platform-admin bootstrap status.
+4. Review recent users, companies, interviews, and reports from a single cross-company workspace.
 
 ---
 
@@ -73,6 +93,16 @@ frontend/src/
 frontend/messages/
   en.json
   ru.json
+
+docs/
+  admin-overview.md       verified contract for /admin/dashboard and /api/v1/admin/overview
+  access-roles.md         role matrix across candidate, company, and platform scopes
+  assessment-campaigns.md  modular assessment flow, task profiles, AI settings
+  platform-admin.md        verified platform admin workspace note for origin/main
+  platform-admin-operator-runbook.md safe local sync and smoke-check for platform admin
+  runtime-config-matrix.md runtime flags across local/test vs production-like modes
+  workspace-routes.md      frontend route families across candidate, company, invite, and admin
+  prd/                     roadmap/backlog artifacts
 ```
 
 ---
@@ -97,6 +127,21 @@ Interview flow is no longer a flat “8 independent turns.”
 
 ---
 
+## Modular Assessment Campaigns
+
+Assessment campaigns now extend the interview engine into ordered, role-aware module plans.
+
+- `company_assessments.module_plan` stores the ordered flow, while `current_module_index` tracks which module is active.
+- The first module must currently be `adaptive_interview`; after that the runtime can continue with `system_design`, `coding_task`, or `sql_live`.
+- `coding_task` and `sql_live` modules carry scenario metadata such as `scenario_id`, `scenario_title`, `stack_focus`, `preferred_language`, and `workspace_hint`.
+- Candidate invite pages expose `current_module_preview`, `active_interview_id`, and `can_start_current_module` so the same link can start or resume a campaign safely.
+- Candidate interview responses now expose `module_session`, and final report payloads can include `system_design_summary`, `coding_task_summary`, and `sql_live_summary`.
+- Task modules persist draft workspace artifacts via dedicated interview endpoints, so the company-side report can include implementation/query evidence.
+
+Detailed operational notes and example payloads live in [`docs/assessment-campaigns.md`](docs/assessment-campaigns.md).
+
+---
+
 ## Key Database Notes
 
 Main entities:
@@ -105,13 +150,15 @@ Main entities:
 - `resumes`, `interviews`, `interview_messages`, `assessment_reports`
 - `company_assessments`, `interview_templates`
 - collaboration/marketplace entities (shortlists, notes, activities, access requests, outcomes)
+- assessment module state via `company_assessments.module_plan` and `company_assessments.current_module_index`
 
 Recent interview-state fields:
 
 - `interviews.followup_depth` (int)
 - `interviews.interview_state` (json)
+- task-module workspace artifacts and module context are persisted inside `interviews.interview_state`
 
-Assessment report includes confidence + policy metadata (`overall_confidence`, `competency_confidence`, `decision_policy_version`, etc.).
+Assessment report includes confidence + policy metadata (`overall_confidence`, `competency_confidence`, `decision_policy_version`, etc.) and can now include `module_session`, `system_design_summary`, `coding_task_summary`, and `sql_live_summary`.
 
 ---
 
@@ -154,17 +201,40 @@ Interactive docs: `http://localhost:8001/docs`
 - `POST /interviews/{interview_id}/message`
 - `POST /interviews/{interview_id}/signals`
 - `POST /interviews/{interview_id}/recording`
+- `GET /interviews/{interview_id}/coding-artifact`
+- `PUT /interviews/{interview_id}/coding-artifact`
 - `POST /interviews/{interview_id}/finish`
 - `GET /interviews/{interview_id}`
+- `GET /interviews/{interview_id}/report-status`
+- `POST /interviews/{interview_id}/report-retry`
 
 `SendMessageResponse` now includes:
 
 - `is_followup: bool`
 - `question_type: str`
+- `module_session: InterviewModuleSession | null`
+
+`InterviewDetail`, `FinishInterviewResponse`, and `InterviewReportStatusResponse` also expose:
+
+- `assessment_progress`
+- `module_session`
 
 ### Reports
 
 - `GET /reports/{report_id}` (candidate scope)
+
+Candidate/company report payloads can also include:
+
+- `module_session`
+- `system_design_summary`
+- `coding_task_summary`
+- `sql_live_summary`
+
+### Platform admin
+
+Verified on `origin/main` in [`docs/platform-admin.md`](docs/platform-admin.md):
+
+- `GET /admin/overview`
 
 ### Company workspace
 
@@ -173,7 +243,10 @@ Interactive docs: `http://localhost:8001/docs`
 - `POST /company/candidates/{candidate_id}/outcome`
 - `GET /company/candidates/{candidate_id}/outcome`
 - `GET /company/reports/{report_id}`
+- `GET /company/reports/{report_id}/proctoring-timeline`
 - `GET /company/interviews/{interview_id}/replay`
+- `GET /company/settings/ai`
+- `PUT /company/settings/ai`
 
 Shortlists:
 
@@ -204,8 +277,18 @@ Templates and campaigns:
 - `POST /company/templates`
 - `DELETE /company/templates/{template_id}`
 - `GET /company/assessments`
+- `GET /company/assessment-module-profiles`
 - `POST /company/assessments`
 - `DELETE /company/assessments/{assessment_id}`
+
+`POST /company/assessments` accepts campaign metadata such as:
+
+- `assessment_type`
+- `module_plan`
+- `deadline_at`
+- `expires_at`
+- `branding_name`
+- `branding_logo_url`
 
 Share-link access:
 
@@ -216,6 +299,13 @@ Share-link access:
 
 - `GET /employee/invite/{token}`
 - `POST /employee/invite/{token}/start`
+
+Invite info now includes:
+
+- `module_plan`
+- `current_module_preview`
+- `active_interview_id`
+- `can_start_current_module`
 
 ### Voice APIs
 
@@ -248,6 +338,8 @@ See also:
 
 Use `.env.example` as baseline.
 
+For computed runtime behavior and local/test vs production-like differences, see [`docs/runtime-config-matrix.md`](docs/runtime-config-matrix.md).
+
 Core:
 
 - `APP_ENV` (`development` / `test` / `production`)
@@ -264,6 +356,12 @@ Auth/session:
 - `AUTH_ALLOW_BEARER` (must be `false` outside local/test)
 - `CSRF_TRUSTED_ORIGINS` (defaults to `CORS_ORIGINS` when empty)
 - `ACCESS_TOKEN_EXPIRE_MINUTES`
+
+Platform admin bootstrap:
+
+- `PLATFORM_ADMIN_EMAIL`
+- `PLATFORM_ADMIN_PASSWORD`
+- `PLATFORM_ADMIN_BOOTSTRAP`
 
 Rate limiting:
 
@@ -326,6 +424,11 @@ docker compose exec frontend npm run lint
 docker compose exec frontend npm run build
 cd backend && python3 -m pytest -v
 ```
+
+Platform admin note:
+
+- after updating to `origin/main` at or after `20096ce`, the verified local/test bootstrap defaults are documented in [`docs/platform-admin.md`](docs/platform-admin.md)
+- if the local app still shows `404` on `/admin/login`, check whether the checkout and containers are still behind `origin/main`; the practical runbook is in [`docs/platform-admin-operator-runbook.md`](docs/platform-admin-operator-runbook.md)
 
 CI gates (`.github/workflows/ci.yml`) run on push/PR:
 

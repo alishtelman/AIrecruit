@@ -30,6 +30,17 @@ class StartInterviewResponse(BaseModel):
     max_questions: int
     current_question: str
     language: Literal["ru", "en"] = "ru"
+    interview_stage: "InterviewStageResponse | None" = None
+
+
+class InterviewStageResponse(BaseModel):
+    phase_key: str
+    phase_title: str
+    slot_number: int
+    slot_count: int
+    competency_targets: list[str] = []
+    resume_anchor: str | None = None
+    verification_target: str | None = None
 
 
 class InterviewModuleSessionResponse(BaseModel):
@@ -66,6 +77,23 @@ class CodingTaskArtifactResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+class WrittenArtifactRequest(BaseModel):
+    content: str
+
+    @field_validator("content")
+    @classmethod
+    def content_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("content cannot be empty")
+        return v
+
+
+class WrittenArtifactResponse(BaseModel):
+    interview_id: uuid.UUID
+    content: str = ""
+    updated_at: datetime | None = None
+
+
 class SendMessageRequest(BaseModel):
     message: str
 
@@ -85,6 +113,7 @@ class SendMessageResponse(BaseModel):
     current_question: str | None  # null when max_questions reached — call /finish
     is_followup: bool = False  # True when the next question is a follow-up/verification
     question_type: str = "main"  # main | followup | verification | deep_technical | edge_cases
+    interview_stage: InterviewStageResponse | None = None
     module_session: InterviewModuleSessionResponse | None = None
 
 
@@ -111,6 +140,7 @@ class FinishInterviewResponse(BaseModel):
     report_id: uuid.UUID | None = None
     summary: ReportSummary | None = None
     assessment_progress: AssessmentProgressResponse | None = None
+    interview_stage: InterviewStageResponse | None = None
     module_session: InterviewModuleSessionResponse | None = None
 
 
@@ -136,6 +166,7 @@ class InterviewReportStatusResponse(BaseModel):
     failure_reason: str | None = None
     diagnostics: ReportProcessingDiagnostics | None = None
     assessment_progress: AssessmentProgressResponse | None = None
+    interview_stage: InterviewStageResponse | None = None
     module_session: InterviewModuleSessionResponse | None = None
 
 
@@ -160,6 +191,7 @@ class InterviewDetailResponse(BaseModel):
     has_report: bool
     report_id: uuid.UUID | None
     assessment_progress: AssessmentProgressResponse | None = None
+    interview_stage: InterviewStageResponse | None = None
     module_session: InterviewModuleSessionResponse | None = None
 
 

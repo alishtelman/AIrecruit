@@ -43,6 +43,8 @@ type AssessmentFormState = {
   expires_at: string;
   branding_name: string;
   branding_logo_url: string;
+  include_behavioral_interview: boolean;
+  include_written_communication: boolean;
   include_coding_task: boolean;
   coding_task_scenario_id: string;
   include_sql_live: boolean;
@@ -59,6 +61,8 @@ const BLANK_FORM: AssessmentFormState = {
   expires_at: "",
   branding_name: "",
   branding_logo_url: "",
+  include_behavioral_interview: false,
+  include_written_communication: false,
   include_coding_task: false,
   coding_task_scenario_id: "",
   include_sql_live: false,
@@ -68,6 +72,7 @@ const BLANK_FORM: AssessmentFormState = {
 const EMPTY_MODULE_PROFILES: AssessmentModuleProfiles = {
   coding_task: [],
   sql_live: [],
+  written_communication: [],
 };
 
 export default function EmployeesPage() {
@@ -184,9 +189,11 @@ export default function EmployeesPage() {
     return currentModule?.title ?? t("meta.notSet");
   };
   const moduleProfileLabel = (moduleType: string): string => {
+    if (moduleType === "behavioral_interview") return t("moduleProfiles.behavioralInterview");
     if (moduleType === "coding_task") return t("moduleProfiles.codingTask");
     if (moduleType === "sql_live") return t("moduleProfiles.sqlLive");
     if (moduleType === "system_design") return t("moduleProfiles.systemDesign");
+    if (moduleType === "written_communication") return t("moduleProfiles.writtenCommunication");
     return moduleType;
   };
   const selectedCodingProfile = moduleProfiles.coding_task.find((item) => item.scenario_id === form.coding_task_scenario_id) ?? null;
@@ -361,6 +368,24 @@ export default function EmployeesPage() {
                 <p className="mt-1 text-sm text-slate-400">{t("form.handsOnSubtitle")}</p>
 
                 <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                  <ModuleToggleCard
+                    title={t("form.behavioralInterviewCardTitle")}
+                    enabled={form.include_behavioral_interview}
+                    onToggle={(enabled) => setForm({ ...form, include_behavioral_interview: enabled })}
+                    toggleLabel={t("form.includeBehavioralInterview")}
+                    enabledLabel={t("form.enabled")}
+                    disabledLabel={t("form.disabled")}
+                    description={t("form.behavioralInterviewDescription")}
+                  />
+                  <ModuleToggleCard
+                    title={t("form.writtenCommunicationCardTitle")}
+                    enabled={form.include_written_communication}
+                    onToggle={(enabled) => setForm({ ...form, include_written_communication: enabled })}
+                    toggleLabel={t("form.includeWrittenCommunication")}
+                    enabledLabel={t("form.enabled")}
+                    disabledLabel={t("form.disabled")}
+                    description={t("form.writtenCommunicationDescription")}
+                  />
                   <ModuleProfileCard
                     title={t("form.codingTaskCardTitle")}
                     enabled={form.include_coding_task}
@@ -618,6 +643,24 @@ function buildModulePlan(form: AssessmentFormState): Array<{
     config?: Record<string, unknown> | null;
   }> = [{ module_type: "adaptive_interview" }];
 
+  if (form.include_behavioral_interview) {
+    modulePlan.push({
+      module_id: "behavioral_interview_main",
+      module_type: "behavioral_interview",
+      title: "Behavioral Interview",
+      config: null,
+    });
+  }
+
+  if (form.include_written_communication) {
+    modulePlan.push({
+      module_id: "written_communication_main",
+      module_type: "written_communication",
+      title: "Written Communication",
+      config: null,
+    });
+  }
+
   if (form.include_coding_task) {
     modulePlan.push({
       module_id: "coding_task_main",
@@ -726,6 +769,49 @@ function ModuleProfileCard({
             </div>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+function ModuleToggleCard({
+  title,
+  enabled,
+  onToggle,
+  toggleLabel,
+  enabledLabel,
+  disabledLabel,
+  description,
+}: {
+  title: string;
+  enabled: boolean;
+  onToggle: (enabled: boolean) => void;
+  toggleLabel: string;
+  enabledLabel: string;
+  disabledLabel: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-[1.2rem] border border-white/6 bg-slate-900/50 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-white">{title}</div>
+          <div className="mt-1 text-xs text-slate-500">{toggleLabel}</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onToggle(!enabled)}
+          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+            enabled
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+              : "border-slate-700 bg-slate-950 text-slate-400"
+          }`}
+        >
+          {enabled ? enabledLabel : disabledLabel}
+        </button>
+      </div>
+      {enabled && (
+        <p className="mt-4 text-sm leading-6 text-slate-300">{description}</p>
       )}
     </div>
   );

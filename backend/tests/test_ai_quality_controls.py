@@ -60,6 +60,8 @@ def test_resume_anchored_first_question_uses_resume_line_context():
     question = _resume_anchored_first_question(ctx)
 
     assert "Acme Payments" in question
+    assert "Backend-разработчик" in question
+    assert "релевант" in question
     assert question.endswith("?")
     assert len(question) <= 170
 
@@ -74,7 +76,8 @@ def test_resume_anchored_first_question_has_safe_fallback_without_resume():
 
     question = _resume_anchored_first_question(ctx)
 
-    assert question.startswith("Based on your resume")
+    assert "backend engineer" in question.lower()
+    assert "best match the position" in question.lower()
     assert question.endswith("?")
 
 
@@ -192,6 +195,36 @@ def test_compute_confidence_metrics_handles_missing_evidence():
     assert metrics["competency_confidence"] == {}
     assert metrics["evidence_coverage"]["questions_analyzed"] == 0
     assert any("No per-question evidence" in reason for reason in metrics["confidence_reasons"])
+
+
+def test_compute_confidence_metrics_caps_single_question_competency_confidence():
+    competency_scores = [
+        {
+            "competency": "Debugging & Problem Decomposition",
+            "category": "problem_solving",
+            "score": 6.0,
+            "weight": 0.1,
+            "evidence": "Candidate described a concrete debugging case with search-slot optimization details.",
+            "reasoning": "Single strong answer, but coverage is still narrow.",
+        }
+    ]
+    per_question = [
+        {
+            "question_number": 7,
+            "targeted_competencies": ["Debugging & Problem Decomposition"],
+            "answer_quality": 8.6,
+            "evidence": "Explained the naive full-scan approach, then described interval indexing and why it reduced repeated booking lookups.",
+            "skills_mentioned": [],
+            "red_flags": [],
+            "specificity": "high",
+            "depth": "expert",
+            "ai_likelihood": 0.05,
+        }
+    ]
+
+    metrics = _compute_confidence_metrics(competency_scores, per_question)
+
+    assert metrics["competency_confidence"]["Debugging & Problem Decomposition"] < 0.8
 
 
 def test_apply_summary_penalties_keeps_broad_relevant_partial_signal_above_hard_floor():

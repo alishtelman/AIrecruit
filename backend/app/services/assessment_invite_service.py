@@ -24,8 +24,10 @@ _DEFAULT_ASSESSMENT_MODULE_TYPE = "adaptive_interview"
 _INTERVIEW_FLOW_MODULE_TYPES = {
     _DEFAULT_ASSESSMENT_MODULE_TYPE,
     "system_design",
+    "behavioral_interview",
     "coding_task",
     "sql_live",
+    "written_communication",
 }
 _ASSESSMENT_MODULE_TITLE_MAP = {
     "adaptive_interview": "Adaptive Interview",
@@ -224,7 +226,7 @@ def serialize_assessment_module_plan_for_response(
     for item in module_plan:
         preview: dict[str, Any] | None = None
         module_type = str(item.get("module_type") or "").strip().lower()
-        if module_type in {"system_design", "coding_task", "sql_live"}:
+        if module_type in {"system_design", "behavioral_interview", "coding_task", "sql_live", "written_communication"}:
             from app.services.interview_service import build_assessment_module_preview
 
             preview = build_assessment_module_preview(

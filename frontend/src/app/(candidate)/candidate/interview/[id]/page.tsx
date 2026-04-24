@@ -17,6 +17,7 @@ import type {
   InterviewModuleSession,
   InterviewMessage,
   InterviewReportStatusResponse,
+  InterviewStage,
 } from "@/lib/types";
 
 const REPORT_POLL_INTERVAL_MS = 1500;
@@ -28,6 +29,31 @@ const PROCTORING_POLICY_MODE =
     ? "strict_flagging"
     : "observe_only";
 const CODING_TASK_LANGUAGES = ["python", "typescript", "javascript", "go", "java", "sql", "other"] as const;
+
+function estimateInterviewDuration(maxQuestions: number) {
+  const safeQuestions = Math.max(1, maxQuestions);
+  const min = Math.max(8, Math.round(safeQuestions * 1.2));
+  const max = Math.max(min + 2, Math.round(safeQuestions * 1.7));
+  return { min, max };
+}
+
+function formatElapsedDuration(totalSeconds: number) {
+  const safeSeconds = Math.max(0, totalSeconds);
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+
+  if (hours > 0) {
+    return [hours, minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
+  }
+  return [minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
+}
+
+type StageRailItem = {
+  key: string;
+  label: string;
+  state: "done" | "current" | "upcoming";
+};
 
 type ProctoringEvent = {
   event_type: string;
@@ -72,11 +98,13 @@ export default function InterviewPage() {
   const [latestTranscript, setLatestTranscript] = useState("");
   const [recordingUploadState, setRecordingUploadState] = useState<"idle" | "uploading" | "uploaded" | "failed" | "skipped">("idle");
   const [moduleSession, setModuleSession] = useState<InterviewModuleSession | null>(null);
+  const [interviewStage, setInterviewStage] = useState<InterviewStage | null>(null);
   const [codingTaskDraft, setCodingTaskDraft] = useState("");
   const [codingTaskLanguage, setCodingTaskLanguage] = useState<string>("python");
   const [codingTaskSaveState, setCodingTaskSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
   const [codingTaskSavedAt, setCodingTaskSavedAt] = useState<string | null>(null);
   const [codingTaskDirty, setCodingTaskDirty] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const autoRecordingAttemptedRef = useRef(false);
 
@@ -147,11 +175,14 @@ export default function InterviewPage() {
   }
 
   const taskWorkspaceModuleType =
-    moduleSession?.module_type === "coding_task" || moduleSession?.module_type === "sql_live"
+    moduleSession?.module_type === "coding_task" ||
+    moduleSession?.module_type === "sql_live" ||
+    moduleSession?.module_type === "written_communication"
       ? moduleSession.module_type
       : null;
   const isSqlLive = taskWorkspaceModuleType === "sql_live";
-  const preferredTaskLanguage = moduleSession?.preferred_language ?? (isSqlLive ? "sql" : "python");
+  const isWrittenCommunication = taskWorkspaceModuleType === "written_communication";
+  const preferredTaskLanguage = isSqlLive ? moduleSession?.preferred_language ?? "sql" : moduleSession?.preferred_language ?? "python";
 
   async function saveCodingTaskDraftArtifact(force = false): Promise<boolean> {
     if (!id || !taskWorkspaceModuleType) {
@@ -169,13 +200,21 @@ export default function InterviewPage() {
 
     setCodingTaskSaveState("saving");
     try {
-      const saved = await interviewApi.saveCodingTaskArtifact(id, {
-        language: isSqlLive ? "sql" : codingTaskLanguage,
-        code: codingTaskDraft,
-      });
-      setCodingTaskDraft(saved.code);
-      setCodingTaskLanguage(saved.language ?? (isSqlLive ? "sql" : "python"));
-      setCodingTaskSavedAt(saved.updated_at ?? null);
+      if (isWrittenCommunication) {
+        const saved = await interviewApi.saveWrittenArtifact(id, {
+          content: codingTaskDraft,
+        });
+        setCodingTaskDraft(saved.content);
+        setCodingTaskSavedAt(saved.updated_at ?? null);
+      } else {
+        const saved = await interviewApi.saveCodingTaskArtifact(id, {
+          language: isSqlLive ? "sql" : codingTaskLanguage,
+          code: codingTaskDraft,
+        });
+        setCodingTaskDraft(saved.code);
+        setCodingTaskLanguage(saved.language ?? (isSqlLive ? "sql" : "python"));
+        setCodingTaskSavedAt(saved.updated_at ?? null);
+      }
       setCodingTaskDirty(false);
       setCodingTaskSaveState("saved");
       return true;
@@ -184,6 +223,8 @@ export default function InterviewPage() {
       setError(
         err instanceof Error
           ? err.message
+          : isWrittenCommunication
+          ? t("writtenWorkspace.saveFailed")
           : isSqlLive
           ? t("sqlWorkspace.saveFailed")
           : t("codingWorkspace.saveFailed"),
@@ -203,6 +244,7 @@ export default function InterviewPage() {
         setQuestionCount(data.question_count);
         setMaxQuestions(data.max_questions);
         setModuleSession(data.module_session ?? null);
+        setInterviewStage(data.interview_stage ?? null);
         if (data.module_session?.preferred_language) {
           setCodingTaskLanguage(data.module_session.preferred_language);
         }
@@ -257,29 +299,49 @@ export default function InterviewPage() {
     }
 
     let cancelled = false;
-    interviewApi
-      .getCodingTaskArtifact(id)
-      .then((artifact) => {
-        if (cancelled) return;
-        setCodingTaskDraft(artifact.code ?? "");
-        setCodingTaskLanguage(artifact.language ?? preferredTaskLanguage);
-        setCodingTaskSavedAt(artifact.updated_at ?? null);
-        setCodingTaskSaveState(artifact.code ? "saved" : "idle");
-        setCodingTaskDirty(false);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setCodingTaskDraft("");
-        setCodingTaskLanguage(preferredTaskLanguage);
-        setCodingTaskSavedAt(null);
-        setCodingTaskSaveState("idle");
-        setCodingTaskDirty(false);
-      });
+    if (isWrittenCommunication) {
+      interviewApi
+        .getWrittenArtifact(id)
+        .then((artifact) => {
+          if (cancelled) return;
+          setCodingTaskDraft(artifact.content ?? "");
+          setCodingTaskSavedAt(artifact.updated_at ?? null);
+          setCodingTaskSaveState(artifact.content ? "saved" : "idle");
+          setCodingTaskDirty(false);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setCodingTaskDraft("");
+          setCodingTaskLanguage(preferredTaskLanguage);
+          setCodingTaskSavedAt(null);
+          setCodingTaskSaveState("idle");
+          setCodingTaskDirty(false);
+        });
+    } else {
+      interviewApi
+        .getCodingTaskArtifact(id)
+        .then((artifact) => {
+          if (cancelled) return;
+          setCodingTaskDraft(artifact.code ?? "");
+          setCodingTaskLanguage(artifact.language ?? preferredTaskLanguage);
+          setCodingTaskSavedAt(artifact.updated_at ?? null);
+          setCodingTaskSaveState(artifact.code ? "saved" : "idle");
+          setCodingTaskDirty(false);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setCodingTaskDraft("");
+          setCodingTaskLanguage(preferredTaskLanguage);
+          setCodingTaskSavedAt(null);
+          setCodingTaskSaveState("idle");
+          setCodingTaskDirty(false);
+        });
+    }
 
     return () => {
       cancelled = true;
     };
-  }, [id, preferredTaskLanguage, taskWorkspaceModuleType]);
+  }, [id, isWrittenCommunication, preferredTaskLanguage, taskWorkspaceModuleType]);
 
   // Track behavioral signals
   useEffect(() => {
@@ -435,6 +497,7 @@ export default function InterviewPage() {
       ]);
       setInterview(detail);
       setModuleSession(detail.module_session ?? status.module_session ?? null);
+      setInterviewStage(detail.interview_stage ?? status.interview_stage ?? null);
       setReportStatus(status);
       return status;
     } catch {
@@ -464,6 +527,28 @@ export default function InterviewPage() {
     return () => window.clearInterval(timerId);
   }, [waitingForReport, reportStatus?.diagnostics?.next_retry_at]);
 
+  useEffect(() => {
+    const startedAtMs = interview?.started_at ? Date.parse(interview.started_at) : Number.NaN;
+    if (!interview || Number.isNaN(startedAtMs)) {
+      setElapsedSeconds(0);
+      return;
+    }
+
+    const completedAtMs = interview.completed_at ? Date.parse(interview.completed_at) : Number.NaN;
+    const tick = () => {
+      const effectiveEnd = Number.isNaN(completedAtMs) ? Date.now() : completedAtMs;
+      setElapsedSeconds(Math.max(0, Math.floor((effectiveEnd - startedAtMs) / 1000)));
+    };
+
+    tick();
+    if (interview.status !== "in_progress" || !Number.isNaN(completedAtMs)) {
+      return;
+    }
+
+    const timerId = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timerId);
+  }, [interview]);
+
   async function waitForReport(interviewId: string): Promise<{ reportId: string | null; hubPath: string | null }> {
     let lastKnownFailure: string | null = null;
     for (let cycle = 0; cycle <= REPORT_SOFT_REFRESH_CYCLES; cycle += 1) {
@@ -475,6 +560,7 @@ export default function InterviewPage() {
           const status = await interviewApi.getReportStatus(interviewId);
           setReportStatus(status);
           setModuleSession(status.module_session ?? null);
+          setInterviewStage(status.interview_stage ?? null);
           const hubPath = getAssessmentHubPath(status);
           if (hubPath) {
             return { reportId: null, hubPath };
@@ -546,6 +632,7 @@ export default function InterviewPage() {
       setIsFollowup(res.is_followup ?? false);
       setQuestionType(res.question_type ?? "main");
       setModuleSession(res.module_session ?? null);
+      setInterviewStage(res.interview_stage ?? null);
 
       if (res.current_question) {
         currentQNumRef.current = res.question_count;
@@ -583,7 +670,13 @@ export default function InterviewPage() {
       if (taskWorkspaceModuleType) {
         const artifactSaved = await saveCodingTaskDraftArtifact(true);
         if (!artifactSaved) {
-          throw new Error(isSqlLive ? t("sqlWorkspace.saveFailed") : t("codingWorkspace.saveFailed"));
+          throw new Error(
+            isWrittenCommunication
+              ? t("writtenWorkspace.saveFailed")
+              : isSqlLive
+              ? t("sqlWorkspace.saveFailed")
+              : t("codingWorkspace.saveFailed"),
+          );
         }
       }
       let recordingNotice: string | null = null;
@@ -633,6 +726,7 @@ export default function InterviewPage() {
 
       const res = await interviewApi.finish(id);
       setModuleSession(res.module_session ?? null);
+      setInterviewStage(res.interview_stage ?? null);
       const hubPath = getAssessmentHubPath(res);
       if (hubPath) {
         router.push(hubPath);
@@ -672,6 +766,7 @@ export default function InterviewPage() {
       const retryStatus = await interviewApi.retryReport(id);
       setReportStatus(retryStatus);
       setModuleSession(retryStatus.module_session ?? null);
+      setInterviewStage(retryStatus.interview_stage ?? null);
       const hubPath = getAssessmentHubPath(retryStatus);
       if (hubPath) {
         router.push(hubPath);
@@ -749,426 +844,772 @@ export default function InterviewPage() {
       ? t("uploadStatus.skipped")
       : null;
   const systemDesignSession = moduleSession?.module_type === "system_design" ? moduleSession : null;
+  const behavioralInterviewSession = moduleSession?.module_type === "behavioral_interview" ? moduleSession : null;
   const codingTaskSession = moduleSession?.module_type === "coding_task" ? moduleSession : null;
   const sqlLiveSession = moduleSession?.module_type === "sql_live" ? moduleSession : null;
-  const taskWorkspaceSession = codingTaskSession || sqlLiveSession;
+  const writtenCommunicationSession = moduleSession?.module_type === "written_communication" ? moduleSession : null;
+  const taskWorkspaceSession = codingTaskSession || sqlLiveSession || writtenCommunicationSession;
+  const overviewModuleSession = systemDesignSession || behavioralInterviewSession;
+  const structuredInterviewStage = !overviewModuleSession && !taskWorkspaceSession ? interviewStage : null;
+  const estimatedDuration = estimateInterviewDuration(maxQuestions);
+  const structurePhaseLabel =
+    structuredInterviewStage?.phase_key === "intro"
+      ? t("structurePhases.intro")
+      : structuredInterviewStage?.phase_key === "resume_followup"
+      ? t("structurePhases.resume_followup")
+      : structuredInterviewStage?.phase_key === "technical"
+      ? t("structurePhases.technical")
+      : structuredInterviewStage?.phase_key === "behavioral_closing"
+      ? t("structurePhases.behavioral_closing")
+      : structuredInterviewStage?.phase_title ?? null;
   const codingTaskSaveLabel =
     codingTaskSaveState === "saving"
-      ? taskWorkspaceModuleType === "sql_live"
+      ? isWrittenCommunication
+        ? t("writtenWorkspace.saving")
+        : taskWorkspaceModuleType === "sql_live"
         ? t("sqlWorkspace.saving")
         : t("codingWorkspace.saving")
       : codingTaskSaveState === "saved"
-      ? taskWorkspaceModuleType === "sql_live"
+      ? isWrittenCommunication
+        ? t("writtenWorkspace.saved")
+        : taskWorkspaceModuleType === "sql_live"
         ? t("sqlWorkspace.saved")
         : t("codingWorkspace.saved")
       : codingTaskSaveState === "failed"
-      ? taskWorkspaceModuleType === "sql_live"
+      ? isWrittenCommunication
+        ? t("writtenWorkspace.failed")
+        : taskWorkspaceModuleType === "sql_live"
         ? t("sqlWorkspace.failed")
         : t("codingWorkspace.failed")
       : codingTaskDirty
-      ? taskWorkspaceModuleType === "sql_live"
+      ? isWrittenCommunication
+        ? t("writtenWorkspace.unsaved")
+        : taskWorkspaceModuleType === "sql_live"
         ? t("sqlWorkspace.unsaved")
         : t("codingWorkspace.unsaved")
       : null;
   const codingTaskSavedAtLabel = codingTaskSavedAt
     ? new Date(codingTaskSavedAt).toLocaleTimeString()
     : null;
+  const elapsedLabel = formatElapsedDuration(elapsedSeconds);
+  const currentQuestionLabel = t("question", {
+    current: Math.min(Math.max(questionCount, 1), Math.max(maxQuestions, 1)),
+    total: Math.max(maxQuestions, 1),
+  });
+  const stageDisplayTitle =
+    structurePhaseLabel ||
+    (overviewModuleSession || taskWorkspaceSession)?.stage_title ||
+    t("stageLabel");
+  const structuredPhaseOrder = ["intro", "resume_followup", "technical", "behavioral_closing"];
+  const structuredPhaseIndex = structuredInterviewStage
+    ? structuredPhaseOrder.indexOf(structuredInterviewStage.phase_key)
+    : -1;
+  const stageRailItems: StageRailItem[] =
+    structuredPhaseIndex >= 0
+      ? structuredPhaseOrder.map((phaseKey, index) => ({
+          key: phaseKey,
+          label: t(`structurePhases.${phaseKey}`),
+          state:
+            index < structuredPhaseIndex
+              ? "done"
+              : index === structuredPhaseIndex
+              ? "current"
+              : "upcoming",
+        }))
+      : [];
+  const interviewStatusToneClass =
+    interview.status === "in_progress"
+      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+      : interview.status === "report_generated"
+      ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
+      : "border-slate-700 bg-slate-800/80 text-slate-300";
+  const currentQuestionTypeLabel =
+    questionType === "verification"
+      ? t("verification")
+      : questionType === "deep_technical"
+      ? t("deepDive")
+      : isFollowup
+      ? t("followup")
+      : t("mainQuestion");
+  const faceAwayValue = faceAwayPct != null ? `${Math.round(faceAwayPct * 100)}%` : "—";
+  const speechActivityValue = speechActivityPct != null ? `${Math.round(speechActivityPct * 100)}%` : "—";
+  const silenceValue = silencePct != null ? `${Math.round(silencePct * 100)}%` : "—";
+  const localizedRecordingError =
+    recordingError === "Camera or microphone permission denied. Interview will continue without recording."
+      ? t("recordingErrors.cameraOrMicPermissionDenied")
+      : recordingError === "Camera permission denied. Interview will continue without recording."
+      ? t("recordingErrors.cameraPermissionDenied")
+      : recordingError === "Microphone permission denied. Interview will continue without recording."
+      ? t("recordingErrors.microphonePermissionDenied")
+      : recordingError === "Screen permission denied. Interview will continue without recording."
+      ? t("recordingErrors.screenPermissionDenied")
+      : recordingError === "Screen, camera, or microphone permission denied. Interview will continue without recording."
+      ? t("recordingErrors.combinedPermissionDenied")
+      : recordingError === "Camera preview could not start automatically."
+      ? t("recordingErrors.previewStartFailed")
+      : recordingError === "Camera stream is unavailable."
+      ? t("recordingErrors.cameraStreamUnavailable")
+      : recordingError === "Microphone stream is unavailable."
+      ? t("recordingErrors.microphoneStreamUnavailable")
+      : recordingError === "Screen capture stream is unavailable."
+      ? t("recordingErrors.screenStreamUnavailable")
+      : recordingError === "Screen sharing was stopped. Recording ended."
+      ? t("recordingErrors.screenShareStopped")
+      : recordingError === "Camera stream was stopped. Recording ended."
+      ? t("recordingErrors.cameraStreamLost")
+      : recordingError;
 
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col">
-      {/* Header */}
-      <header className="border-b border-slate-800 px-6 py-4 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-4">
-          <Link href="/candidate/reports" className="text-slate-500 hover:text-slate-300 text-sm transition-colors">
-            ←
-          </Link>
-          <div className="flex items-center gap-3">
-            <span className="text-white font-semibold">{t("interviewTitle", {role: roleLabel})}</span>
-            {isFollowup ? (
-              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/30 text-purple-300 font-medium">
-                {questionType === "verification" ? t("verification") : questionType === "deep_technical" ? t("deepDive") : t("followup")}
-              </span>
-            ) : (
-              <span className="text-slate-400 text-sm">
-                {t("question", {current: questionCount, total: maxQuestions})}
-              </span>
-            )}
+    <div className="min-h-screen bg-slate-950 text-white">
+      <header className="border-b border-slate-800/80 bg-slate-950/90 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
+          <div className="flex min-w-0 items-center gap-4">
+            <Link href="/candidate/reports" className="text-slate-500 transition-colors hover:text-slate-300">
+              ←
+            </Link>
+            <div className="min-w-0">
+              <div className="truncate text-lg font-semibold">{t("interviewTitle", { role: roleLabel })}</div>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-400">
+                <span>{currentQuestionLabel}</span>
+                <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${interviewStatusToneClass}`}>
+                  {interview.status === "in_progress" ? t("statusInProgress") : reportPhaseLabel}
+                </span>
+              </div>
+            </div>
           </div>
-        </div>
-        <div className="flex items-center gap-3">
           <LocaleSwitcher />
-          {/* Webcam preview */}
-          {interview.status === "in_progress" && (
-            <div className="relative w-[120px] h-[90px] rounded-lg overflow-hidden border border-slate-700 bg-slate-900">
+        </div>
+      </header>
+
+      <main className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 xl:grid xl:min-h-[calc(100vh-81px)] xl:grid-cols-[minmax(320px,380px)_minmax(0,1fr)] xl:gap-6 xl:overflow-hidden">
+        <aside className="space-y-4 xl:overflow-y-auto xl:pr-1">
+          <section className="overflow-hidden rounded-[28px] border border-slate-800 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.18),_transparent_58%),linear-gradient(180deg,_rgba(15,23,42,0.98),_rgba(15,23,42,0.9))] p-5 shadow-[0_24px_80px_rgba(2,6,23,0.45)]">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-300">{t("candidateCardEyebrow")}</div>
+                <div className="mt-2 text-xl font-semibold text-white">{roleLabel}</div>
+                <div className="mt-2 text-sm leading-6 text-slate-300">
+                  {isFollowup ? currentQuestionTypeLabel : currentQuestionLabel}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <StatusPill tone={isRecording ? "emerald" : "amber"}>{isRecording ? "REC" : t("recordingRequired")}</StatusPill>
+                <StatusPill tone={isScreenSharing ? "emerald" : "slate"}>{isScreenSharing ? t("screenOn") : t("screenOff")}</StatusPill>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
+              <WorkspaceStat label={t("timerLabel")} value={elapsedLabel} tone="blue" />
+              <WorkspaceStat label={t("questionProgressLabel")} value={currentQuestionLabel} tone="slate" />
+              <WorkspaceStat
+                label={t("estimateLabel")}
+                value={t("structureEstimatedDuration", estimatedDuration)}
+                tone="emerald"
+              />
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t("stageLabel")}</div>
+                  <div className="mt-1 text-base font-semibold text-white">{stageDisplayTitle}</div>
+                </div>
+                {structuredInterviewStage ? (
+                  <StatusPill tone="emerald">
+                    {t("structureProgress", {
+                      current: structuredInterviewStage.slot_number,
+                      total: Math.max(structuredInterviewStage.slot_count, 1),
+                    })}
+                  </StatusPill>
+                ) : (overviewModuleSession || taskWorkspaceSession) ? (
+                  <StatusPill tone="blue">
+                    {t("stageProgress", {
+                      current: ((overviewModuleSession || taskWorkspaceSession)?.stage_index ?? 0) + 1,
+                      total: Math.max((overviewModuleSession || taskWorkspaceSession)?.stage_count ?? 0, 1),
+                    })}
+                  </StatusPill>
+                ) : null}
+              </div>
+
+              {stageRailItems.length > 0 && <StageRail items={stageRailItems} />}
+
+              {(overviewModuleSession || taskWorkspaceSession)?.scenario_title && (
+                <div className="mt-4">
+                  <div className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                    {taskWorkspaceSession ? t("taskLabel") : t("scenarioLabel")}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-200">{(overviewModuleSession || taskWorkspaceSession)?.scenario_title}</div>
+                </div>
+              )}
+
+              {structuredInterviewStage?.resume_anchor && (
+                <div className="mt-4">
+                  <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("structureResumeAnchor")}</div>
+                  <div className="mt-1 text-sm leading-6 text-slate-200">{structuredInterviewStage.resume_anchor}</div>
+                </div>
+              )}
+
+              {structuredInterviewStage?.verification_target && (
+                <div className="mt-4">
+                  <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("structureVerificationTarget")}</div>
+                  <div className="mt-1 text-sm leading-6 text-slate-200">{structuredInterviewStage.verification_target}</div>
+                </div>
+              )}
+
+              {taskWorkspaceSession?.stack_focus && (
+                <div className="mt-4">
+                  <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("stackLabel")}</div>
+                  <div className="mt-1 text-sm leading-6 text-slate-200">{taskWorkspaceSession.stack_focus}</div>
+                </div>
+              )}
+            </div>
+
+            {currentQuestion && interview.status === "in_progress" && (
+              <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t("currentFocusLabel")}</div>
+                <div className="mt-2 text-sm leading-6 text-slate-100">{currentQuestion}</div>
+              </div>
+            )}
+
+            {structuredInterviewStage?.competency_targets.length ? (
+              <div className="mt-5">
+                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t("structureCompetencies")}</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {structuredInterviewStage.competency_targets.map((competency) => (
+                    <span
+                      key={competency}
+                      className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-100"
+                    >
+                      {competency}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              {resumeText && (
+                <button
+                  onClick={() => setResumeOpen((value) => !value)}
+                  title={t("tooltips.toggleResume")}
+                  className={`rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
+                    resumeOpen
+                      ? "border-purple-500/30 bg-purple-500/10 text-purple-300"
+                      : "border-slate-700 bg-slate-900/60 text-slate-300 hover:border-slate-600"
+                  }`}
+                >
+                  {t("resume")}
+                </button>
+              )}
+              <button
+                onClick={toggleTTS}
+                title={ttsEnabled ? t("tooltips.muteVoice") : t("tooltips.enableVoice")}
+                className={`rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
+                  ttsEnabled
+                    ? "border-blue-500/30 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20"
+                    : "border-slate-700 bg-slate-900/60 text-slate-300 hover:border-slate-600"
+                }`}
+              >
+                {ttsEnabled ? t("voiceOn") : t("voiceOff")}
+              </button>
+              {!isRecording && interview.status === "in_progress" && (
+                <button
+                  onClick={() => void startRecording()}
+                  className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs font-medium text-yellow-200 transition-colors hover:bg-yellow-500/20"
+                >
+                  {t("enableRecording")}
+                </button>
+              )}
+            </div>
+
+            {(localizedRecordingError || voiceError || (!isRecording && interview.status === "in_progress")) && (
+              <div className="mt-5 space-y-3">
+                {!isRecording && interview.status === "in_progress" && (
+                  <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-100">
+                    <div className="font-medium text-yellow-200">{t("recordingRequired")}</div>
+                    <div className="mt-1 text-yellow-50/90">{t("recordingDescription")}</div>
+                  </div>
+                )}
+                {localizedRecordingError && (
+                  <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-100">
+                    {localizedRecordingError}
+                  </div>
+                )}
+                {voiceError && (
+                  <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                    {voiceError}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-[28px] border border-slate-800 bg-slate-900/80 p-4 shadow-[0_18px_60px_rgba(2,6,23,0.35)]">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">{t("cameraCardTitle")}</div>
+                <div className="mt-1 text-sm text-slate-400">{t("cameraCardHint")}</div>
+              </div>
+              <StatusPill tone={cameraPreviewReady ? "emerald" : "slate"}>
+                {cameraPreviewReady ? t("face") : t("cameraPreviewOff")}
+              </StatusPill>
+            </div>
+
+            <div className="relative mt-4 aspect-[4/3] overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
               <video
                 ref={previewRef}
                 muted
                 autoPlay
                 playsInline
-                className={`w-full h-full object-cover transition-opacity ${
+                className={`h-full w-full object-cover transition-opacity ${
                   cameraPreviewReady ? "opacity-100" : "opacity-0"
                 }`}
               />
               {!cameraPreviewReady && (
-                <div className="absolute inset-0 flex items-center justify-center text-[11px] text-slate-400 px-2 text-center">
+                <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-slate-400">
                   {isRecording ? t("cameraPreviewStarting") : t("cameraPreviewOff")}
                 </div>
               )}
+              <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-slate-950/95 via-slate-950/40 to-transparent px-4 py-3">
+                <div className="flex items-center gap-2 text-xs font-medium text-white">
+                  <span className={`h-2.5 w-2.5 rounded-full ${isRecording ? "animate-pulse bg-red-500" : "bg-slate-500"}`} />
+                  <span>{isRecording ? "REC" : t("recordingRequired")}</span>
+                </div>
+                <div className="text-xs text-slate-300">{isScreenSharing ? t("screenOn") : t("screenOff")}</div>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-3 gap-3">
+              <WorkspaceStat label={t("faceAwayLabel")} value={faceAwayValue} tone={faceAwayPct != null && faceAwayPct > 0.3 ? "amber" : "slate"} compact />
+              <WorkspaceStat label={t("speechActivityLabel")} value={speechActivityValue} tone={isSpeechActive ? "emerald" : "slate"} compact />
+              <WorkspaceStat label={t("silenceLabel")} value={silenceValue} tone={silencePct != null && silencePct > 0.4 ? "amber" : "slate"} compact />
+            </div>
+          </section>
+
+          {resumeOpen && resumeText && (
+            <section className="rounded-[28px] border border-slate-800 bg-slate-900/80 p-4 shadow-[0_18px_60px_rgba(2,6,23,0.35)]">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">{t("resume")}</div>
+                  <div className="mt-1 text-sm text-slate-400">{t("resumePreviewHint")}</div>
+                </div>
+                <button
+                  onClick={() => setResumeOpen(false)}
+                  className="rounded-full border border-slate-700 bg-slate-950/70 px-3 py-1 text-xs text-slate-300 transition-colors hover:border-slate-600 hover:text-white"
+                >
+                  ×
+                </button>
+              </div>
+              <pre className="mt-4 max-h-72 overflow-y-auto whitespace-pre-wrap rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-xs leading-6 text-slate-300">
+                {resumeText}
+              </pre>
+            </section>
+          )}
+        </aside>
+
+        <section className="flex min-h-0 flex-col">
+          {error && !canFinish && (
+            <div className="mb-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+              {error}
             </div>
           )}
-          {/* REC + eye tracking indicator */}
-          {isRecording && (
-            <span className="flex items-center gap-2">
-              <span className="flex items-center gap-1 text-red-400 text-xs font-semibold">
-                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                REC
-              </span>
-              <span
-                className={`text-xs font-medium ${
-                  isScreenSharing ? "text-emerald-400" : "text-yellow-400"
-                }`}
-                title={isScreenSharing ? t("tooltips.screenRecorded") : t("tooltips.screenInactive")}
-              >
-                {isScreenSharing ? t("screenOn") : t("screenOff")}
-              </span>
-              {faceModelLoaded && (
-                <span
-                  className={`text-xs font-medium ${
-                    faceAwayPct !== null && faceAwayPct > 0.3
-                      ? "text-orange-400"
-                      : "text-green-400"
-                  }`}
-                  title={t("tooltips.faceDetection", {
-                    status: faceAwayPct !== null ? `${Math.round(faceAwayPct * 100)}% away` : t("tooltips.detecting"),
-                  })}
-                >
-                  {faceAwayPct !== null && faceAwayPct > 0.3 ? t("lookAtCamera") : t("face")}
-                </span>
-              )}
-              {speechMonitoringSupported && (
-                <span
-                  className={`text-xs font-medium ${
-                    isSpeechActive ? "text-emerald-400" : "text-slate-400"
-                  }`}
-                  title={t("tooltips.speechMonitoring", {
-                    activity:
-                      speechActivityPct !== null ? `${Math.round(speechActivityPct * 100)}%` : t("tooltips.detecting"),
-                  })}
-                >
-                  {isSpeechActive ? t("speechDetected") : t("speechMonitoring")}
-                </span>
-              )}
-            </span>
-          )}
-          {!isRecording && interview.status === "in_progress" && (
-            <span className="text-xs px-3 py-1.5 rounded-lg border border-yellow-500/40 bg-yellow-500/10 text-yellow-300">
-              {t("recordingRequired")}
-            </span>
-          )}
-          {/* Resume panel toggle */}
-          {resumeText && (
-            <button
-              onClick={() => setResumeOpen((v) => !v)}
-              title={t("tooltips.toggleResume")}
-              className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
-                resumeOpen
-                  ? "bg-purple-500/15 border-purple-500/30 text-purple-400"
-                  : "bg-slate-700/50 border-slate-600 text-slate-400 hover:text-slate-300"
-              }`}
-            >
-              {t("resume")}
-            </button>
-          )}
-          {/* TTS toggle */}
-          <button
-            onClick={toggleTTS}
-            title={ttsEnabled ? t("tooltips.muteVoice") : t("tooltips.enableVoice")}
-            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${
-              ttsEnabled
-                ? "bg-blue-500/15 border-blue-500/30 text-blue-400 hover:bg-blue-500/25"
-                : "bg-slate-700/50 border-slate-600 text-slate-500 hover:text-slate-400"
-            }`}
-          >
-            {speaking ? (
-              <span className="flex gap-0.5 items-end h-3">
-                <span className="w-0.5 bg-current rounded-full animate-[soundbar_0.8s_ease-in-out_infinite]" style={{ height: "40%" }} />
-                <span className="w-0.5 bg-current rounded-full animate-[soundbar_0.8s_ease-in-out_0.2s_infinite]" style={{ height: "100%" }} />
-                <span className="w-0.5 bg-current rounded-full animate-[soundbar_0.8s_ease-in-out_0.4s_infinite]" style={{ height: "60%" }} />
-              </span>
-            ) : (
-              <span>{ttsEnabled ? t("on") : t("off")}</span>
-            )}
-            {ttsEnabled ? t("voiceOn") : t("voiceOff")}
-          </button>
-          {/* Progress bar */}
-          <div className="w-24 h-1.5 bg-slate-700 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-blue-500 rounded-full transition-all"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-        </div>
-      </header>
 
-      {/* Body */}
-      <div className="flex flex-1 overflow-hidden relative">
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4 max-w-2xl w-full mx-auto">
-          {(systemDesignSession || taskWorkspaceSession) && (
-            <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-300">
-                  {(systemDesignSession || taskWorkspaceSession)?.module_title || t("moduleCardEyebrow")}
+          <div className="flex min-h-[65vh] flex-1 flex-col overflow-hidden rounded-[30px] border border-slate-800 bg-slate-900/80 shadow-[0_24px_80px_rgba(2,6,23,0.4)]">
+            <div className="border-b border-slate-800/80 px-4 py-4 sm:px-6">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">{t("chatCardEyebrow")}</div>
+                  <div className="mt-1 text-lg font-semibold text-white">{stageDisplayTitle}</div>
+                  <div className="mt-1 text-sm text-slate-400">{t("voiceHint")}</div>
                 </div>
-                <div className="rounded-full border border-blue-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
-                  {t("stageProgress", {
-                    current: ((systemDesignSession || taskWorkspaceSession)?.stage_index ?? 0) + 1,
-                    total: Math.max((systemDesignSession || taskWorkspaceSession)?.stage_count ?? 0, 1),
-                  })}
+                <div className="flex flex-wrap gap-2">
+                  <StatusPill tone={isFollowup ? "purple" : "slate"}>{currentQuestionTypeLabel}</StatusPill>
+                  {uploadStatusLabel && <StatusPill tone={recordingUploadState === "failed" ? "amber" : "slate"}>{uploadStatusLabel}</StatusPill>}
                 </div>
               </div>
-              {(systemDesignSession || taskWorkspaceSession)?.scenario_title && (
-                <div className="mt-3">
-                  <div className="text-xs uppercase tracking-[0.14em] text-slate-400">
-                    {taskWorkspaceSession ? t("taskLabel") : t("scenarioLabel")}
-                  </div>
-                  <div className="mt-1 text-sm font-medium text-white">
-                    {(systemDesignSession || taskWorkspaceSession)?.scenario_title}
-                  </div>
-                </div>
-              )}
-              {(systemDesignSession || taskWorkspaceSession)?.stage_title && (
-                <div className="mt-3">
-                  <div className="text-xs uppercase tracking-[0.14em] text-slate-400">{t("stageLabel")}</div>
-                  <div className="mt-1 text-sm text-slate-200">{(systemDesignSession || taskWorkspaceSession)?.stage_title}</div>
-                </div>
-              )}
-              {taskWorkspaceSession?.stack_focus && (
-                <div className="mt-3">
-                  <div className="text-xs uppercase tracking-[0.14em] text-slate-400">{t("stackLabel")}</div>
-                  <div className="mt-1 text-sm text-slate-200">{taskWorkspaceSession.stack_focus}</div>
-                </div>
-              )}
-              {(systemDesignSession || taskWorkspaceSession)?.scenario_prompt && (
-                <p className="mt-3 text-sm leading-6 text-slate-300">{(systemDesignSession || taskWorkspaceSession)?.scenario_prompt}</p>
-              )}
-              {taskWorkspaceSession && (
-                <div className="mt-4 space-y-3">
-                  <div className="rounded-xl border border-slate-700/80 bg-slate-950/40 px-4 py-3 text-sm text-slate-300">
-                    {taskWorkspaceSession.workspace_hint || (isSqlLive ? t("sqlTaskHint") : t("codingTaskHint"))}
-                  </div>
-                  <div className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+              <div className="space-y-4">
+                {(overviewModuleSession || taskWorkspaceSession) && (
+                  <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-5">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                          {isSqlLive ? t("sqlWorkspace.title") : t("codingWorkspace.title")}
-                        </div>
-                        <p className="mt-1 text-sm text-slate-300">
-                          {isSqlLive ? t("sqlWorkspace.description") : t("codingWorkspace.description")}
-                        </p>
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-300">
+                        {(overviewModuleSession || taskWorkspaceSession)?.module_title || t("moduleCardEyebrow")}
                       </div>
-                      {codingTaskSaveLabel && (
-                        <div className="text-xs text-slate-400">
-                          <span>{codingTaskSaveLabel}</span>
-                          {codingTaskSavedAtLabel && codingTaskSaveState === "saved" ? (
-                            <span>{` · ${codingTaskSavedAtLabel}`}</span>
-                          ) : null}
-                        </div>
-                      )}
+                      <div className="rounded-full border border-blue-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
+                        {t("stageProgress", {
+                          current: ((overviewModuleSession || taskWorkspaceSession)?.stage_index ?? 0) + 1,
+                          total: Math.max((overviewModuleSession || taskWorkspaceSession)?.stage_count ?? 0, 1),
+                        })}
+                      </div>
                     </div>
-                    <div className="mt-4 flex flex-wrap items-center gap-3">
-                      {!isSqlLive && (
-                        <>
-                          <label className="text-xs uppercase tracking-[0.14em] text-slate-500">
-                            {t("codingWorkspace.language")}
-                          </label>
-                          <select
-                            value={codingTaskLanguage}
+                    {(overviewModuleSession || taskWorkspaceSession)?.scenario_title && (
+                      <div className="mt-3">
+                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                          {taskWorkspaceSession ? t("taskLabel") : t("scenarioLabel")}
+                        </div>
+                        <div className="mt-1 text-sm font-medium text-white">
+                          {(overviewModuleSession || taskWorkspaceSession)?.scenario_title}
+                        </div>
+                      </div>
+                    )}
+                    {(overviewModuleSession || taskWorkspaceSession)?.stage_title && (
+                      <div className="mt-3">
+                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">{t("stageLabel")}</div>
+                        <div className="mt-1 text-sm text-slate-200">{(overviewModuleSession || taskWorkspaceSession)?.stage_title}</div>
+                      </div>
+                    )}
+                    {taskWorkspaceSession?.stack_focus && (
+                      <div className="mt-3">
+                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">{t("stackLabel")}</div>
+                        <div className="mt-1 text-sm text-slate-200">{taskWorkspaceSession.stack_focus}</div>
+                      </div>
+                    )}
+                    {(overviewModuleSession || taskWorkspaceSession)?.scenario_prompt && (
+                      <p className="mt-3 text-sm leading-6 text-slate-300">{(overviewModuleSession || taskWorkspaceSession)?.scenario_prompt}</p>
+                    )}
+                    {taskWorkspaceSession && (
+                      <div className="mt-4 space-y-3">
+                        <div className="rounded-xl border border-slate-700/80 bg-slate-950/40 px-4 py-3 text-sm text-slate-300">
+                          {taskWorkspaceSession.workspace_hint || (isWrittenCommunication ? t("writtenTaskHint") : isSqlLive ? t("sqlTaskHint") : t("codingTaskHint"))}
+                        </div>
+                        <div className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                                {isWrittenCommunication ? t("writtenWorkspace.title") : isSqlLive ? t("sqlWorkspace.title") : t("codingWorkspace.title")}
+                              </div>
+                              <p className="mt-1 text-sm text-slate-300">
+                                {isWrittenCommunication ? t("writtenWorkspace.description") : isSqlLive ? t("sqlWorkspace.description") : t("codingWorkspace.description")}
+                              </p>
+                            </div>
+                            {codingTaskSaveLabel && (
+                              <div className="text-xs text-slate-400">
+                                <span>{codingTaskSaveLabel}</span>
+                                {codingTaskSavedAtLabel && codingTaskSaveState === "saved" ? (
+                                  <span>{` · ${codingTaskSavedAtLabel}`}</span>
+                                ) : null}
+                              </div>
+                            )}
+                          </div>
+                          <div className="mt-4 flex flex-wrap items-center gap-3">
+                            {!isSqlLive && !isWrittenCommunication && (
+                              <>
+                                <label className="text-xs uppercase tracking-[0.14em] text-slate-500">
+                                  {t("codingWorkspace.language")}
+                                </label>
+                                <select
+                                  value={codingTaskLanguage}
+                                  onChange={(e) => {
+                                    setCodingTaskLanguage(e.target.value);
+                                    setCodingTaskDirty(true);
+                                    setCodingTaskSaveState("idle");
+                                  }}
+                                  className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                >
+                                  {CODING_TASK_LANGUAGES.map((language) => (
+                                    <option key={language} value={language}>
+                                      {language}
+                                    </option>
+                                  ))}
+                                </select>
+                              </>
+                            )}
+                            {isWrittenCommunication && (
+                              <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-300">
+                                {t("writtenWorkspace.mode")}
+                              </div>
+                            )}
+                            {isSqlLive && (
+                              <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-300">
+                                SQL
+                              </div>
+                            )}
+                            {!isSqlLive && !isWrittenCommunication && taskWorkspaceSession.preferred_language && (
+                              <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-300">
+                                {t("recommendedLanguage")}: {taskWorkspaceSession.preferred_language}
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void saveCodingTaskDraftArtifact(true)}
+                              disabled={!codingTaskDraft.trim() || codingTaskSaveState === "saving"}
+                              className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-300 transition-colors hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {codingTaskSaveState === "saving"
+                                ? isWrittenCommunication
+                                  ? t("writtenWorkspace.saving")
+                                  : isSqlLive
+                                  ? t("sqlWorkspace.saving")
+                                  : t("codingWorkspace.saving")
+                                : isWrittenCommunication
+                                ? t("writtenWorkspace.save")
+                                : isSqlLive
+                                ? t("sqlWorkspace.save")
+                                : t("codingWorkspace.save")}
+                            </button>
+                          </div>
+                          <textarea
+                            value={codingTaskDraft}
                             onChange={(e) => {
-                              setCodingTaskLanguage(e.target.value);
+                              setCodingTaskDraft(e.target.value);
                               setCodingTaskDirty(true);
                               setCodingTaskSaveState("idle");
                             }}
-                            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          >
-                            {CODING_TASK_LANGUAGES.map((language) => (
-                              <option key={language} value={language}>
-                                {language}
-                              </option>
-                            ))}
-                          </select>
-                        </>
-                      )}
-                      {isSqlLive && (
-                        <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-300">
-                          SQL
+                            onPaste={() => {
+                              pasteCountRef.current++;
+                              trackProctoringEvent({
+                                event_type: "paste_detected",
+                                severity: PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
+                                details: { count: pasteCountRef.current, source: isWrittenCommunication ? "written_workspace" : "coding_workspace" },
+                              });
+                            }}
+                            placeholder={isWrittenCommunication ? t("writtenWorkspace.placeholder") : isSqlLive ? t("sqlWorkspace.placeholder") : t("codingWorkspace.placeholder")}
+                            rows={14}
+                            className={`mt-4 w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm leading-6 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                              isWrittenCommunication ? "font-sans" : "font-mono"
+                            }`}
+                          />
                         </div>
-                      )}
-                      {!isSqlLive && taskWorkspaceSession.preferred_language && (
-                        <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-300">
-                          {t("recommendedLanguage")}: {taskWorkspaceSession.preferred_language}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {structuredInterviewStage && (
+                  <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">
+                        {t("structureCardEyebrow")}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="rounded-full border border-slate-700 bg-slate-900/50 px-3 py-1 text-xs text-slate-300">
+                          {t("structureEstimatedDuration", estimatedDuration)}
                         </div>
-                      )}
+                        <div className="rounded-full border border-emerald-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
+                          {t("structureProgress", {
+                            current: structuredInterviewStage.slot_number,
+                            total: Math.max(structuredInterviewStage.slot_count, 1),
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-3 text-base font-semibold text-white">{structurePhaseLabel}</div>
+                    {structuredInterviewStage.resume_anchor && (
+                      <div className="mt-3">
+                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                          {t("structureResumeAnchor")}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-200">{structuredInterviewStage.resume_anchor}</div>
+                      </div>
+                    )}
+                    {structuredInterviewStage.verification_target && (
+                      <div className="mt-3">
+                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                          {t("structureVerificationTarget")}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-200">{structuredInterviewStage.verification_target}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {messages.map((msg, i) => (
+                  <MessageBubble
+                    key={i}
+                    msg={msg}
+                    onReplay={msg.role === "assistant" ? () => speak(msg.content, interviewLanguage) : undefined}
+                    speaking={speaking}
+                  />
+                ))}
+                {sending && <TypingIndicator />}
+
+                {canFinish && (
+                  <div className="rounded-2xl border border-blue-500/30 bg-blue-500/10 p-5 text-center">
+                    <div className="text-white font-semibold">{t("completeTitle")}</div>
+                    <div className="mt-1 text-sm text-slate-300">
+                      {t("completeDescription", { count: maxQuestions })}
+                    </div>
+                    {uploadStatusLabel && (
+                      <div className={`mt-4 text-sm ${recordingUploadState === "failed" ? "text-red-300" : "text-slate-200"}`}>
+                        {uploadStatusLabel}
+                      </div>
+                    )}
+                    {(waitingForReport || reportRetrying) && (
+                      <div className="mt-4">
+                        <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${reportPhaseToneClass}`}>
+                          {reportPhaseLabel}
+                        </span>
+                      </div>
+                    )}
+                    {(waitingForReport || reportRetrying) && reportAttempts > 0 && (
+                      <div className="mt-4 space-y-1 text-xs text-slate-300">
+                        <p>{t("reportAttempts", { count: reportAttempts, max: reportMaxAttempts || reportAttempts })}</p>
+                        {reportLastError && <p className="text-yellow-300">{t("lastReportError", { reason: reportLastError })}</p>}
+                        {retryCountdownSeconds !== null && retryCountdownSeconds > 0 && <p>{t("nextRetryIn", { seconds: retryCountdownSeconds })}</p>}
+                        {pollRefreshCycle > 0 && (
+                          <p>{t("statusRefreshCycle", { current: pollRefreshCycle + 1, total: REPORT_SOFT_REFRESH_CYCLES + 1 })}</p>
+                        )}
+                      </div>
+                    )}
+                    {error && (
+                      <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                        {error}
+                      </div>
+                    )}
+                    <div className="mt-5 flex flex-col items-center gap-3">
                       <button
-                        type="button"
-                        onClick={() => void saveCodingTaskDraftArtifact(true)}
-                        disabled={!codingTaskDraft.trim() || codingTaskSaveState === "saving"}
-                        className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-300 transition-colors hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                        onClick={handleFinish}
+                        disabled={finishing || reportRetrying}
+                        className="rounded-xl bg-blue-600 px-8 py-2.5 font-semibold text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
                       >
-                        {codingTaskSaveState === "saving"
-                          ? isSqlLive
-                            ? t("sqlWorkspace.saving")
-                            : t("codingWorkspace.saving")
-                          : isSqlLive
-                          ? t("sqlWorkspace.save")
-                          : t("codingWorkspace.save")}
+                        {finishing ? (waitingForReport ? t("waiting") : t("generating")) : t("finish")}
+                      </button>
+                      {error && (
+                        <button
+                          onClick={handleRetryReport}
+                          disabled={finishing || reportRetrying}
+                          className="rounded-xl border border-slate-600 px-6 py-2 text-sm text-slate-200 transition-colors hover:border-slate-500 hover:text-white disabled:opacity-50"
+                        >
+                          {reportRetrying ? t("retryingReport") : t("retryReport")}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div ref={bottomRef} />
+              </div>
+            </div>
+
+            {!canFinish && interview.status === "in_progress" && (
+              <div className="border-t border-slate-800/80 bg-slate-950/80 px-4 py-4 sm:px-6">
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setAnswerMode("text")}
+                        className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors ${
+                          !voiceMode
+                            ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
+                            : "border-slate-700 bg-slate-900/60 text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        {t("textMode")}
+                      </button>
+                      <button
+                        onClick={() => setAnswerMode("voice")}
+                        className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors ${
+                          voiceMode
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                            : "border-slate-700 bg-slate-900/60 text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        {t("voiceMode")}
                       </button>
                     </div>
+                    {voiceMode && <p className="text-xs text-slate-500">{t("voiceHint")}</p>}
+                  </div>
+
+                  {(voiceMode || latestTranscript) && (
+                    <div className="rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-3 text-sm text-slate-300">
+                      {latestTranscript ? <p>{t("latestTranscript")}</p> : <p>{t("voiceHint")}</p>}
+                    </div>
+                  )}
+
+                  <div className="flex flex-col gap-3 sm:flex-row">
                     <textarea
-                      value={codingTaskDraft}
-                      onChange={(e) => {
-                        setCodingTaskDraft(e.target.value);
-                        setCodingTaskDirty(true);
-                        setCodingTaskSaveState("idle");
-                      }}
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
                       onPaste={() => {
                         pasteCountRef.current++;
                         trackProctoringEvent({
                           event_type: "paste_detected",
                           severity: PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
-                          details: { count: pasteCountRef.current, source: "coding_workspace" },
+                          details: { count: pasteCountRef.current },
                         });
                       }}
-                      placeholder={isSqlLive ? t("sqlWorkspace.placeholder") : t("codingWorkspace.placeholder")}
-                      rows={14}
-                      className="mt-4 w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 font-mono text-sm leading-6 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSend();
+                        }
+                      }}
+                      disabled={sending}
+                      placeholder={
+                        sending
+                          ? t("placeholderThinking")
+                          : taskWorkspaceModuleType
+                          ? isWrittenCommunication
+                            ? t("writtenWorkspace.answerPlaceholder")
+                            : isSqlLive
+                            ? t("sqlWorkspace.answerPlaceholder")
+                            : t("codingWorkspace.answerPlaceholder")
+                          : voiceMode && voiceState === "recording"
+                          ? t("placeholderListening")
+                          : voiceMode && voiceState === "transcribing"
+                          ? t("placeholderTranscribing")
+                          : voiceMode
+                          ? t("placeholderVoice")
+                          : t("placeholderText")
+                      }
+                      rows={taskWorkspaceModuleType ? 5 : 3}
+                      className={`flex-1 rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 ${
+                        taskWorkspaceModuleType ? "resize-y leading-6" : "resize-none"
+                      }`}
                     />
+                    <div className="flex gap-3 sm:flex-col">
+                      {voiceMode && (
+                        <button
+                          onMouseDown={startVoice}
+                          onMouseUp={stopVoice}
+                          onTouchStart={startVoice}
+                          onTouchEnd={stopVoice}
+                          disabled={sending || voiceState === "transcribing"}
+                          title={t("tooltips.holdToSpeak")}
+                          className={`rounded-2xl border px-4 py-3 text-sm font-medium transition-colors ${
+                            voiceState === "recording"
+                              ? "animate-pulse border-red-500/50 bg-red-500/20 text-red-300"
+                              : voiceState === "transcribing"
+                              ? "border-slate-700 bg-slate-800 text-slate-400 opacity-60"
+                              : voiceState === "error"
+                              ? "border-red-500/30 bg-red-500/10 text-red-300"
+                              : "border-slate-700 bg-slate-800 text-slate-200 hover:border-slate-600"
+                          }`}
+                        >
+                          {voiceState === "recording" ? "REC" : voiceState === "transcribing" ? "..." : "MIC"}
+                        </button>
+                      )}
+                      <button
+                        onClick={handleSend}
+                        disabled={!input.trim() || sending}
+                        className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {sending ? "..." : t("send")}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              )}
-            </div>
-          )}
-          {messages.map((msg, i) => (
-            <MessageBubble
-              key={i}
-              msg={msg}
-              onReplay={msg.role === "assistant" ? () => speak(msg.content, interviewLanguage) : undefined}
-              speaking={speaking}
-            />
-          ))}
-          {sending && <TypingIndicator />}
-          <div ref={bottomRef} />
-        </div>
-
-        {/* Resume panel */}
-        {resumeOpen && resumeText && (
-          <aside className="fixed right-0 top-0 h-full w-80 bg-slate-800 border-l border-slate-700 overflow-y-auto p-4 z-10">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-white font-semibold text-sm">{t("resume")}</h3>
-              <button
-                onClick={() => setResumeOpen(false)}
-                className="text-slate-400 hover:text-white text-lg leading-none"
-              >
-                ×
-              </button>
-            </div>
-            <pre className="text-slate-300 text-xs whitespace-pre-wrap leading-relaxed font-sans">
-              {resumeText}
-            </pre>
-          </aside>
-        )}
-      </div>
-
-      {/* Error */}
-      {error && (
-        <div className="max-w-2xl w-full mx-auto px-4">
-          <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-4 py-3 mb-3">
-            {error}
-          </div>
-        </div>
-      )}
-
-      {!isRecording && interview.status === "in_progress" && (
-        <div className="max-w-2xl w-full mx-auto px-4 pb-4">
-          <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-5">
-            <div className="text-yellow-300 font-semibold mb-1">{t("recordingRequired")}</div>
-            <div className="text-slate-300 text-sm">
-              {t("recordingDescription")}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Finish CTA */}
-      {canFinish && (
-        <div className="max-w-2xl w-full mx-auto px-4 pb-4">
-          <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-5 text-center">
-            <div className="text-white font-semibold mb-1">{t("completeTitle")}</div>
-            <div className="text-slate-400 text-sm mb-4">
-              {t("completeDescription", {count: maxQuestions})}
-            </div>
-            {uploadStatusLabel && (
-              <div className={`mb-4 text-sm ${recordingUploadState === "failed" ? "text-red-400" : "text-slate-300"}`}>
-                {uploadStatusLabel}
               </div>
             )}
-            {(waitingForReport || reportRetrying) && (
-              <div className="mb-3">
-                <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${reportPhaseToneClass}`}>
-                  {reportPhaseLabel}
-                </span>
-              </div>
-            )}
-            {(waitingForReport || reportRetrying) && reportAttempts > 0 && (
-              <div className="mb-3 text-xs text-slate-300 space-y-1">
-                <p>{t("reportAttempts", {count: reportAttempts, max: reportMaxAttempts || reportAttempts})}</p>
-                {reportLastError && (
-                  <p className="text-yellow-300">{t("lastReportError", {reason: reportLastError})}</p>
-                )}
-                {retryCountdownSeconds !== null && retryCountdownSeconds > 0 && (
-                  <p>{t("nextRetryIn", {seconds: retryCountdownSeconds})}</p>
-                )}
-                {pollRefreshCycle > 0 && (
-                  <p>{t("statusRefreshCycle", {current: pollRefreshCycle + 1, total: REPORT_SOFT_REFRESH_CYCLES + 1})}</p>
-                )}
-              </div>
-            )}
-            <button
-              onClick={handleFinish}
-              disabled={finishing || reportRetrying}
-              className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold px-8 py-2.5 rounded-lg transition-colors"
-            >
-              {finishing ? (waitingForReport ? t("waiting") : t("generating")) : t("finish")}
-            </button>
-            {error && (
-              <button
-                onClick={handleRetryReport}
-                disabled={finishing || reportRetrying}
-                className="mt-3 border border-slate-600 text-slate-200 hover:border-slate-500 hover:text-white disabled:opacity-50 px-6 py-2 rounded-lg text-sm transition-colors"
-              >
-                {reportRetrying ? t("retryingReport") : t("retryReport")}
-              </button>
-            )}
           </div>
-        </div>
-      )}
+        </section>
+      </main>
 
-      {/* Full-screen finishing overlay */}
       {(finishing || reportRetrying) && (
-        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-sm flex flex-col items-center justify-center z-50">
-          <div className="flex flex-col items-center gap-6 text-center px-8">
-            <div className="relative w-16 h-16">
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-900/90 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-6 px-8 text-center">
+            <div className="relative h-16 w-16">
               <div className="absolute inset-0 rounded-full border-4 border-slate-700" />
               <div className="absolute inset-0 rounded-full border-4 border-t-blue-500 animate-spin" />
             </div>
             <div>
-              <p className="text-white font-semibold text-lg">
+              <p className="text-lg font-semibold text-white">
                 {waitingForReport || reportRetrying ? t("analyzing") : t("finishing")}
               </p>
-              <p className="text-slate-400 text-sm mt-1">
-                {waitingForReport || reportRetrying
-                  ? t("analysisDuration")
-                  : t("savingResponses")}
+              <p className="mt-1 text-sm text-slate-400">
+                {waitingForReport || reportRetrying ? t("analysisDuration") : t("savingResponses")}
               </p>
               {(waitingForReport || reportRetrying) && (
                 <div className="mt-3">
@@ -1177,124 +1618,6 @@ export default function InterviewPage() {
                   </span>
                 </div>
               )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Input */}
-      {!canFinish && interview.status === "in_progress" && (
-        <div className="border-t border-slate-800 px-4 py-4 shrink-0">
-          <div className="max-w-2xl mx-auto space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setAnswerMode("text")}
-                  className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
-                    !voiceMode
-                      ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
-                      : "border-slate-700 text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  {t("textMode")}
-                </button>
-                <button
-                  onClick={() => setAnswerMode("voice")}
-                  className={`rounded-lg border px-3 py-1.5 text-xs transition-colors ${
-                    voiceMode
-                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                      : "border-slate-700 text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  {t("voiceMode")}
-                </button>
-              </div>
-              {voiceMode && (
-                <p className="text-xs text-slate-500">
-                  {t("voiceHint")}
-                </p>
-              )}
-            </div>
-
-            {(voiceMode || voiceError || recordingError || latestTranscript) && (
-              <div className="rounded-xl border border-slate-800 bg-slate-800/60 px-4 py-3 text-sm">
-                {latestTranscript && (
-                  <p className="text-slate-300">
-                    {t("latestTranscript")}
-                  </p>
-                )}
-                {voiceError && <p className="text-red-400 mt-1">{voiceError}</p>}
-                {recordingError && <p className="text-yellow-400 mt-1">{recordingError}</p>}
-              </div>
-            )}
-
-            <div className="flex gap-3">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onPaste={() => {
-                pasteCountRef.current++;
-                trackProctoringEvent({
-                  event_type: "paste_detected",
-                  severity: PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
-                  details: { count: pasteCountRef.current },
-                });
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              disabled={sending}
-              placeholder={
-                sending
-                  ? t("placeholderThinking")
-                  : taskWorkspaceModuleType
-                  ? isSqlLive
-                    ? t("sqlWorkspace.answerPlaceholder")
-                    : t("codingWorkspace.answerPlaceholder")
-                  : voiceMode && voiceState === "recording"
-                  ? t("placeholderListening")
-                  : voiceMode && voiceState === "transcribing"
-                  ? t("placeholderTranscribing")
-                  : voiceMode
-                  ? t("placeholderVoice")
-                  : t("placeholderText")
-              }
-              rows={taskWorkspaceModuleType ? 4 : 2}
-              className={`flex-1 bg-slate-800 border border-slate-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-500 disabled:opacity-50 disabled:cursor-not-allowed ${
-                taskWorkspaceModuleType ? "resize-y leading-6" : "resize-none"
-              }`}
-            />
-            {voiceMode && (
-              <button
-                onMouseDown={startVoice}
-                onMouseUp={stopVoice}
-                onTouchStart={startVoice}
-                onTouchEnd={stopVoice}
-                disabled={sending || voiceState === "transcribing"}
-                title={t("tooltips.holdToSpeak")}
-                className={`px-4 rounded-xl transition-colors font-medium border select-none ${
-                  voiceState === "recording"
-                    ? "bg-red-500/20 border-red-500/50 text-red-400 animate-pulse"
-                    : voiceState === "transcribing"
-                    ? "bg-slate-700 border-slate-600 text-slate-400 opacity-60"
-                    : voiceState === "error"
-                    ? "bg-red-500/10 border-red-500/30 text-red-400"
-                    : "bg-slate-700 border-slate-600 text-slate-300 hover:border-slate-500"
-                }`}
-              >
-                {voiceState === "recording" ? "REC" : voiceState === "transcribing" ? "..." : "MIC"}
-              </button>
-            )}
-            <button
-              onClick={handleSend}
-              disabled={!input.trim() || sending}
-              className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-5 rounded-xl transition-colors font-medium"
-            >
-              {sending ? "..." : t("send")}
-            </button>
             </div>
           </div>
         </div>
@@ -1318,6 +1641,84 @@ function TypingIndicator() {
   );
 }
 
+function WorkspaceStat({
+  label,
+  value,
+  tone = "slate",
+  compact = false,
+}: {
+  label: string;
+  value: string;
+  tone?: "slate" | "blue" | "emerald" | "amber";
+  compact?: boolean;
+}) {
+  const toneClasses: Record<NonNullable<typeof tone>, string> = {
+    slate: "border-slate-800 bg-slate-950/60 text-white",
+    blue: "border-blue-500/20 bg-blue-500/10 text-blue-50",
+    emerald: "border-emerald-500/20 bg-emerald-500/10 text-emerald-50",
+    amber: "border-yellow-500/20 bg-yellow-500/10 text-yellow-50",
+  };
+
+  return (
+    <div className={`rounded-2xl border px-3 py-3 ${toneClasses[tone]}`}>
+      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{label}</div>
+      <div className={`mt-1 font-semibold ${compact ? "text-sm" : "text-base"}`}>{value}</div>
+    </div>
+  );
+}
+
+function StatusPill({
+  children,
+  tone = "slate",
+}: {
+  children: React.ReactNode;
+  tone?: "slate" | "blue" | "emerald" | "amber" | "purple";
+}) {
+  const toneClasses: Record<NonNullable<typeof tone>, string> = {
+    slate: "border-slate-700 bg-slate-900/70 text-slate-200",
+    blue: "border-blue-500/30 bg-blue-500/10 text-blue-200",
+    emerald: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+    amber: "border-yellow-500/30 bg-yellow-500/10 text-yellow-200",
+    purple: "border-purple-500/30 bg-purple-500/10 text-purple-200",
+  };
+
+  return (
+    <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${toneClasses[tone]}`}>
+      {children}
+    </span>
+  );
+}
+
+function StageRail({ items }: { items: StageRailItem[] }) {
+  if (!items.length) return null;
+
+  return (
+    <div className="mt-4 grid gap-2">
+      {items.map((item) => {
+        const toneClass =
+          item.state === "done"
+            ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
+            : item.state === "current"
+            ? "border-cyan-500/20 bg-cyan-500/10 text-cyan-100"
+            : "border-slate-800 bg-slate-950/50 text-slate-500";
+        const dotClass =
+          item.state === "done"
+            ? "bg-emerald-400"
+            : item.state === "current"
+            ? "bg-cyan-400"
+            : "bg-slate-600";
+
+        return (
+          <div key={item.key} className={`flex items-center gap-3 rounded-xl border px-3 py-2 ${toneClass}`}>
+            <span className={`h-2.5 w-2.5 rounded-full ${dotClass}`} />
+            <span className="text-sm">{item.label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function MessageBubble({
   msg,
   onReplay,
@@ -1331,12 +1732,12 @@ function MessageBubble({
   const isAI = msg.role === "assistant";
   return (
     <div className={`flex ${isAI ? "justify-start" : "justify-end"}`}>
-      <div className="group relative max-w-[80%]">
+      <div className="group relative max-w-[92%] md:max-w-[80%]">
         <div
           className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
             isAI
-              ? "bg-slate-800 border border-slate-700 text-slate-100 rounded-bl-sm"
-              : "bg-blue-600 text-white rounded-br-sm"
+              ? "rounded-bl-sm border border-slate-700 bg-slate-800 text-slate-100 shadow-[0_10px_30px_rgba(2,6,23,0.18)]"
+              : "rounded-br-sm bg-blue-600 text-white shadow-[0_10px_30px_rgba(37,99,235,0.25)]"
           }`}
         >
           {isAI && (

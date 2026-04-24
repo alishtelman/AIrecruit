@@ -102,6 +102,42 @@ async def test_get_next_question_uses_followup_fallback_when_llm_repeats(monkeyp
     assert question == fallback_question
 
 
+@pytest.mark.asyncio
+async def test_behavioral_closing_question_is_competency_aware_for_leadership():
+    ctx = InterviewContext(
+        target_role="backend_engineer",
+        question_number=8,
+        language="en",
+        question_type="main",
+        topic_phase="behavioral_closing",
+        competency_targets=["Leadership & Influence"],
+    )
+
+    question = await LLMInterviewer(_NoCallClient()).get_next_question(ctx)
+
+    normalized = question.lower()
+    assert "lead" in normalized or "influence" in normalized
+    assert "pressure" in normalized
+
+
+@pytest.mark.asyncio
+async def test_behavioral_closing_question_is_competency_aware_for_collaboration_in_russian():
+    ctx = InterviewContext(
+        target_role="backend_engineer",
+        question_number=8,
+        language="ru",
+        question_type="main",
+        topic_phase="behavioral_closing",
+        competency_targets=["Cross-team Collaboration"],
+    )
+
+    question = await LLMInterviewer(_NoCallClient()).get_next_question(ctx)
+
+    normalized = question.lower()
+    assert "кросс-команд" in normalized
+    assert "напряж" in normalized
+
+
 def test_normalize_question_output_strips_verbose_preamble():
     raw = (
         "Я понимаю, что масштабирование важно и требует системного подхода. "

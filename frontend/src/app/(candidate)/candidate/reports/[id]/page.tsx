@@ -6,7 +6,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { reportApi } from "@/lib/api";
-import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ReportSummaryBlock, SystemDesignStageSummary, SystemDesignRubricScore, DevelopmentRoadmapPhase, CodingTaskStageSummary, CodingTaskRubricScore, CodingTaskCoverageCheck, SqlLiveStageSummary, SqlLiveRubricScore } from "@/lib/types";
+import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ReportSummaryBlock, SystemDesignStageSummary, SystemDesignRubricScore, BehavioralInterviewStageSummary, BehavioralInterviewRubricScore, DevelopmentRoadmapPhase, CodingTaskStageSummary, CodingTaskRubricScore, CodingTaskCoverageCheck, SqlLiveStageSummary, SqlLiveRubricScore } from "@/lib/types";
 
 const CATEGORY_COLORS: Record<string, string> = {
   technical_core: "bg-blue-500/15 text-blue-400 border-blue-500/30",
@@ -143,8 +143,17 @@ function getCategoryLabel(t: ReturnType<typeof useTranslations>, category: strin
   return category;
 }
 
-function InterviewSummaryPanel({ summaryModel }: { summaryModel: AssessmentReport["summary_model"] }) {
+function InterviewSummaryPanel({
+  summaryModel,
+  locale,
+  onJumpToQuestion,
+}: {
+  summaryModel: AssessmentReport["summary_model"];
+  locale: string;
+  onJumpToQuestion?: (questionNumber: number) => void;
+}) {
   const t = useTranslations("report");
+  const [showDetails, setShowDetails] = useState(false);
 
   if (!summaryModel) return null;
 
@@ -156,6 +165,56 @@ function InterviewSummaryPanel({ summaryModel }: { summaryModel: AssessmentRepor
     { label: t("summaryModel.honestGaps"), value: summaryModel.honest_gaps },
     { label: t("summaryModel.genericTopics"), value: summaryModel.generic_or_evasive_topics },
   ];
+  const topicOutcomes = summaryModel.topic_outcomes ?? [];
+
+  function getTopicSignalLabel(signal: string) {
+    switch (signal) {
+      case "strong":
+        return t("summaryModel.topicSignals.strong");
+      case "partial":
+        return t("summaryModel.topicSignals.partial");
+      case "generic":
+        return t("summaryModel.topicSignals.generic");
+      case "evasive":
+        return t("summaryModel.topicSignals.evasive");
+      case "no_experience_honest":
+        return t("summaryModel.topicSignals.no_experience_honest");
+      default:
+        return t("summaryModel.topicSignals.unknown");
+    }
+  }
+
+  function getTopicOutcomeLabel(outcome: string) {
+    switch (outcome) {
+      case "validated":
+        return t("summaryModel.topicOutcomes.validated");
+      case "partial":
+        return t("summaryModel.topicOutcomes.partial");
+      case "honest_gap":
+        return t("summaryModel.topicOutcomes.honest_gap");
+      case "unverified_claim":
+        return t("summaryModel.topicOutcomes.unverified_claim");
+      case "evasive":
+        return t("summaryModel.topicOutcomes.evasive");
+      default:
+        return outcome.replace(/_/g, " ");
+    }
+  }
+
+  function getTopicSignalTone(signal: string) {
+    if (signal === "strong") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+    if (signal === "partial") return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+    if (signal === "no_experience_honest") return "border-slate-600 bg-slate-900 text-slate-300";
+    return "border-rose-500/30 bg-rose-500/10 text-rose-200";
+  }
+
+  function getTopicOutcomeTone(outcome: string) {
+    if (outcome === "validated") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+    if (outcome === "partial") return "border-blue-500/30 bg-blue-500/10 text-blue-200";
+    if (outcome === "honest_gap") return "border-slate-600 bg-slate-900 text-slate-300";
+    if (outcome === "unverified_claim") return "border-yellow-500/30 bg-yellow-500/10 text-yellow-200";
+    return "border-rose-500/30 bg-rose-500/10 text-rose-200";
+  }
 
   return (
     <div className="mb-6 rounded-2xl border border-slate-700 bg-slate-800/80 p-4">
@@ -176,6 +235,75 @@ function InterviewSummaryPanel({ summaryModel }: { summaryModel: AssessmentRepor
           </div>
         ))}
       </div>
+      {topicOutcomes.length > 0 && (
+        <div className="mt-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t("summaryModel.detailsTitle")}</div>
+            <button
+              type="button"
+              onClick={() => setShowDetails((current) => !current)}
+              className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-300 transition-colors hover:bg-cyan-500/20"
+            >
+              {showDetails ? t("summaryModel.detailsHide") : t("summaryModel.detailsShow")}
+            </button>
+          </div>
+          {showDetails && (
+            <div className="mt-3 grid gap-3">
+              {topicOutcomes.map((outcome) => (
+                <div key={outcome.slot} className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                        {t("questionShort", { number: outcome.slot })}
+                      </div>
+                      <div className="mt-1 text-sm font-semibold text-white">
+                        {localizeFreeformText(outcome.label, locale)}
+                      </div>
+                    </div>
+                    {onJumpToQuestion && (
+                      <button
+                        type="button"
+                        onClick={() => onJumpToQuestion(outcome.slot)}
+                        className="rounded-full border border-slate-600 bg-slate-950 px-3 py-1 text-xs text-slate-200 transition-colors hover:border-cyan-400/40 hover:text-cyan-200"
+                      >
+                        {t("summaryModel.jumpToQuestion")}
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className={`rounded-full border px-2.5 py-1 text-[11px] ${getTopicSignalTone(outcome.signal)}`}>
+                      {t("summaryModel.signalLabel")}: {getTopicSignalLabel(outcome.signal)}
+                    </span>
+                    <span className={`rounded-full border px-2.5 py-1 text-[11px] ${getTopicOutcomeTone(outcome.outcome)}`}>
+                      {t("summaryModel.outcomeLabel")}: {getTopicOutcomeLabel(outcome.outcome)}
+                    </span>
+                  </div>
+                  {outcome.resume_anchor && (
+                    <div className="mt-3">
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t("summaryModel.resumeAnchor")}</div>
+                      <div className="mt-1 text-sm text-slate-200">{localizeFreeformText(outcome.resume_anchor, locale)}</div>
+                    </div>
+                  )}
+                  {outcome.verification_target && (
+                    <div className="mt-3">
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t("summaryModel.verificationTarget")}</div>
+                      <div className="mt-1 text-sm text-slate-200">{localizeFreeformText(outcome.verification_target, locale)}</div>
+                    </div>
+                  )}
+                  {outcome.evidence_hint && (
+                    <div className="mt-3">
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t("summaryModel.evidenceHint")}</div>
+                      <div className="mt-1 text-sm leading-6 text-slate-300">
+                        {localizeFreeformText(outcome.evidence_hint, locale)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -272,10 +400,27 @@ export default function ReportPage() {
 
         {report.module_session?.scenario_title && <ModuleSessionBanner session={report.module_session} locale={locale} />}
 
-        {report.summary_model && <InterviewSummaryPanel summaryModel={report.summary_model} />}
+        {report.summary_model && (
+          <InterviewSummaryPanel
+            summaryModel={report.summary_model}
+            locale={locale}
+            onJumpToQuestion={(questionNumber) => {
+              const questionIndex = report.per_question_analysis?.findIndex((qa) => qa.question_number === questionNumber) ?? -1;
+              if (questionIndex >= 0) {
+                setExpandedQ(questionIndex);
+              }
+              window.requestAnimationFrame(() => {
+                const target = document.getElementById(`question-analysis-${questionNumber}`) ?? document.getElementById("per-question-analysis");
+                target?.scrollIntoView({ behavior: "smooth", block: "start" });
+              });
+            }}
+          />
+        )}
         {report.system_design_summary && <SystemDesignSummaryPanel summary={report.system_design_summary} />}
+        {report.behavioral_interview_summary && <BehavioralInterviewSummaryPanel summary={report.behavioral_interview_summary} />}
         {report.coding_task_summary && <CodingTaskSummaryPanel summary={report.coding_task_summary} />}
         {report.sql_live_summary && <SqlLiveSummaryPanel summary={report.sql_live_summary} />}
+        {report.written_communication_summary && <WrittenCommunicationSummaryPanel summary={report.written_communication_summary} />}
 
         {/* Recommendation badge */}
         <div className={`inline-flex items-center gap-2 border rounded-full px-4 py-1.5 text-sm font-semibold mb-6 ${rec.bg} ${rec.color}`}>
@@ -293,6 +438,8 @@ export default function ReportPage() {
             <ScoreCard label={t("consistency")} score={report.response_consistency} />
           )}
         </div>
+
+        <ConfidencePanel report={report} locale={locale} />
 
         {/* Competency heatmap */}
         {report.competency_scores && report.competency_scores.length > 0 && (
@@ -352,7 +499,7 @@ export default function ReportPage() {
 
         {/* Per-question analysis */}
         {report.per_question_analysis && report.per_question_analysis.length > 0 && (
-          <div className="mt-6">
+          <div id="per-question-analysis" className="mt-6 scroll-mt-24">
             <h2 className="text-white font-semibold mb-3">{t("perQuestionAnalysis")}</h2>
             <div className="space-y-2">
               {report.per_question_analysis.map((qa, i) => (
@@ -516,6 +663,128 @@ function SystemDesignRubricCard({ rubric }: { rubric: SystemDesignRubricScore })
     <div className="rounded-xl border border-violet-500/15 bg-slate-900/60 px-3 py-3">
       <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
         {t(`systemDesign.rubrics.${rubric.rubric_key}`)}
+      </div>
+      <div className="mt-1 text-xl font-semibold text-white">
+        {rubric.score != null ? `${rubric.score.toFixed(1)}/10` : "—"}
+      </div>
+    </div>
+  );
+}
+
+function BehavioralInterviewSummaryPanel({ summary }: { summary: NonNullable<AssessmentReport["behavioral_interview_summary"]> }) {
+  const t = useTranslations("report");
+  const locale = useLocale();
+
+  return (
+    <div className="mb-6 rounded-2xl border border-orange-500/20 bg-orange-500/10 p-5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.24em] text-orange-300">{t("behavioralInterview.eyebrow")}</div>
+          <div className="text-sm font-semibold text-white">{summary.module_title || t("behavioralInterview.title")}</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full border border-orange-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
+            {t("behavioralInterview.stageCount", { count: summary.stage_count })}
+          </span>
+          {summary.overall_score != null && (
+            <span className="rounded-full border border-orange-400/20 bg-orange-950/40 px-3 py-1 text-xs font-semibold text-orange-200">
+              {t("behavioralInterview.overallScore")}: {summary.overall_score.toFixed(1)}/10
+            </span>
+          )}
+          {summary.ownership_score != null && (
+            <span className="rounded-full border border-emerald-400/20 bg-emerald-950/40 px-3 py-1 text-xs font-semibold text-emerald-200">
+              {t("behavioralInterview.ownershipScore")}: {summary.ownership_score.toFixed(1)}/10
+            </span>
+          )}
+          {summary.leadership_score != null && (
+            <span className="rounded-full border border-violet-400/20 bg-violet-950/40 px-3 py-1 text-xs font-semibold text-violet-200">
+              {t("behavioralInterview.leadershipScore")}: {summary.leadership_score.toFixed(1)}/10
+            </span>
+          )}
+        </div>
+      </div>
+
+      {summary.scenario_title && (
+        <div className="mb-3">
+          <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("behavioralInterview.scenario")}</div>
+          <div className="mt-1 text-sm font-medium text-white">{localizeFreeformText(summary.scenario_title, locale)}</div>
+        </div>
+      )}
+      {summary.scenario_prompt && (
+        <p className="mb-4 text-sm leading-6 text-slate-300">{localizeFreeformText(summary.scenario_prompt, locale)}</p>
+      )}
+
+      {summary.rubric_scores.length > 0 && (
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {summary.rubric_scores.map((rubric) => (
+            <BehavioralInterviewRubricCard key={rubric.rubric_key} rubric={rubric} />
+          ))}
+        </div>
+      )}
+
+      {(summary.strengths.length > 0 || summary.gaps.length > 0 || summary.next_steps.length > 0) && (
+        <div className="mb-4 grid gap-3 lg:grid-cols-3">
+          <CodingTaskInsightList title={t("behavioralInterview.strengths")} tone="emerald" items={summary.strengths} />
+          <CodingTaskInsightList title={t("behavioralInterview.gaps")} tone="amber" items={summary.gaps} />
+          <CodingTaskInsightList title={t("behavioralInterview.nextSteps")} tone="blue" items={summary.next_steps} />
+        </div>
+      )}
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {summary.stages.map((stage) => (
+          <BehavioralInterviewStageCard key={stage.stage_key} stage={stage} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BehavioralInterviewStageCard({ stage }: { stage: BehavioralInterviewStageSummary }) {
+  const t = useTranslations("report");
+  const locale = useLocale();
+
+  return (
+    <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-sm font-semibold text-white">{localizeFreeformText(stage.stage_title, locale)}</div>
+        <div className="text-right">
+          {stage.stage_score != null && (
+            <div className="text-sm font-bold text-orange-300">
+              {t("behavioralInterview.stageScore")}: {stage.stage_score.toFixed(1)}
+            </div>
+          )}
+          {stage.average_answer_quality != null && (
+            <div className="text-[11px] text-slate-500">
+              {t("behavioralInterview.answerQuality")}: {stage.average_answer_quality.toFixed(1)}
+            </div>
+          )}
+        </div>
+      </div>
+      {stage.question_numbers.length > 0 && (
+        <div className="mt-2 text-xs text-slate-500">
+          {t("behavioralInterview.questionsCovered", { count: stage.question_numbers.length })}: {stage.question_numbers.join(", ")}
+        </div>
+      )}
+      <div className="mt-3 space-y-2">
+        {stage.evidence_items.length > 0 ? stage.evidence_items.map((item, index) => (
+          <div key={index} className="text-sm leading-6 text-slate-300">
+            {localizeFreeformText(item, locale)}
+          </div>
+        )) : (
+          <div className="text-sm text-slate-500">{t("behavioralInterview.noEvidence")}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BehavioralInterviewRubricCard({ rubric }: { rubric: BehavioralInterviewRubricScore }) {
+  const t = useTranslations("report");
+
+  return (
+    <div className="rounded-xl border border-orange-500/15 bg-slate-900/60 px-3 py-3">
+      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+        {t(`behavioralInterview.rubrics.${rubric.rubric_key}`)}
       </div>
       <div className="mt-1 text-xl font-semibold text-white">
         {rubric.score != null ? `${rubric.score.toFixed(1)}/10` : "—"}
@@ -898,6 +1167,145 @@ function SqlLiveRubricCard({ rubric }: { rubric: SqlLiveRubricScore }) {
   );
 }
 
+function WrittenCommunicationSummaryPanel({ summary }: { summary: NonNullable<AssessmentReport["written_communication_summary"]> }) {
+  const t = useTranslations("report");
+  const locale = useLocale();
+
+  return (
+    <div className="mb-6 rounded-2xl border border-sky-500/20 bg-sky-500/10 p-5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.24em] text-sky-300">{t("writtenCommunication.eyebrow")}</div>
+          <div className="text-sm font-semibold text-white">{summary.module_title || t("writtenCommunication.title")}</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full border border-sky-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
+            {t("writtenCommunication.stageCount", { count: summary.stage_count })}
+          </span>
+          {summary.overall_score != null && (
+            <span className="rounded-full border border-sky-400/20 bg-sky-950/40 px-3 py-1 text-xs font-semibold text-sky-200">
+              {t("writtenCommunication.overallScore")}: {summary.overall_score.toFixed(1)}/10
+            </span>
+          )}
+          {summary.clarity_score != null && (
+            <span className="rounded-full border border-emerald-400/20 bg-emerald-950/40 px-3 py-1 text-xs font-semibold text-emerald-200">
+              {t("writtenCommunication.clarityScore")}: {summary.clarity_score.toFixed(1)}/10
+            </span>
+          )}
+          {summary.structure_score != null && (
+            <span className="rounded-full border border-violet-400/20 bg-violet-950/40 px-3 py-1 text-xs font-semibold text-violet-200">
+              {t("writtenCommunication.structureScore")}: {summary.structure_score.toFixed(1)}/10
+            </span>
+          )}
+          {summary.audience_awareness_score != null && (
+            <span className="rounded-full border border-amber-400/20 bg-amber-950/40 px-3 py-1 text-xs font-semibold text-amber-200">
+              {t("writtenCommunication.audienceScore")}: {summary.audience_awareness_score.toFixed(1)}/10
+            </span>
+          )}
+        </div>
+      </div>
+
+      {summary.scenario_title && (
+        <div className="mb-3">
+          <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("writtenCommunication.task")}</div>
+          <div className="mt-1 text-sm font-medium text-white">{localizeFreeformText(summary.scenario_title, locale)}</div>
+        </div>
+      )}
+      {summary.scenario_prompt && (
+        <p className="mb-4 text-sm leading-6 text-slate-300">{localizeFreeformText(summary.scenario_prompt, locale)}</p>
+      )}
+      {summary.workspace_hint && (
+        <p className="mb-4 text-sm leading-6 text-slate-400">{localizeFreeformText(summary.workspace_hint, locale)}</p>
+      )}
+
+      {summary.rubric_scores.length > 0 && (
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {summary.rubric_scores.map((rubric) => (
+            <WrittenCommunicationRubricCard key={rubric.rubric_key} rubric={rubric} />
+          ))}
+        </div>
+      )}
+
+      {(summary.strengths.length > 0 || summary.gaps.length > 0 || summary.next_steps.length > 0) && (
+        <div className="mb-4 grid gap-3 lg:grid-cols-3">
+          <CodingTaskInsightList title={t("writtenCommunication.strengths")} tone="emerald" items={summary.strengths} />
+          <CodingTaskInsightList title={t("writtenCommunication.gaps")} tone="amber" items={summary.gaps} />
+          <CodingTaskInsightList title={t("writtenCommunication.nextSteps")} tone="blue" items={summary.next_steps} />
+        </div>
+      )}
+
+      {summary.writing_excerpt && (
+        <div className="mb-4 rounded-xl border border-slate-700 bg-slate-950/70 p-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.16em] text-slate-500">{t("writtenCommunication.writingExcerpt")}</div>
+          <pre className="overflow-x-auto whitespace-pre-wrap text-sm leading-6 text-slate-200">
+            {localizeFreeformText(summary.writing_excerpt, locale)}
+          </pre>
+        </div>
+      )}
+
+      <div className="grid gap-3 md:grid-cols-3">
+        {summary.stages.map((stage) => (
+          <WrittenCommunicationStageCard key={stage.stage_key} stage={stage} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WrittenCommunicationStageCard({ stage }: { stage: NonNullable<AssessmentReport["written_communication_summary"]>["stages"][number] }) {
+  const t = useTranslations("report");
+  const locale = useLocale();
+
+  return (
+    <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-sm font-semibold text-white">{localizeFreeformText(stage.stage_title, locale)}</div>
+        <div className="text-right">
+          {stage.stage_score != null && (
+            <div className="text-sm font-bold text-sky-300">
+              {t("writtenCommunication.stageScore")}: {stage.stage_score.toFixed(1)}
+            </div>
+          )}
+          {stage.average_answer_quality != null && (
+            <div className="text-[11px] text-slate-500">
+              {t("writtenCommunication.answerQuality")}: {stage.average_answer_quality.toFixed(1)}
+            </div>
+          )}
+        </div>
+      </div>
+      {stage.question_numbers.length > 0 && (
+        <div className="mt-2 text-xs text-slate-500">
+          {t("writtenCommunication.questionsCovered", { count: stage.question_numbers.length })}: {stage.question_numbers.join(", ")}
+        </div>
+      )}
+      <div className="mt-3 space-y-2">
+        {stage.evidence_items.length > 0 ? stage.evidence_items.map((item, index) => (
+          <div key={index} className="text-sm leading-6 text-slate-300">
+            {localizeFreeformText(item, locale)}
+          </div>
+        )) : (
+          <div className="text-sm text-slate-500">{t("writtenCommunication.noEvidence")}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WrittenCommunicationRubricCard({ rubric }: { rubric: NonNullable<AssessmentReport["written_communication_summary"]>["rubric_scores"][number] }) {
+  const t = useTranslations("report");
+
+  return (
+    <div className="rounded-xl border border-sky-500/15 bg-slate-900/60 px-3 py-3">
+      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+        {t(`writtenCommunication.rubrics.${rubric.rubric_key}`)}
+      </div>
+      <div className="mt-1 text-xl font-semibold text-white">
+        {rubric.score != null ? `${rubric.score.toFixed(1)}/10` : "—"}
+      </div>
+    </div>
+  );
+}
+
 function SummaryCard({
   summary,
   recommendationConfig,
@@ -993,6 +1401,200 @@ function RoadmapPanel({ phases }: { phases: DevelopmentRoadmapPhase[] }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function localizeConfidenceReason(text: string, locale: string) {
+  if (locale !== "ru") return text;
+
+  const translations: Record<string, string> = {
+    "No per-question evidence extracted; confidence is limited.": "По ответам не удалось извлечь достаточно подтверждений, поэтому надёжность сигнала ограничена.",
+    "Low concrete evidence coverage reduced confidence.": "Низкое покрытие конкретными подтверждениями снизило надёжность сигнала.",
+    "High evidence coverage increased confidence.": "Высокое покрытие конкретными подтверждениями повысило надёжность сигнала.",
+    "Multiple low-confidence answers reduced certainty.": "Несколько слабых ответов снизили уверенность в выводах.",
+    "Several answers contained high-confidence evidence.": "Несколько ответов содержали сильные конкретные подтверждения.",
+    "High AI-likelihood signal lowered confidence.": "Высокая вероятность ИИ-генерации снизила надёжность сигнала.",
+    "Low AI-likelihood signal improved confidence.": "Низкая вероятность ИИ-генерации повысила надёжность сигнала.",
+    "Confidence derived from mixed evidence quality signals.": "Надёжность сигнала сформирована из смешанного качества подтверждений.",
+  };
+
+  return translations[text] ?? text;
+}
+
+function formatQuestionCountLabel(count: number, locale: string): string {
+  if (locale !== "ru") {
+    return `${count} question${count === 1 ? "" : "s"}`;
+  }
+
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return `${count} вопрос`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${count} вопроса`;
+  return `${count} вопросов`;
+}
+
+function formatQuestionCountPrepositional(count: number, locale: string): string {
+  if (locale !== "ru") {
+    return formatQuestionCountLabel(count, locale);
+  }
+
+  return `${count} ${count === 1 ? "вопросе" : "вопросах"}`;
+}
+
+function formatCompetencyCoverageHint(count: number, locale: string): string {
+  if (locale === "ru") {
+    return `Основано на ${formatQuestionCountPrepositional(count, locale)}`;
+  }
+  return `Based on ${formatQuestionCountLabel(count, locale)}`;
+}
+
+function getEvidenceMetric(
+  evidenceCoverage: Record<string, unknown> | null | undefined,
+  key: string,
+): number | null {
+  const raw = evidenceCoverage?.[key];
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+}
+
+function formatPercent(value: number | null): string {
+  if (value == null) return "—";
+  return `${Math.round(value * 100)}%`;
+}
+
+function getConfidenceLevel(value: number | null): "high" | "medium" | "low" | null {
+  if (value == null) return null;
+  if (value >= 0.75) return "high";
+  if (value >= 0.5) return "medium";
+  return "low";
+}
+
+function ConfidencePanel({ report, locale }: { report: AssessmentReport; locale: string }) {
+  const t = useTranslations("report");
+  const overallConfidence = typeof report.overall_confidence === "number" ? report.overall_confidence : null;
+  const confidenceLevel = getConfidenceLevel(overallConfidence);
+  const competencyQuestionCounts = new Map<string, number>();
+  for (const qa of report.per_question_analysis ?? []) {
+    for (const competency of qa.targeted_competencies ?? []) {
+      competencyQuestionCounts.set(competency, (competencyQuestionCounts.get(competency) ?? 0) + 1);
+    }
+  }
+  const competencyConfidence = Object.entries(report.competency_confidence ?? {})
+    .filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]))
+    .sort((a, b) => b[1] - a[1]);
+  const questionsAnalyzed = getEvidenceMetric(report.evidence_coverage, "questions_analyzed");
+  const highConfidenceQuestions = getEvidenceMetric(report.evidence_coverage, "high_confidence_questions");
+  const lowConfidenceQuestions = getEvidenceMetric(report.evidence_coverage, "low_confidence_questions");
+  const concreteEvidenceRatio = getEvidenceMetric(report.evidence_coverage, "concrete_evidence_ratio");
+  const avgAiLikelihood = getEvidenceMetric(report.evidence_coverage, "avg_ai_likelihood");
+  const confidenceReasons = (report.confidence_reasons ?? []).filter(Boolean);
+
+  const hasData = Boolean(
+    overallConfidence != null ||
+    report.decision_policy_version ||
+    competencyConfidence.length > 0 ||
+    questionsAnalyzed != null ||
+    highConfidenceQuestions != null ||
+    lowConfidenceQuestions != null ||
+    concreteEvidenceRatio != null ||
+    avgAiLikelihood != null ||
+    confidenceReasons.length > 0,
+  );
+
+  if (!hasData) return null;
+
+  const levelStyles: Record<NonNullable<typeof confidenceLevel>, string> = {
+    high: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+    medium: "border-yellow-500/30 bg-yellow-500/10 text-yellow-200",
+    low: "border-rose-500/30 bg-rose-500/10 text-rose-200",
+  };
+
+  return (
+    <div className="mb-6 rounded-2xl border border-sky-500/20 bg-sky-500/10 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.24em] text-sky-300">{t("confidence.eyebrow")}</div>
+          <div className="text-sm font-semibold text-white">{t("confidence.title")}</div>
+          <div className="mt-1 max-w-2xl text-sm leading-6 text-slate-300">{t("confidence.description")}</div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          {confidenceLevel && (
+            <span className={`rounded-full border px-3 py-1 ${levelStyles[confidenceLevel]}`}>
+              {t(`confidence.levels.${confidenceLevel}`)}
+            </span>
+          )}
+          <span className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-slate-300">
+            {t("confidence.policyVersion")}: {report.decision_policy_version ?? t("confidence.notAvailable")}
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <ConfidenceStatCard label={t("confidence.overall")} value={formatPercent(overallConfidence)} highlight />
+        <ConfidenceStatCard label={t("confidence.questionsAnalyzed")} value={questionsAnalyzed != null ? String(questionsAnalyzed) : "—"} />
+        <ConfidenceStatCard label={t("confidence.highConfidenceQuestions")} value={highConfidenceQuestions != null ? String(highConfidenceQuestions) : "—"} />
+        <ConfidenceStatCard label={t("confidence.lowConfidenceQuestions")} value={lowConfidenceQuestions != null ? String(lowConfidenceQuestions) : "—"} />
+        <ConfidenceStatCard label={t("confidence.concreteEvidenceRatio")} value={formatPercent(concreteEvidenceRatio)} />
+      </div>
+
+      <div className="mt-3">
+        <ConfidenceStatCard label={t("confidence.avgAiLikelihood")} value={formatPercent(avgAiLikelihood)} />
+      </div>
+
+      {confidenceReasons.length > 0 && (
+        <div className="mt-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.18em] text-sky-300">{t("confidence.reasons")}</div>
+          <div className="space-y-2">
+            {confidenceReasons.map((reason) => (
+              <div key={reason} className="flex gap-2 rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-slate-300">
+                <span className="mt-1 shrink-0 text-sky-300">•</span>
+                <span>{localizeConfidenceReason(reason, locale)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {competencyConfidence.length > 0 && (
+        <div className="mt-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.18em] text-sky-300">{t("confidence.competency")}</div>
+          <div className="grid gap-2 md:grid-cols-2">
+            {competencyConfidence.map(([name, value]) => (
+              <div key={name} className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm text-white">{localizeCompetencyLabel(name, locale)}</div>
+                  <div className="text-xs font-semibold text-sky-300">{formatPercent(value)}</div>
+                </div>
+                {(competencyQuestionCounts.get(name) ?? 0) > 0 && (
+                  <div className="mt-1 text-xs text-slate-500">
+                    {formatCompetencyCoverageHint(competencyQuestionCounts.get(name) ?? 0, locale)}
+                  </div>
+                )}
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-700">
+                  <div className="h-full rounded-full bg-sky-400" style={{ width: `${Math.round(value * 100)}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConfidenceStatCard({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div className={`rounded-xl border px-3 py-3 ${highlight ? "border-sky-400/30 bg-sky-950/40" : "border-slate-700 bg-slate-900/60"}`}>
+      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{label}</div>
+      <div className={`mt-1 text-xl font-semibold ${highlight ? "text-sky-200" : "text-white"}`}>{value}</div>
     </div>
   );
 }
@@ -1170,7 +1772,7 @@ function QuestionAccordion({ qa, expanded, onToggle }: { qa: QuestionAnalysis; e
     none: "text-red-400",
   };
   return (
-    <div className="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
+    <div id={`question-analysis-${qa.question_number}`} className="scroll-mt-24 bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
       <button
         onClick={onToggle}
         className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-slate-750 md:gap-6 md:px-6"
