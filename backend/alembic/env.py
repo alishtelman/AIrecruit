@@ -22,6 +22,8 @@ from app.models.skill import CandidateSkill  # noqa: F401
 from app.models.hire_outcome import HireOutcome  # noqa: F401
 from app.models.shortlist import CompanyShortlist, CompanyShortlistCandidate  # noqa: F401
 from app.models.collaboration import CompanyCandidateActivity, CompanyCandidateNote  # noqa: F401
+from app.models.platform_settings import PlatformSettings  # noqa: F401
+from app.models.admin_audit_log import AdminAuditLog  # noqa: F401
 from app.core.database import Base
 from app.core.config import settings
 

@@ -21,7 +21,14 @@
   "admin": {
     "nav": {
       "workspace": "Панель платформы",
-      "dashboard": "Обзор"
+      "dashboard": "Обзор",
+      "platform": "Платформа",
+      "aiSettings": "AI настройки",
+      "interviews": "Интервью",
+      "users": "Пользователи",
+      "companies": "Компании",
+      "reports": "Отчёты",
+      "auditLog": "Аудит"
     },
     "login": {
       "badge": "Системная админка",
@@ -113,6 +120,190 @@
         "completed": "Завершено",
         "report_generated": "Отчёт готов",
         "failed": "Сбой"
+      }
+    },
+    "platform": {
+      "loading": "Загружаем платформенные настройки...",
+      "title": "Глобальные переключатели платформы",
+      "description": "Управляйте тем, что сейчас разрешено на уровне всей системы: регистрации, инвайты и maintenance-режим.",
+      "save": "Сохранить настройки",
+      "saved": "Настройки платформы обновлены",
+      "errors": {
+        "load": "Не удалось загрузить платформенные настройки",
+        "save": "Не удалось сохранить платформенные настройки"
+      },
+      "fields": {
+        "candidateRegistration": {
+          "title": "Регистрация кандидатов",
+          "help": "Отключите, если нужно временно закрыть новый candidate signup."
+        },
+        "companyRegistration": {
+          "title": "Регистрация компаний",
+          "help": "Отключите, если не хотите принимать новые company workspaces."
+        },
+        "employeeInvites": {
+          "title": "Инвайты сотрудников",
+          "help": "Управляет invite flow для company members."
+        },
+        "maintenanceMode": {
+          "title": "Maintenance mode",
+          "help": "Флаг зарезервирован под controlled rollout и сервисные окна."
+        }
+      },
+      "meta": {
+        "updatedAt": "Последнее обновление"
+      }
+    },
+    "aiSettings": {
+      "loading": "Загружаем AI-настройки...",
+      "title": "Глобальные настройки interview engine",
+      "description": "Эти настройки становятся дефолтом для candidate interview flow и базой для company-specific overrides.",
+      "save": "Сохранить AI-настройки",
+      "saved": "AI-настройки обновлены",
+      "errors": {
+        "load": "Не удалось загрузить AI-настройки",
+        "save": "Не удалось сохранить AI-настройки"
+      },
+      "fields": {
+        "policy": "Proctoring policy",
+        "interviewerModel": "Interviewer model preference",
+        "assessorModel": "Assessor model preference"
+      },
+      "policyOptions": {
+        "observe_only": "Observe only",
+        "strict_flagging": "Strict flagging"
+      },
+      "hints": {
+        "policy": "Если workspace не переопределяет политику, интервью будут стартовать с этим режимом.",
+        "interviewerModel": "Оставьте пустым, чтобы использовать дефолтный runtime model.",
+        "assessorModel": "Оставьте пустым, чтобы использовать дефолтный runtime model."
+      }
+    },
+    "interviews": {
+      "loading": "Загружаем интервью...",
+      "title": "Операции по интервью и отчётам",
+      "description": "Проверяйте последние интервью по всей платформе и вручную переотправляйте отчёт в пайплайн, если нужен retry.",
+      "errors": {
+        "load": "Не удалось загрузить интервью",
+        "requeue": "Не удалось переотправить отчёт"
+      },
+      "filters": {
+        "search": "Кандидат или email",
+        "status": "Статус интервью",
+        "all": "Все статусы"
+      },
+      "empty": "Интервью по текущим фильтрам не найдено.",
+      "actions": {
+        "refresh": "Обновить",
+        "requeue": "Переотправить отчёт",
+        "requeueing": "Переотправляем..."
+      },
+      "table": {
+        "candidate": "Кандидат",
+        "role": "Роль",
+        "status": "Интервью",
+        "report": "Отчёт",
+        "score": "Балл",
+        "created": "Создано"
+      },
+      "processing": {
+        "pending": "Ожидает",
+        "processing": "В работе",
+        "failed": "Сбой",
+        "ready": "Готово"
+      }
+    },
+    "users": {
+      "loading": "Загружаем пользователей...",
+      "title": "Пользователи платформы",
+      "description": "Просматривайте аккаунты, роли и при необходимости быстро блокируйте или возвращайте доступ.",
+      "errors": {
+        "load": "Не удалось загрузить пользователей",
+        "update": "Не удалось обновить статус пользователя"
+      },
+      "filters": {
+        "search": "Поиск по email"
+      },
+      "actions": {
+        "refresh": "Обновить",
+        "activate": "Активировать",
+        "deactivate": "Отключить",
+        "updating": "Обновляем..."
+      },
+      "empty": "Пользователи по текущему поиску не найдены.",
+      "table": {
+        "email": "Email",
+        "role": "Роль",
+        "status": "Статус",
+        "created": "Создан"
+      }
+    },
+    "companies": {
+      "loading": "Загружаем компании...",
+      "title": "Компании и их рабочие пространства",
+      "description": "Контролируйте активность компаний, их владельцев и размер команды из одного admin-контура.",
+      "errors": {
+        "load": "Не удалось загрузить компании",
+        "update": "Не удалось обновить статус компании"
+      },
+      "filters": {
+        "search": "Поиск по названию компании"
+      },
+      "actions": {
+        "refresh": "Обновить",
+        "activate": "Активировать",
+        "deactivate": "Отключить",
+        "updating": "Обновляем..."
+      },
+      "empty": "Компании по текущему поиску не найдены.",
+      "table": {
+        "name": "Компания",
+        "owner": "Владелец",
+        "members": "Участники",
+        "status": "Статус",
+        "created": "Создана"
+      }
+    },
+    "reports": {
+      "loading": "Загружаем отчёты...",
+      "title": "Assessment reports по платформе",
+      "description": "Быстрый список последних отчётов по кандидатам, ролям, рекомендациям и итоговым баллам.",
+      "errors": {
+        "load": "Не удалось загрузить отчёты"
+      },
+      "filters": {
+        "search": "Кандидат или email"
+      },
+      "actions": {
+        "refresh": "Обновить"
+      },
+      "empty": "Отчёты по текущему поиску не найдены.",
+      "table": {
+        "candidate": "Кандидат",
+        "role": "Роль",
+        "recommendation": "Рекомендация",
+        "score": "Балл",
+        "created": "Создан",
+        "reportId": "ID отчёта"
+      }
+    },
+    "auditLog": {
+      "loading": "Загружаем аудит действий...",
+      "title": "Журнал действий администраторов",
+      "description": "Смотрите ключевые platform-изменения: переключатели, ручные retries и изменения статусов.",
+      "errors": {
+        "load": "Не удалось загрузить audit log"
+      },
+      "actions": {
+        "refresh": "Обновить"
+      },
+      "empty": "В журнале пока нет записей.",
+      "table": {
+        "actor": "Кто",
+        "action": "Действие",
+        "entity": "Сущность",
+        "summary": "Описание",
+        "created": "Когда"
       }
     }
   },

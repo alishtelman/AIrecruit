@@ -63,6 +63,7 @@ from app.services.member_service import (
     list_members,
     remove_member,
 )
+from app.services.platform_settings_service import employee_invites_enabled
 from app.services.assessment_invite_service import (
     create_assessment,
     delete_assessment,
@@ -452,6 +453,11 @@ async def invite_company_member(
     db: AsyncSession = Depends(get_db),
     user_and_company: tuple[User, Company] = Depends(get_current_company),
 ):
+    if not await employee_invites_enabled(db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Employee invites are temporarily disabled.",
+        )
     user, company = user_and_company
     # Only admin (owner) can invite
     if user.role != "company_admin":

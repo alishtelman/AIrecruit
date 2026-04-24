@@ -8,7 +8,16 @@ type AdminWorkspaceHeaderProps = {
   onLogout?: () => void | Promise<void>;
 };
 
-const NAV_ITEMS = [{ href: "/admin/dashboard", key: "dashboard" }] as const;
+const NAV_ITEMS = [
+  { href: "/admin/dashboard", key: "dashboard" },
+  { href: "/admin/platform", key: "platform" },
+  { href: "/admin/ai-settings", key: "aiSettings" },
+  { href: "/admin/interviews", key: "interviews" },
+  { href: "/admin/users", key: "users" },
+  { href: "/admin/companies", key: "companies" },
+  { href: "/admin/reports", key: "reports" },
+  { href: "/admin/audit-log", key: "auditLog" },
+] as const;
 
 export function AdminWorkspaceHeader({ onLogout }: AdminWorkspaceHeaderProps) {
   const t = useTranslations("admin.nav");

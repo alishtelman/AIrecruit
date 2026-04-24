@@ -21,7 +21,14 @@
   "admin": {
     "nav": {
       "workspace": "Platform Console",
-      "dashboard": "Overview"
+      "dashboard": "Overview",
+      "platform": "Platform",
+      "aiSettings": "AI Settings",
+      "interviews": "Interviews",
+      "users": "Users",
+      "companies": "Companies",
+      "reports": "Reports",
+      "auditLog": "Audit Log"
     },
     "login": {
       "badge": "System admin",
@@ -113,6 +120,190 @@
         "completed": "Completed",
         "report_generated": "Report generated",
         "failed": "Failed"
+      }
+    },
+    "platform": {
+      "loading": "Loading platform settings...",
+      "title": "Global platform controls",
+      "description": "Manage what is currently allowed system-wide: registrations, invites, and maintenance mode.",
+      "save": "Save platform settings",
+      "saved": "Platform settings updated",
+      "errors": {
+        "load": "Failed to load platform settings",
+        "save": "Failed to save platform settings"
+      },
+      "fields": {
+        "candidateRegistration": {
+          "title": "Candidate registration",
+          "help": "Turn this off when you need to pause new candidate signups."
+        },
+        "companyRegistration": {
+          "title": "Company registration",
+          "help": "Turn this off when you want to stop new company workspaces."
+        },
+        "employeeInvites": {
+          "title": "Employee invites",
+          "help": "Controls the invite flow for company members."
+        },
+        "maintenanceMode": {
+          "title": "Maintenance mode",
+          "help": "Reserved flag for controlled rollout and service windows."
+        }
+      },
+      "meta": {
+        "updatedAt": "Last updated"
+      }
+    },
+    "aiSettings": {
+      "loading": "Loading AI settings...",
+      "title": "Global interview engine settings",
+      "description": "These settings become the default for candidate interviews and the baseline for company-specific overrides.",
+      "save": "Save AI settings",
+      "saved": "AI settings updated",
+      "errors": {
+        "load": "Failed to load AI settings",
+        "save": "Failed to save AI settings"
+      },
+      "fields": {
+        "policy": "Proctoring policy",
+        "interviewerModel": "Interviewer model preference",
+        "assessorModel": "Assessor model preference"
+      },
+      "policyOptions": {
+        "observe_only": "Observe only",
+        "strict_flagging": "Strict flagging"
+      },
+      "hints": {
+        "policy": "If a workspace does not override policy, interviews will start with this mode.",
+        "interviewerModel": "Leave empty to use the default runtime model.",
+        "assessorModel": "Leave empty to use the default runtime model."
+      }
+    },
+    "interviews": {
+      "loading": "Loading interviews...",
+      "title": "Interview and report operations",
+      "description": "Review recent interviews across the platform and manually requeue report generation when support needs a retry.",
+      "errors": {
+        "load": "Failed to load interviews",
+        "requeue": "Failed to requeue report generation"
+      },
+      "filters": {
+        "search": "Candidate or email",
+        "status": "Interview status",
+        "all": "All statuses"
+      },
+      "empty": "No interviews match the current filters.",
+      "actions": {
+        "refresh": "Refresh",
+        "requeue": "Requeue report",
+        "requeueing": "Requeueing..."
+      },
+      "table": {
+        "candidate": "Candidate",
+        "role": "Role",
+        "status": "Interview",
+        "report": "Report",
+        "score": "Score",
+        "created": "Created"
+      },
+      "processing": {
+        "pending": "Pending",
+        "processing": "Processing",
+        "failed": "Failed",
+        "ready": "Ready"
+      }
+    },
+    "users": {
+      "loading": "Loading users...",
+      "title": "Platform users",
+      "description": "Review accounts, roles, and quickly disable or restore access when support needs intervention.",
+      "errors": {
+        "load": "Failed to load users",
+        "update": "Failed to update user status"
+      },
+      "filters": {
+        "search": "Search by email"
+      },
+      "actions": {
+        "refresh": "Refresh",
+        "activate": "Activate",
+        "deactivate": "Deactivate",
+        "updating": "Updating..."
+      },
+      "empty": "No users match the current search.",
+      "table": {
+        "email": "Email",
+        "role": "Role",
+        "status": "Status",
+        "created": "Created"
+      }
+    },
+    "companies": {
+      "loading": "Loading companies...",
+      "title": "Companies and workspaces",
+      "description": "Manage company activity, owners, and team size from one admin control plane.",
+      "errors": {
+        "load": "Failed to load companies",
+        "update": "Failed to update company status"
+      },
+      "filters": {
+        "search": "Search by company name"
+      },
+      "actions": {
+        "refresh": "Refresh",
+        "activate": "Activate",
+        "deactivate": "Deactivate",
+        "updating": "Updating..."
+      },
+      "empty": "No companies match the current search.",
+      "table": {
+        "name": "Company",
+        "owner": "Owner",
+        "members": "Members",
+        "status": "Status",
+        "created": "Created"
+      }
+    },
+    "reports": {
+      "loading": "Loading reports...",
+      "title": "Assessment reports across the platform",
+      "description": "Quickly review recent reports by candidate, role, recommendation, and final score.",
+      "errors": {
+        "load": "Failed to load reports"
+      },
+      "filters": {
+        "search": "Candidate or email"
+      },
+      "actions": {
+        "refresh": "Refresh"
+      },
+      "empty": "No reports match the current search.",
+      "table": {
+        "candidate": "Candidate",
+        "role": "Role",
+        "recommendation": "Recommendation",
+        "score": "Score",
+        "created": "Created",
+        "reportId": "Report ID"
+      }
+    },
+    "auditLog": {
+      "loading": "Loading audit log...",
+      "title": "Administrator audit log",
+      "description": "Track key platform actions including global toggle changes, manual retries, and status changes.",
+      "errors": {
+        "load": "Failed to load audit log"
+      },
+      "actions": {
+        "refresh": "Refresh"
+      },
+      "empty": "No audit log entries yet.",
+      "table": {
+        "actor": "Actor",
+        "action": "Action",
+        "entity": "Entity",
+        "summary": "Summary",
+        "created": "Created"
       }
     }
   },

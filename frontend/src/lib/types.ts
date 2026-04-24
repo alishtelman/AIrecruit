@@ -75,6 +75,91 @@ export interface AdminOverview {
   recent_reports: AdminRecentReport[];
 }
 
+export interface PlatformSettings {
+  candidate_registration_enabled: boolean;
+  company_registration_enabled: boolean;
+  employee_invites_enabled: boolean;
+  maintenance_mode_enabled: boolean;
+  proctoring_policy_mode: "observe_only" | "strict_flagging" | string;
+  interviewer_model_preference: string | null;
+  assessor_model_preference: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminInterviewListItem {
+  id: string;
+  candidate_name: string;
+  candidate_email: string;
+  target_role: string;
+  status: string;
+  language: string;
+  created_at: string;
+  completed_at: string | null;
+  report_id: string | null;
+  overall_score: number | null;
+  hiring_recommendation: "strong_yes" | "yes" | "maybe" | "no" | null;
+  processing_state: "pending" | "processing" | "failed" | "ready" | string;
+}
+
+export interface AdminInterviewList {
+  items: AdminInterviewListItem[];
+}
+
+export interface AdminUserListItem {
+  id: string;
+  email: string;
+  role: User["role"];
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AdminUserList {
+  items: AdminUserListItem[];
+}
+
+export interface AdminCompanyListItem {
+  id: string;
+  name: string;
+  owner_email: string | null;
+  is_active: boolean;
+  member_count: number;
+  created_at: string;
+}
+
+export interface AdminCompanyList {
+  items: AdminCompanyListItem[];
+}
+
+export interface AdminReportListItem {
+  id: string;
+  candidate_name: string;
+  candidate_email: string;
+  target_role: string;
+  overall_score: number | null;
+  hiring_recommendation: "strong_yes" | "yes" | "maybe" | "no";
+  created_at: string;
+}
+
+export interface AdminReportList {
+  items: AdminReportListItem[];
+}
+
+export interface AdminAuditLogItem {
+  id: string;
+  actor_email: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  summary: string;
+  metadata_json: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface AdminAuditLogList {
+  items: AdminAuditLogItem[];
+}
+
 export interface AssessmentModulePlanItem {
   module_id: string;
   module_type: string;

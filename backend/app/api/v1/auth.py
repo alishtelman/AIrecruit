@@ -23,6 +23,10 @@ from app.services.auth_service import (
     register_candidate,
     register_company,
 )
+from app.services.platform_settings_service import (
+    candidate_registration_enabled,
+    company_registration_enabled,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 audit_logger = logging.getLogger("security.audit")
@@ -89,6 +93,11 @@ async def candidate_register(
     body: CandidateRegisterRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    if not await candidate_registration_enabled(db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Candidate registration is temporarily disabled.",
+        )
     try:
         user, candidate = await register_candidate(db, body)
     except EmailAlreadyExistsError:
@@ -111,6 +120,11 @@ async def company_register(
     body: CompanyRegisterRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    if not await company_registration_enabled(db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Company registration is temporarily disabled.",
+        )
     try:
         user, company = await register_company(db, body)
     except EmailAlreadyExistsError:

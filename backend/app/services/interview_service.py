@@ -55,6 +55,7 @@ from app.schemas.interview import (
     StartInterviewResponse,
 )
 from app.services.candidate_access_service import has_company_candidate_workspace_access
+from app.services.platform_settings_service import build_effective_workspace_ai_settings
 
 
 # ---------------------------------------------------------------------------
@@ -2276,7 +2277,10 @@ async def start_interview(
     normalized_module_type = str(module_type or "").strip().lower() or None
     normalized_module_title = str(module_title or "").strip() or None
     safe_module_config = module_config if isinstance(module_config, dict) else {}
-    safe_workspace_ai_settings = workspace_ai_settings if isinstance(workspace_ai_settings, dict) else {}
+    safe_workspace_ai_settings = await build_effective_workspace_ai_settings(
+        db,
+        workspace_ai_settings if isinstance(workspace_ai_settings, dict) else {},
+    )
 
     resume_profile = preprocess_resume(active_resume.raw_text, target_role)
     module_context: dict[str, Any] | None = None

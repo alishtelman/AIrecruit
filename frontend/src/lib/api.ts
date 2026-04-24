@@ -1,6 +1,12 @@
 import type {
+  AdminAuditLogList,
+  AdminCompanyList,
+  AdminReportList,
+  AdminUserList,
   ActiveResume,
+  AdminInterviewList,
   AdminOverview,
+  PlatformSettings,
   AnalyticsFunnel,
   AnalyticsOverview,
   AnalyticsSalary,
@@ -129,6 +135,75 @@ export const companyAuthApi = {
 
 export const adminApi = {
   getOverview: () => request<AdminOverview>("/api/v1/admin/overview"),
+  getPlatformSettings: () => request<PlatformSettings>("/api/v1/admin/platform-settings"),
+  updatePlatformSettings: (data: {
+    candidate_registration_enabled?: boolean;
+    company_registration_enabled?: boolean;
+    employee_invites_enabled?: boolean;
+    maintenance_mode_enabled?: boolean;
+  }) =>
+    request<PlatformSettings>("/api/v1/admin/platform-settings", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  updateAISettings: (data: {
+    proctoring_policy_mode?: "observe_only" | "strict_flagging" | null;
+    interviewer_model_preference?: string | null;
+    assessor_model_preference?: string | null;
+  }) =>
+    request<PlatformSettings>("/api/v1/admin/ai-settings", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  listInterviews: (params: { q?: string; status?: string; limit?: number } = {}) =>
+    request<AdminInterviewList>(
+      withQuery("/api/v1/admin/interviews", {
+        q: params.q,
+        status: params.status,
+        limit: params.limit,
+      })
+    ),
+  requeueInterviewReport: (interviewId: string) =>
+    request(`/api/v1/admin/interviews/${interviewId}/requeue-report`, {
+      method: "POST",
+    }),
+  listUsers: (params: { q?: string; limit?: number } = {}) =>
+    request<AdminUserList>(
+      withQuery("/api/v1/admin/users", {
+        q: params.q,
+        limit: params.limit,
+      })
+    ),
+  setUserStatus: (userId: string, is_active: boolean) =>
+    request(`/api/v1/admin/users/${userId}/status`, {
+      method: "PUT",
+      body: JSON.stringify({ is_active }),
+    }),
+  listCompanies: (params: { q?: string; limit?: number } = {}) =>
+    request<AdminCompanyList>(
+      withQuery("/api/v1/admin/companies", {
+        q: params.q,
+        limit: params.limit,
+      })
+    ),
+  setCompanyStatus: (companyId: string, is_active: boolean) =>
+    request(`/api/v1/admin/companies/${companyId}/status`, {
+      method: "PUT",
+      body: JSON.stringify({ is_active }),
+    }),
+  listReports: (params: { q?: string; limit?: number } = {}) =>
+    request<AdminReportList>(
+      withQuery("/api/v1/admin/reports", {
+        q: params.q,
+        limit: params.limit,
+      })
+    ),
+  listAuditLog: (params: { limit?: number } = {}) =>
+    request<AdminAuditLogList>(
+      withQuery("/api/v1/admin/audit-log", {
+        limit: params.limit,
+      })
+    ),
 };
 
 // ── Company Candidates ────────────────────────────────────────────────────────
