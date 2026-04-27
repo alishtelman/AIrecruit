@@ -22,14 +22,90 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      media-service:
+        condition: service_healthy
+      resume-service:
+        condition: service_healthy
+      sandbox-service:
+        condition: service_healthy
     env_file:
       - .env
+    environment:
+      MEDIA_SERVICE_URL: http://media-service:8080
+      RESUME_SERVICE_URL: http://resume-service:8080
+      SANDBOX_SERVICE_URL: http://sandbox-service:8080
+      REPORT_WORKER_MODE: ${REPORT_WORKER_MODE:-embedded}
+      INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN:-dev-internal-worker-token}
     volumes:
       - ./backend:/app
       - uploads:/app/uploads
       - ./backend/storage:/app/storage
       - recordings:/app/storage/recordings
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  media-service:
+    build: ./services/media
+    env_file:
+      - .env
+    ports:
+      - "8081:8080"
+    volumes:
+      - recordings:/app/storage/recordings
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+
+  resume-service:
+    build: ./services/resume
+    environment:
+      RESUME_STORAGE_DIR: /app/storage/resumes
+      MAX_RESUME_SIZE_MB: ${MAX_RESUME_SIZE_MB:-10}
+    ports:
+      - "8083:8080"
+    volumes:
+      - ./backend/storage:/app/storage
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+
+  sandbox-service:
+    build: ./services/sandbox
+    ports:
+      - "8082:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+
+  report-worker:
+    build: ./services/report-worker
+    profiles:
+      - workers
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      BACKEND_INTERNAL_URL: http://backend:8000
+      INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN:-dev-internal-worker-token}
+      REPORT_WORKER_INTERVAL_SECONDS: ${REPORT_WORKER_INTERVAL_SECONDS:-5}
+      REPORT_WORKER_REQUEST_TIMEOUT_SECONDS: ${REPORT_WORKER_REQUEST_TIMEOUT_SECONDS:-300}
+      REPORT_WORKER_HEALTH_ADDR: :8080
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
 
   frontend:
     build: ./frontend

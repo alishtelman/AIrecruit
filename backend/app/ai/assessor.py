@@ -19,6 +19,7 @@ import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
 
+import httpx
 from groq import AsyncGroq
 
 from app.ai.calibration import build_calibration_prompt
@@ -1903,6 +1904,7 @@ _SQL_LIVE_SCENARIO_VALIDATION_DEFS = {
 }
 
 _CODING_TASK_RUNNER_TIMEOUT_SECONDS = 2.0
+_SQL_LIVE_VALIDATION_TIMEOUT_SECONDS = 2.0
 
 _CODING_TASK_RUNNER_CHECK_DEFS = {
     "rate_limiter_window_counter": (
@@ -2276,6 +2278,49 @@ def _normalize_sql_result_row(row: tuple) -> tuple:
     return tuple(normalized)
 
 
+def _map_sql_live_validation_payload(
+    *,
+    scenario_id: str,
+    payload: dict,
+    report_language: str,
+) -> tuple[list[dict], float | None]:
+    raw_checks = payload.get("validation_checks")
+    if not isinstance(raw_checks, list):
+        raise RuntimeError("sandbox returned invalid SQL validation payload")
+
+    checks: list[dict] = []
+    for item in raw_checks:
+        if not isinstance(item, dict):
+            continue
+        check_key = str(item.get("check_key") or "").strip()
+        if not check_key:
+            continue
+        raw_score = item.get("score")
+        score = round(float(raw_score), 1) if isinstance(raw_score, (int, float)) else 0.0
+        evidence = str(item.get("evidence") or "").strip() or None
+        checks.append(
+            {
+                "check_key": check_key,
+                "title": _sql_live_check_title(
+                    scenario_id=scenario_id,
+                    check_key=check_key,
+                    report_language=report_language,
+                ),
+                "status": str(item.get("status") or "missed").strip() or "missed",
+                "score": score,
+                "evidence": evidence,
+            }
+        )
+
+    raw_validation_score = payload.get("validation_score")
+    validation_score = (
+        round(float(raw_validation_score), 1)
+        if isinstance(raw_validation_score, (int, float))
+        else None
+    )
+    return checks, validation_score
+
+
 def _build_sql_live_validation_checks(
     *,
     scenario_id: str | None,
@@ -2287,6 +2332,20 @@ def _build_sql_live_validation_checks(
     query = str(query_text or "").strip()
     if not scenario_def or not query:
         return [], None
+
+    if settings.SANDBOX_SERVICE_URL:
+        try:
+            payload = _run_sql_live_validation_in_sandbox(
+                scenario_id=normalized_scenario_id,
+                query_text=query,
+            )
+            return _map_sql_live_validation_payload(
+                scenario_id=normalized_scenario_id,
+                payload=payload,
+                report_language=report_language,
+            )
+        except Exception:
+            logger.warning("SQL live sandbox validation failed, falling back to local SQLite", exc_info=True)
 
     stripped_query = query.strip().rstrip(";").strip()
     lowered_query = stripped_query.lower()
@@ -2900,6 +2959,36 @@ def _build_coding_task_runner_checks(
 
     temp_path = None
     try:
+        if settings.SANDBOX_SERVICE_URL:
+            try:
+                payload = _run_coding_task_runner_in_sandbox(
+                    scenario_id=normalized_scenario_id,
+                    artifact_code=artifact_code,
+                    artifact_language=normalized_language,
+                )
+                raw_checks = payload.get("runner_checks")
+                if not isinstance(raw_checks, list):
+                    return [], None
+                runner_checks = [
+                    {
+                        "check_key": str(item.get("check_key") or "").strip(),
+                        "title": _coding_task_runner_title(
+                            scenario_id=normalized_scenario_id,
+                            check_key=str(item.get("check_key") or "").strip(),
+                            report_language=report_language,
+                        ),
+                        "status": "passed" if item.get("passed") else "missed",
+                        "score": 10.0 if item.get("passed") else 0.0,
+                        "evidence": str(item.get("details") or "").strip() or None,
+                    }
+                    for item in raw_checks
+                    if isinstance(item, dict) and str(item.get("check_key") or "").strip()
+                ]
+                runner_score = payload.get("runner_score")
+                return runner_checks, round(float(runner_score), 1) if isinstance(runner_score, (int, float)) else None
+            except httpx.RequestError:
+                pass
+
         with tempfile.NamedTemporaryFile("w", suffix="_coding_runner.py", delete=False) as handle:
             handle.write(wrapper)
             temp_path = handle.name
@@ -2974,6 +3063,73 @@ def _build_coding_task_runner_checks(
                 os.unlink(temp_path)
             except OSError:
                 pass
+
+
+def _run_coding_task_runner_in_sandbox(
+    *,
+    scenario_id: str,
+    artifact_code: str,
+    artifact_language: str,
+) -> dict:
+    base_url = settings.SANDBOX_SERVICE_URL.rstrip("/")
+    with httpx.Client(base_url=base_url, timeout=_CODING_TASK_RUNNER_TIMEOUT_SECONDS + 1.0) as client:
+        response = client.post(
+            "/v1/coding/python",
+            json={
+                "scenario_id": scenario_id,
+                "language": artifact_language,
+                "code": artifact_code,
+                "timeout_seconds": _CODING_TASK_RUNNER_TIMEOUT_SECONDS,
+            },
+        )
+
+    if response.is_success:
+        payload = response.json()
+        if isinstance(payload, dict):
+            return payload
+        raise RuntimeError("sandbox returned invalid payload")
+
+    detail = _extract_sandbox_error_detail(response)
+    raise RuntimeError(detail)
+
+
+def _run_sql_live_validation_in_sandbox(
+    *,
+    scenario_id: str,
+    query_text: str,
+) -> dict:
+    base_url = settings.SANDBOX_SERVICE_URL.rstrip("/")
+    with httpx.Client(base_url=base_url, timeout=_SQL_LIVE_VALIDATION_TIMEOUT_SECONDS + 1.0) as client:
+        response = client.post(
+            "/v1/sql/validate",
+            json={
+                "scenario_id": scenario_id,
+                "query": query_text,
+                "timeout_seconds": _SQL_LIVE_VALIDATION_TIMEOUT_SECONDS,
+            },
+        )
+
+    if response.is_success:
+        payload = response.json()
+        if isinstance(payload, dict):
+            return payload
+        raise RuntimeError("sandbox returned invalid payload")
+
+    detail = _extract_sandbox_error_detail(response)
+    raise RuntimeError(detail)
+
+
+def _extract_sandbox_error_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        detail = payload.get("detail") or payload.get("message") or payload.get("error")
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+    body = response.text.strip()
+    return body or f"HTTP {response.status_code}"
 
 
 def _build_coding_task_evaluation(

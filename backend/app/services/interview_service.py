@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 import re
 from typing import Any
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1687,6 +1688,10 @@ def _log_report_pipeline_event(
         **fields,
     }
     logger.info("report_pipeline %s", json.dumps(payload, sort_keys=True, default=str))
+
+
+def _external_report_worker_enabled() -> bool:
+    return settings.REPORT_WORKER_MODE.strip().lower() == "external"
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
@@ -3921,6 +3926,13 @@ async def _ensure_report_generated(
 
 
 def _schedule_report_generation(interview_id: uuid.UUID) -> None:
+    if _external_report_worker_enabled():
+        _log_report_pipeline_event(
+            "report_schedule_external_worker",
+            interview_id=interview_id,
+        )
+        return
+
     if interview_id in _REPORT_GENERATION_TASKS:
         _increment_report_pipeline_metric("report_schedule_skipped_duplicate_total")
         _log_report_pipeline_event(
@@ -3937,6 +3949,40 @@ def _schedule_report_generation(interview_id: uuid.UUID) -> None:
         active_tasks=len(_REPORT_GENERATION_TASKS),
     )
     asyncio.create_task(_run_report_generation_job(interview_id))
+
+
+async def run_next_external_report_generation_job() -> dict[str, Any]:
+    from sqlalchemy import outerjoin
+
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(Interview.id)
+            .select_from(
+                outerjoin(
+                    Interview,
+                    AssessmentReport,
+                    AssessmentReport.interview_id == Interview.id,
+                )
+            )
+            .where(
+                Interview.status.in_(("completed", "report_processing")),
+                AssessmentReport.id.is_(None),
+            )
+            .order_by(Interview.updated_at.asc())
+            .limit(1)
+        )
+        interview_id = await session.scalar(stmt)
+
+    if interview_id is None:
+        return {"processed": False, "interview_id": None}
+
+    _increment_report_pipeline_metric("report_external_worker_tick_total")
+    _log_report_pipeline_event(
+        "report_external_worker_tick",
+        interview_id=interview_id,
+    )
+    await _run_report_generation_job(interview_id)
+    return {"processed": True, "interview_id": str(interview_id)}
 
 
 async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
@@ -4399,7 +4445,6 @@ async def save_interview_recording(
 ) -> None:
     import os
     from fastapi import HTTPException, status
-    from app.core.config import settings
 
     interview = await _get_interview(db, interview_id, candidate_id)
 
@@ -4413,6 +4458,14 @@ async def save_interview_recording(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail="Unsupported recording format. Allowed: video/webm, video/mp4.",
         )
+
+    if settings.MEDIA_SERVICE_URL:
+        try:
+            interview.recording_path = await _save_recording_with_media_service(interview_id, file)
+            await db.commit()
+            return
+        except httpx.RequestError:
+            await file.seek(0)
 
     max_bytes = settings.MAX_RECORDING_SIZE_MB * 1024 * 1024
     dest = os.path.join(
@@ -4441,6 +4494,48 @@ async def save_interview_recording(
 
     interview.recording_path = dest
     await db.commit()
+
+
+async def _save_recording_with_media_service(interview_id: uuid.UUID, file) -> str:
+    from fastapi import HTTPException
+
+    async def iter_file():
+        while True:
+            chunk = await file.read(1024 * 64)
+            if not chunk:
+                break
+            yield chunk
+
+    base_url = settings.MEDIA_SERVICE_URL.rstrip("/")
+    async with httpx.AsyncClient(base_url=base_url, timeout=120.0) as client:
+        response = await client.post(
+            f"/v1/recordings/{interview_id}",
+            content=iter_file(),
+            headers={"Content-Type": file.content_type or "application/octet-stream"},
+        )
+
+    if response.is_success:
+        payload = response.json()
+        path = payload.get("path")
+        if isinstance(path, str) and path:
+            return path
+        raise HTTPException(status_code=502, detail="Media service returned invalid recording path")
+
+    detail = _extract_media_service_error_detail(response)
+    raise HTTPException(status_code=response.status_code, detail=detail)
+
+
+def _extract_media_service_error_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        detail = payload.get("detail") or payload.get("message")
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+    body = response.text.strip()
+    return body or f"HTTP {response.status_code}"
 
 
 async def save_behavioral_signals(

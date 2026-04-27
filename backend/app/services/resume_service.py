@@ -2,6 +2,7 @@ import io
 import uuid
 from pathlib import Path
 
+import httpx
 from fastapi import UploadFile, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,6 +71,45 @@ def _save_file(content: bytes, extension: str) -> Path:
     return path
 
 
+async def _process_resume_with_resume_service(file: UploadFile, content: bytes) -> dict:
+    base_url = settings.RESUME_SERVICE_URL.rstrip("/")
+    files = {
+        "file": (
+            file.filename or "resume",
+            content,
+            file.content_type or "application/octet-stream",
+        )
+    }
+    async with httpx.AsyncClient(base_url=base_url, timeout=60.0) as client:
+        response = await client.post("/v1/resumes", files=files)
+
+    if response.is_success:
+        payload = response.json()
+        if isinstance(payload, dict):
+            return payload
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Resume service returned invalid payload.",
+        )
+
+    raise HTTPException(
+        status_code=response.status_code,
+        detail=_extract_resume_service_error_detail(response),
+    )
+
+
+def _extract_resume_service_error_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        detail = payload.get("detail") or payload.get("message") or payload.get("error")
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+    return response.text.strip() or f"Resume service failed with status {response.status_code}."
+
+
 async def upload_resume(
     db: AsyncSession,
     file: UploadFile,
@@ -77,9 +117,30 @@ async def upload_resume(
 ) -> ResumeUploadResponse:
     content = await file.read()
 
-    extension = _validate_file(file, content)
-    raw_text = _extract_text(content, extension)[:RAW_TEXT_MAX_CHARS]
-    file_path = _save_file(content, extension)
+    if settings.RESUME_SERVICE_URL:
+        try:
+            processed = await _process_resume_with_resume_service(file, content)
+            raw_text = str(processed.get("raw_text") or "")[:RAW_TEXT_MAX_CHARS]
+            file_path = Path(str(processed.get("path") or ""))
+            file_size = int(processed.get("file_size") or len(content))
+            if not str(file_path):
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Resume service returned empty file path.",
+                )
+            if not raw_text:
+                extension = _validate_file(file, content)
+                raw_text = _extract_text(content, extension)[:RAW_TEXT_MAX_CHARS]
+        except httpx.RequestError:
+            extension = _validate_file(file, content)
+            raw_text = _extract_text(content, extension)[:RAW_TEXT_MAX_CHARS]
+            file_path = _save_file(content, extension)
+            file_size = len(content)
+    else:
+        extension = _validate_file(file, content)
+        raw_text = _extract_text(content, extension)[:RAW_TEXT_MAX_CHARS]
+        file_path = _save_file(content, extension)
+        file_size = len(content)
 
     # Deactivate previous resumes
     await db.execute(
@@ -93,7 +154,7 @@ async def upload_resume(
         candidate_id=candidate.id,
         file_name=file.filename or file_path.name,
         file_path=str(file_path),
-        file_size=len(content),
+        file_size=file_size,
         raw_text=raw_text if raw_text else None,
         parsed_json=None,
         is_active=True,
