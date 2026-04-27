@@ -90,7 +90,9 @@ async def test_company_ai_settings_are_admin_managed(
     assert initial.status_code == 200, initial.text
     initial_data = initial.json()
     assert initial_data["proctoring_policy_mode"] in {"observe_only", "strict_flagging"}
-    assert "proctoring_policy_mode" in initial_data["runtime_applied_fields"]
+    assert initial_data["managed_by"] == "platform_admin"
+    assert "interviewer_provider" not in initial_data
+    assert "interviewer_runtime_model" not in initial_data
 
     updated = await client.put(
         "/api/v1/company/settings/ai",
@@ -101,17 +103,7 @@ async def test_company_ai_settings_are_admin_managed(
             "assessor_model_preference": "llama-3.1-8b-instant",
         },
     )
-    assert updated.status_code == 200, updated.text
-    data = updated.json()
-    assert data["proctoring_policy_mode"] == "strict_flagging"
-    assert data["interviewer_model_preference"] == "llama-3.1-8b-instant"
-    assert data["assessor_model_preference"] == "llama-3.1-8b-instant"
-    assert data["interviewer_runtime_model"] == "llama-3.1-8b-instant"
-    assert data["assessor_runtime_model"] == "llama-3.1-8b-instant"
-    assert "interviewer_model_preference" in data["stored_preference_fields"]
-    assert "assessor_model_preference" in data["stored_preference_fields"]
-    assert "interviewer_model_preference" in data["runtime_applied_fields"]
-    assert "assessor_model_preference" in data["runtime_applied_fields"]
+    assert updated.status_code == 403, updated.text
 
     _viewer_email, viewer_token = await _invite_and_login_member(client, company_token, "viewer")
     viewer_update = await client.put(

@@ -83,6 +83,20 @@ export interface PlatformSettings {
   proctoring_policy_mode: "observe_only" | "strict_flagging" | string;
   interviewer_model_preference: string | null;
   assessor_model_preference: string | null;
+  llm_provider: "groq" | "openai" | "anthropic" | string;
+  interviewer_model: string;
+  assessor_model: string;
+  interviewer_prompt_override: string | null;
+  assessor_prompt_override: string | null;
+  llm_timeout_seconds: number;
+  llm_max_retries: number;
+  llm_model_options: Record<string, string[]>;
+  llm_api_key_available: boolean;
+  llm_required_api_key: string | null;
+  llm_configuration_warning: string | null;
+  mock_ai_enabled: boolean;
+  tts_provider: string | null;
+  tts_fallback_provider: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -242,12 +256,8 @@ export interface CompanyMember {
 
 export interface CompanyAISettings {
   proctoring_policy_mode: "observe_only" | "strict_flagging";
-  interviewer_provider: string;
-  interviewer_runtime_model: string;
-  interviewer_model_preference: string | null;
-  assessor_provider: string;
-  assessor_runtime_model: string;
-  assessor_model_preference: string | null;
+  managed_by: "platform_admin" | string;
+  message: string;
   tts_provider: string;
   tts_fallback_provider: string;
   mock_ai_available: boolean;

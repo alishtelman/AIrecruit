@@ -2650,8 +2650,14 @@ def _validate_assessment_result(result: Any) -> AssessmentResult:
 async def _get_next_question_with_dev_fallback(
     ctx: InterviewContext,
     model_preference: str | None = None,
+    runtime_settings: dict[str, Any] | None = None,
 ) -> str:
     async def _call_with_optional_override(client: Any) -> str:
+        if runtime_settings is not None:
+            try:
+                return await client.get_next_question(ctx, runtime_settings=runtime_settings)
+            except TypeError:
+                return await client.get_next_question(ctx)
         if model_preference is None:
             return await client.get_next_question(ctx)
         try:
@@ -2696,6 +2702,7 @@ async def _assess_with_dev_fallback(
                 language=language,
                 interview_meta=interview_meta,
                 model_override=assessor_model_preference,
+                runtime_settings=workspace_ai_settings if isinstance(workspace_ai_settings, dict) else None,
             ),
             timeout=_assessment_timeout_seconds(),
         )
@@ -2919,10 +2926,9 @@ async def start_interview(
         module_stage_index=0,
         module_stage_count=len(module_context.get("stage_plan", [])) if module_context else 0,
     )
-    interviewer_model_preference = safe_workspace_ai_settings.get("interviewer_model_preference")
     first_question = await _get_next_question_with_dev_fallback(
         ctx,
-        model_preference=interviewer_model_preference,
+        runtime_settings=safe_workspace_ai_settings,
     )
     first_question = _sanitize_chat_question(first_question, language=language) or first_question
 
@@ -2969,8 +2975,15 @@ async def start_interview(
     if safe_workspace_ai_settings:
         initial_state["workspace_ai_settings"] = {
             "proctoring_policy_mode": safe_workspace_ai_settings.get("proctoring_policy_mode"),
+            "llm_provider": safe_workspace_ai_settings.get("llm_provider"),
+            "interviewer_model": safe_workspace_ai_settings.get("interviewer_model"),
+            "assessor_model": safe_workspace_ai_settings.get("assessor_model"),
             "interviewer_model_preference": safe_workspace_ai_settings.get("interviewer_model_preference"),
             "assessor_model_preference": safe_workspace_ai_settings.get("assessor_model_preference"),
+            "interviewer_prompt_override": safe_workspace_ai_settings.get("interviewer_prompt_override"),
+            "assessor_prompt_override": safe_workspace_ai_settings.get("assessor_prompt_override"),
+            "llm_timeout_seconds": safe_workspace_ai_settings.get("llm_timeout_seconds"),
+            "llm_max_retries": safe_workspace_ai_settings.get("llm_max_retries"),
         }
     if normalized_module_type:
         initial_state.update(
@@ -3386,7 +3399,7 @@ async def add_candidate_message(
         module_stage_key: str | None = None
         module_stage_title: str | None = None
         module_stage_prompt: str | None = None
-        workspace_ai_settings = state.get("workspace_ai_settings")
+        workspace_ai_settings = await build_effective_workspace_ai_settings(db)
         if not should_end_now:
             competency_targets = None
             resume_anchor = None
@@ -3462,12 +3475,9 @@ async def add_candidate_message(
                 module_stage_index=resolved_next_topic_index if resolved_next_topic_index is not None else current_topic_index,
                 module_stage_count=len(module_stage_plan) if module_stage_plan else 0,
             )
-            interviewer_model_preference = None
-            if isinstance(workspace_ai_settings, dict):
-                interviewer_model_preference = workspace_ai_settings.get("interviewer_model_preference")
             next_q = await _get_next_question_with_dev_fallback(
                 ctx,
-                model_preference=interviewer_model_preference,
+                runtime_settings=workspace_ai_settings if isinstance(workspace_ai_settings, dict) else None,
             )
             next_q = _sanitize_chat_question(next_q, language=interview.language)
 
@@ -3568,8 +3578,15 @@ async def add_candidate_message(
         if isinstance(workspace_ai_settings, dict) and workspace_ai_settings:
             interview.interview_state["workspace_ai_settings"] = {
                 "proctoring_policy_mode": workspace_ai_settings.get("proctoring_policy_mode"),
+                "llm_provider": workspace_ai_settings.get("llm_provider"),
+                "interviewer_model": workspace_ai_settings.get("interviewer_model"),
+                "assessor_model": workspace_ai_settings.get("assessor_model"),
                 "interviewer_model_preference": workspace_ai_settings.get("interviewer_model_preference"),
                 "assessor_model_preference": workspace_ai_settings.get("assessor_model_preference"),
+                "interviewer_prompt_override": workspace_ai_settings.get("interviewer_prompt_override"),
+                "assessor_prompt_override": workspace_ai_settings.get("assessor_prompt_override"),
+                "llm_timeout_seconds": workspace_ai_settings.get("llm_timeout_seconds"),
+                "llm_max_retries": workspace_ai_settings.get("llm_max_retries"),
             }
         if coding_task_artifact and _is_workspace_artifact_module_type(module_type):
             interview.interview_state["coding_task_artifact"] = {
@@ -3814,13 +3831,15 @@ async def _ensure_report_generated(
     messages = await _get_messages(db, interview.id)
     _update_report_diagnostics(interview, phase="assessing", status="processing")
     await db.commit()
+    report_interview_meta = dict(interview.interview_state or {})
+    report_interview_meta["workspace_ai_settings"] = await build_effective_workspace_ai_settings(db)
     result: AssessmentResult = await _assess_with_dev_fallback(
         target_role=interview.target_role,
         message_history=_to_history(messages),
         message_timestamps=_to_timestamps(messages),
         behavioral_signals=interview.behavioral_signals,
         language=interview.language,
-        interview_meta=interview.interview_state or {},
+        interview_meta=report_interview_meta,
     )
 
     report = AssessmentReport(
@@ -4547,11 +4566,7 @@ async def save_behavioral_signals(
     """Persist behavioral signals captured during the interview."""
     interview = await _get_interview(db, interview_id, candidate_id)
     payload = dict(signals or {})
-    workspace_ai_settings = (
-        interview.interview_state.get("workspace_ai_settings")
-        if isinstance(interview.interview_state, dict)
-        else None
-    )
+    workspace_ai_settings = await build_effective_workspace_ai_settings(db)
     if payload.get("policy_mode") in (None, "") and isinstance(workspace_ai_settings, dict):
         payload["policy_mode"] = workspace_ai_settings.get("proctoring_policy_mode")
     interview.behavioral_signals = normalize_behavioral_signals(payload)

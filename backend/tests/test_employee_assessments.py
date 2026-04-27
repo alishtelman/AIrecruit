@@ -361,7 +361,7 @@ async def test_company_ai_proctoring_policy_applies_to_new_assessment_interviews
 
 
 @pytest.mark.asyncio
-async def test_company_ai_model_preference_applies_to_assessment_reports(
+async def test_company_ai_model_preference_cannot_override_assessment_reports(
     client: AsyncClient,
     company_token: str,
 ):
@@ -370,27 +370,7 @@ async def test_company_ai_model_preference_applies_to_assessment_reports(
         headers=auth_headers(company_token),
         json={"assessor_model_preference": "llama-3.1-8b-instant"},
     )
-    assert settings_resp.status_code == 200, settings_resp.text
-
-    employee_email = f"modelpref_{uuid.uuid4().hex[:8]}@example.com"
-    assessment = await _create_assessment(client, company_token, employee_email, "Model Preference Candidate")
-    candidate_token = await _register_candidate(client, employee_email, "Model Preference Candidate")
-    await _upload_resume(client, candidate_token)
-
-    interview_id, report_id = await _complete_employee_assessment(
-        client,
-        candidate_token,
-        assessment["invite_token"],
-    )
-    assert interview_id
-
-    report_resp = await client.get(
-        f"/api/v1/company/reports/{report_id}",
-        headers=auth_headers(company_token),
-    )
-    assert report_resp.status_code == 200, report_resp.text
-    report = report_resp.json()
-    assert "llama-3.1-8b-instant" in report["model_version"]
+    assert settings_resp.status_code == 403, settings_resp.text
 
 
 @pytest.mark.asyncio

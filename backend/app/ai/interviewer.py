@@ -8,9 +8,7 @@ import re
 import logging
 from dataclasses import dataclass, field
 
-from groq import AsyncGroq
-
-from app.ai.model_preferences import DEFAULT_LLM_MODEL, resolve_llm_runtime_model
+from app.ai.runtime import LLMRuntime, runtime as default_runtime, runtime_settings_from_payload
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -1607,12 +1605,18 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
 
 
 class LLMInterviewer:
-    """Generates adaptive interview questions via Groq API."""
+    """Generates adaptive interview questions via the configured LLM runtime."""
 
-    def __init__(self, client: AsyncGroq) -> None:
+    def __init__(self, client=None, runtime: LLMRuntime | None = None) -> None:
         self._client = client
+        self._runtime = runtime or default_runtime
 
-    async def get_next_question(self, ctx: InterviewContext, model_override: str | None = None) -> str:
+    async def get_next_question(
+        self,
+        ctx: InterviewContext,
+        model_override: str | None = None,
+        runtime_settings: dict | None = None,
+    ) -> str:
         # First question: always deterministic (faster, no LLM needed)
         if ctx.module_type == "system_design" and ctx.question_type == "main":
             system_design_main = _system_design_main_question(ctx)
@@ -1670,26 +1674,23 @@ class LLMInterviewer:
         temperature = 0.65 if is_non_main else 0.5
 
         try:
-            resolved_model = resolve_llm_runtime_model(model_override)
-            try:
+            if self._client is not None and runtime_settings is None:
                 response = await self._client.chat.completions.create(
-                    model=resolved_model,
+                    model=model_override or "llama-3.3-70b-versatile",
                     max_tokens=max_tokens,
                     temperature=temperature,
                     messages=messages,
                 )
-            except Exception:
-                if resolved_model != DEFAULT_LLM_MODEL:
-                    logger.exception("Preferred interviewer model failed, retrying with default model")
-                    response = await self._client.chat.completions.create(
-                        model=DEFAULT_LLM_MODEL,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        messages=messages,
-                    )
-                else:
-                    raise
-            raw = response.choices[0].message.content.strip()
+                raw = response.choices[0].message.content.strip()
+            else:
+                resolved_runtime = runtime_settings_from_payload(runtime_settings, role="interviewer")
+                result = await self._runtime.complete_text(
+                    runtime_settings=resolved_runtime,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    messages=messages,
+                )
+                raw = result.text
             normalized = _normalize_question_output(raw, ctx)
             if _question_is_repeated(normalized, ctx.message_history):
                 fallback = _fallback_question_for_context(ctx, prefer_secondary_main_topic=True)
@@ -1876,9 +1877,4 @@ class DisabledInterviewer:
 # Singleton
 # ---------------------------------------------------------------------------
 
-if settings.GROQ_API_KEY:
-    interviewer = LLMInterviewer(client=AsyncGroq(api_key=settings.GROQ_API_KEY))
-elif settings.allow_mock_ai:
-    interviewer = MockInterviewer()  # type: ignore[assignment]
-else:
-    interviewer = DisabledInterviewer()  # type: ignore[assignment]
+interviewer = LLMInterviewer()

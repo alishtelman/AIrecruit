@@ -81,6 +81,65 @@ async def test_admin_can_update_platform_settings(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_admin_can_update_platform_ai_runtime_without_prompt_body_in_audit(client: AsyncClient):
+    token = await _admin_token(client)
+    secret_prompt = "do not store this full prompt body in audit metadata"
+    resp = await client.put(
+        "/api/v1/admin/ai-settings",
+        headers=auth_headers(token),
+        json={
+            "llm_provider": "groq",
+            "interviewer_model": "llama-3.1-8b-instant",
+            "assessor_model": "llama-3.1-8b-instant",
+            "llm_timeout_seconds": 12,
+            "llm_max_retries": 2,
+            "interviewer_prompt_override": secret_prompt,
+            "assessor_prompt_override": "assessor prompt body",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["llm_provider"] == "groq"
+    assert payload["interviewer_model"] == "llama-3.1-8b-instant"
+    assert payload["assessor_model"] == "llama-3.1-8b-instant"
+    assert payload["llm_timeout_seconds"] == 12
+    assert payload["llm_max_retries"] == 2
+    assert payload["llm_required_api_key"] == "GROQ_API_KEY"
+    assert "groq" in payload["llm_model_options"]
+
+    audit = await client.get("/api/v1/admin/audit-log", headers=auth_headers(token))
+    assert audit.status_code == 200, audit.text
+    encoded = audit.text
+    assert "platform_ai_settings_updated" in encoded
+    assert secret_prompt not in encoded
+
+    await _set_platform_settings(
+        llm_provider="groq",
+        interviewer_model="llama-3.3-70b-versatile",
+        assessor_model="llama-3.3-70b-versatile",
+        interviewer_prompt_override=None,
+        assessor_prompt_override=None,
+        llm_timeout_seconds=30,
+        llm_max_retries=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_rejects_invalid_provider_model_pair(client: AsyncClient):
+    token = await _admin_token(client)
+    resp = await client.put(
+        "/api/v1/admin/ai-settings",
+        headers=auth_headers(token),
+        json={
+            "llm_provider": "openai",
+            "interviewer_model": "llama-3.3-70b-versatile",
+            "assessor_model": "gpt-4.1-mini",
+        },
+    )
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
 async def test_candidate_registration_respects_platform_toggle(client: AsyncClient):
     await _set_platform_settings(candidate_registration_enabled=False)
     try:

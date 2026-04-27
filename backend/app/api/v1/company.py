@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +17,6 @@ from app.schemas.company import (
     AnalyticsSalaryResponse,
     CandidateActivityResponse,
     CompanyAISettingsResponse,
-    CompanyAISettingsUpdateRequest,
     CandidateDetailResponse,
     CandidateListItemResponse,
     CandidateNoteCreateRequest,
@@ -41,7 +40,6 @@ from app.services.company_service import (
 )
 from app.services.company_settings_service import (
     get_company_ai_settings_response,
-    update_company_ai_settings,
 )
 from app.services.candidate_access_service import (
     create_share_link_access_request,
@@ -396,25 +394,22 @@ async def company_analytics_salary(
 
 @router.get("/settings/ai", response_model=CompanyAISettingsResponse)
 async def get_company_ai_settings(
+    db: AsyncSession = Depends(get_db),
     user_and_company: tuple[User, Company] = Depends(get_current_company),
 ):
     _, company = user_and_company
-    return get_company_ai_settings_response(company)
+    return await get_company_ai_settings_response(db, company)
 
 
 @router.put("/settings/ai", response_model=CompanyAISettingsResponse)
 async def put_company_ai_settings(
-    body: CompanyAISettingsUpdateRequest,
+    body: dict[str, Any] = Body(default_factory=dict),
     db: AsyncSession = Depends(get_db),
     context: tuple[User, Company, str] = Depends(get_current_company_recruiter),
 ):
-    _, company, role = context
-    if role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the company admin can manage AI settings")
-    return await update_company_ai_settings(
-        db,
-        company=company,
-        updates=body.model_dump(exclude_unset=True),
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="AI runtime is managed by platform admin.",
     )
 
 

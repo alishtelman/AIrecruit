@@ -20,16 +20,15 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 import httpx
-from groq import AsyncGroq
 
 from app.ai.calibration import build_calibration_prompt
 from app.ai.competencies import get_competencies, get_category_weights
 from app.ai.interviewer import classify_answer, extract_mentioned_technologies
 from app.ai.model_preferences import (
-    DEFAULT_LLM_MODEL,
     is_allowed_llm_model_preference,
     resolve_llm_runtime_model,
 )
+from app.ai.runtime import LLMRuntime, runtime as default_runtime, runtime_settings_from_payload
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -4793,28 +4792,57 @@ def _build_mock_competency_scores(
 # ---------------------------------------------------------------------------
 
 class LLMAssessor:
-    """Generates structured assessment reports via Groq API (two-pass)."""
+    """Generates structured assessment reports via the configured LLM runtime."""
 
-    def __init__(self, client: AsyncGroq) -> None:
+    def __init__(self, client=None, runtime: LLMRuntime | None = None) -> None:
         self._client = client
+        self._runtime = runtime or default_runtime
 
-    async def _create_completion_with_model_fallback(self, *, model_override: str | None = None, **kwargs):
-        resolved_model = resolve_llm_runtime_model(model_override)
-        try:
+    async def _create_structured_completion(
+        self,
+        *,
+        model_override: str | None = None,
+        runtime_settings: dict | None = None,
+        **kwargs,
+    ) -> tuple[dict, str]:
+        if self._client is not None and runtime_settings is None:
+            resolved_model = resolve_llm_runtime_model(model_override)
             response = await self._client.chat.completions.create(
                 model=resolved_model,
                 **kwargs,
             )
-            return response, resolved_model
-        except Exception:
-            if resolved_model == DEFAULT_LLM_MODEL:
-                raise
-            logger.exception("Preferred assessor model failed, retrying with default model")
-            response = await self._client.chat.completions.create(
-                model=DEFAULT_LLM_MODEL,
+            tool_call = response.choices[0].message.tool_calls[0]
+            return json.loads(tool_call.function.arguments), resolved_model
+
+        tools = kwargs.pop("tools", None) or []
+        tool = tools[0] if tools else None
+        if not tool:
+            raise ValueError("Structured completion requires a tool schema")
+        resolved_runtime = runtime_settings_from_payload(runtime_settings, role="assessor")
+        data, result = await self._runtime.complete_structured(
+            runtime_settings=resolved_runtime,
+            messages=kwargs["messages"],
+            max_tokens=kwargs.get("max_tokens", 2048),
+            temperature=kwargs.get("temperature", 0.2),
+            tool=tool,
+        )
+        return data, result.model
+
+    async def _create_completion_with_model_fallback(
+        self,
+        *,
+        model_override: str | None = None,
+        runtime_settings: dict | None = None,
+        **kwargs,
+    ):
+        if self._client is None or runtime_settings is not None:
+            data, resolved_model = await self._create_structured_completion(
+                model_override=model_override,
+                runtime_settings=runtime_settings,
                 **kwargs,
             )
-            return response, DEFAULT_LLM_MODEL
+            return data, resolved_model
+        return await self._create_structured_completion(model_override=model_override, **kwargs)
 
     async def assess(
         self,
@@ -4825,6 +4853,7 @@ class LLMAssessor:
         language: str = "ru",
         interview_meta: dict | None = None,
         model_override: str | None = None,
+        runtime_settings: dict | None = None,
     ) -> AssessmentResult:
         report_language = _normalized_report_language(language)
         role_label = _role_label(target_role, report_language)
@@ -4854,6 +4883,7 @@ class LLMAssessor:
             comp_ref,
             report_language,
             model_override=model_override,
+            runtime_settings=runtime_settings,
         )
 
         # Pass 2: Competency scoring (message_history needed for word-count penalization)
@@ -4866,6 +4896,7 @@ class LLMAssessor:
             message_history,
             report_language,
             model_override=model_override,
+            runtime_settings=runtime_settings,
         )
         result.model_version = resolved_model
 
@@ -4979,6 +5010,7 @@ class LLMAssessor:
         comp_ref: str,
         report_language: str,
         model_override: str | None = None,
+        runtime_settings: dict | None = None,
     ) -> tuple[list[dict], str]:
         """Pass 1: Extract per-question evidence, skills, red flags."""
         output_language = "русском" if report_language == "ru" else "English"
@@ -5037,9 +5069,11 @@ class LLMAssessor:
         )
 
         try:
-            response, resolved_model = await self._create_completion_with_model_fallback(
+            data, resolved_model = await self._create_completion_with_model_fallback(
                 model_override=model_override,
+                runtime_settings=runtime_settings,
                 max_tokens=2048,
+                temperature=0.2,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": f"Транскрипт:\n\n{transcript}"},
@@ -5047,11 +5081,11 @@ class LLMAssessor:
                 tools=[_QUESTION_ANALYSIS_TOOL],
                 tool_choice={"type": "function", "function": {"name": "submit_question_analysis"}},
             )
-            tool_call = response.choices[0].message.tool_calls[0]
-            data = json.loads(tool_call.function.arguments)
             return data.get("questions", []), resolved_model
         except Exception:
             logger.exception("Pass 1 (question analysis) failed, continuing with empty analysis")
+            if runtime_settings is not None:
+                return [], runtime_settings_from_payload(runtime_settings, role="assessor").model
             return [], resolve_llm_runtime_model(model_override)
 
     async def _pass2_competency_scoring(
@@ -5064,6 +5098,7 @@ class LLMAssessor:
         message_history: list[dict] | None = None,
         report_language: str = "ru",
         model_override: str | None = None,
+        runtime_settings: dict | None = None,
     ) -> AssessmentResult:
         """Pass 2: Score each competency using Pass 1 evidence + BARS calibration."""
         pass1_summary = json.dumps(pass1_data, ensure_ascii=False, indent=2) if pass1_data else "Анализ вопросов недоступен."
@@ -5118,9 +5153,11 @@ class LLMAssessor:
         )
 
         try:
-            response, resolved_model = await self._create_completion_with_model_fallback(
+            data, resolved_model = await self._create_completion_with_model_fallback(
                 model_override=model_override,
+                runtime_settings=runtime_settings,
                 max_tokens=2048,
+                temperature=0.2,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user_content},
@@ -5128,8 +5165,6 @@ class LLMAssessor:
                 tools=[_COMPETENCY_ASSESSMENT_TOOL],
                 tool_choice={"type": "function", "function": {"name": "submit_competency_assessment"}},
             )
-            tool_call = response.choices[0].message.tool_calls[0]
-            data: dict = json.loads(tool_call.function.arguments)
         except Exception:
             logger.exception("Pass 2 (competency scoring) failed, falling back to legacy assessment")
             try:
@@ -5138,6 +5173,7 @@ class LLMAssessor:
                     transcript,
                     report_language,
                     model_override=model_override,
+                    runtime_settings=runtime_settings,
                 )
             except Exception:
                 logger.exception("Legacy assessment failed, falling back to deterministic mock assessment")
@@ -5239,6 +5275,7 @@ class LLMAssessor:
         transcript: str,
         report_language: str = "ru",
         model_override: str | None = None,
+        runtime_settings: dict | None = None,
     ) -> AssessmentResult:
         """Fallback single-pass assessment (backward compat)."""
         role_label = _role_label(target_role, report_language)
@@ -5248,9 +5285,11 @@ class LLMAssessor:
             f"{'русском' if report_language == 'ru' else 'English'}."
         )
 
-        response, resolved_model = await self._create_completion_with_model_fallback(
+        data, resolved_model = await self._create_completion_with_model_fallback(
             model_override=model_override,
+            runtime_settings=runtime_settings,
             max_tokens=1024,
+            temperature=0.2,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": f"Транскрипт собеседования:\n\n{transcript}"},
@@ -5258,9 +5297,6 @@ class LLMAssessor:
             tools=[_ASSESSMENT_TOOL],
             tool_choice={"type": "function", "function": {"name": "submit_assessment"}},
         )
-
-        tool_call = response.choices[0].message.tool_calls[0]
-        data: dict = json.loads(tool_call.function.arguments)
         confidence_metrics = _compute_confidence_metrics([], [])
         data["overall_confidence"] = confidence_metrics["overall_confidence"]
         data["competency_confidence"] = confidence_metrics["competency_confidence"]
@@ -5475,9 +5511,4 @@ class DisabledAssessor:
 # Singleton
 # ---------------------------------------------------------------------------
 
-if settings.GROQ_API_KEY:
-    assessor = LLMAssessor(client=AsyncGroq(api_key=settings.GROQ_API_KEY))
-elif settings.allow_mock_ai:
-    assessor = MockAssessor()  # type: ignore[assignment]
-else:
-    assessor = DisabledAssessor()  # type: ignore[assignment]
+assessor = LLMAssessor()

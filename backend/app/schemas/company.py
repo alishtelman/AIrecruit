@@ -63,12 +63,8 @@ class CompanyAISettingsUpdateRequest(BaseModel):
 
 class CompanyAISettingsResponse(BaseModel):
     proctoring_policy_mode: str
-    interviewer_provider: str
-    interviewer_runtime_model: str
-    interviewer_model_preference: str | None = None
-    assessor_provider: str
-    assessor_runtime_model: str
-    assessor_model_preference: str | None = None
+    managed_by: str = "platform_admin"
+    message: str = "AI runtime is managed by platform admin."
     tts_provider: str
     tts_fallback_provider: str
     mock_ai_available: bool = False

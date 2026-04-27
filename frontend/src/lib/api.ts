@@ -151,6 +151,13 @@ export const adminApi = {
     proctoring_policy_mode?: "observe_only" | "strict_flagging" | null;
     interviewer_model_preference?: string | null;
     assessor_model_preference?: string | null;
+    llm_provider?: string | null;
+    interviewer_model?: string | null;
+    assessor_model?: string | null;
+    interviewer_prompt_override?: string | null;
+    assessor_prompt_override?: string | null;
+    llm_timeout_seconds?: number | null;
+    llm_max_retries?: number | null;
   }) =>
     request<PlatformSettings>("/api/v1/admin/ai-settings", {
       method: "PUT",

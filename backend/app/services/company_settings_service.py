@@ -1,91 +1,27 @@
 from __future__ import annotations
 
-from typing import Any
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.model_preferences import (
-    DEFAULT_LLM_MODEL,
-    is_allowed_llm_model_preference,
-    resolve_llm_runtime_model,
-)
 from app.core.config import settings
 from app.models.company import Company
+from app.services.platform_settings_service import get_platform_settings_payload
 
 _ALLOWED_PROCTORING_POLICY_MODES = {"observe_only", "strict_flagging"}
 
 
-def _runtime_provider_name() -> str:
-    if settings.GROQ_API_KEY:
-        return "groq"
-    if settings.allow_mock_ai:
-        return "mock"
-    return "disabled"
-
-
-def _normalized_company_ai_settings(company: Company) -> dict[str, Any]:
-    payload = company.ai_settings if isinstance(company.ai_settings, dict) else {}
-    normalized: dict[str, Any] = {}
-
-    proctoring_policy_mode = str(payload.get("proctoring_policy_mode") or "").strip().lower()
-    if proctoring_policy_mode in _ALLOWED_PROCTORING_POLICY_MODES:
-        normalized["proctoring_policy_mode"] = proctoring_policy_mode
-
-    for key in ("interviewer_model_preference", "assessor_model_preference"):
-        value = str(payload.get(key) or "").strip()
-        if value:
-            normalized[key] = value[:120]
-
-    return normalized
-
-
-def get_company_ai_settings_response(company: Company) -> dict[str, Any]:
-    stored = _normalized_company_ai_settings(company)
-    provider = _runtime_provider_name()
-    runtime_applied_fields = ["proctoring_policy_mode"]
-    stored_preference_fields = [key for key in stored.keys() if key != "proctoring_policy_mode"]
-    if is_allowed_llm_model_preference(stored.get("interviewer_model_preference")):
-        runtime_applied_fields.append("interviewer_model_preference")
-    if is_allowed_llm_model_preference(stored.get("assessor_model_preference")):
-        runtime_applied_fields.append("assessor_model_preference")
-
-    configured_policy = (settings.PROCTORING_POLICY_MODE or "").strip().lower()
+async def get_company_ai_settings_response(db: AsyncSession, company: Company) -> dict[str, Any]:
+    platform_settings = await get_platform_settings_payload(db)
+    configured_policy = str(platform_settings.get("proctoring_policy_mode") or "").strip().lower()
     if configured_policy not in _ALLOWED_PROCTORING_POLICY_MODES:
         configured_policy = "observe_only"
 
     return {
-        "proctoring_policy_mode": stored.get("proctoring_policy_mode") or configured_policy,
-        "interviewer_provider": provider,
-        "interviewer_runtime_model": resolve_llm_runtime_model(stored.get("interviewer_model_preference")) if provider != "disabled" else "disabled",
-        "interviewer_model_preference": stored.get("interviewer_model_preference"),
-        "assessor_provider": provider,
-        "assessor_runtime_model": resolve_llm_runtime_model(stored.get("assessor_model_preference")) if provider != "disabled" else "disabled",
-        "assessor_model_preference": stored.get("assessor_model_preference"),
+        "proctoring_policy_mode": configured_policy,
+        "managed_by": "platform_admin",
+        "message": "AI runtime is managed by platform admin.",
         "tts_provider": settings.TTS_PROVIDER,
         "tts_fallback_provider": settings.TTS_FALLBACK_PROVIDER,
         "mock_ai_available": settings.allow_mock_ai,
-        "runtime_applied_fields": runtime_applied_fields,
-        "stored_preference_fields": stored_preference_fields,
+        "runtime_applied_fields": [],
+        "stored_preference_fields": [],
     }
-
-
-async def update_company_ai_settings(
-    db: AsyncSession,
-    *,
-    company: Company,
-    updates: dict[str, Any],
-) -> dict[str, Any]:
-    payload = _normalized_company_ai_settings(company)
-
-    for key in ("proctoring_policy_mode", "interviewer_model_preference", "assessor_model_preference"):
-        if key in updates:
-            value = updates.get(key)
-            if value in (None, ""):
-                payload.pop(key, None)
-            else:
-                payload[key] = value
-
-    company.ai_settings = payload or None
-    await db.commit()
-    await db.refresh(company)
-    return get_company_ai_settings_response(company)
