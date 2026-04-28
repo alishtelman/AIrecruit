@@ -1,4 +1,5 @@
 """Tests for company collaboration roles, notes, and activity log."""
+import asyncio
 import io
 import uuid
 
@@ -46,7 +47,23 @@ async def _complete_interview(client: AsyncClient, token: str, role: str = "back
         headers=auth_headers(token),
     )
     assert finish.status_code == 200, finish.text
-    return finish.json()
+    payload = finish.json()
+    if payload.get("report_id"):
+        return payload
+    for _ in range(160):
+        status = await client.get(
+            f"/api/v1/interviews/{interview_id}/report-status",
+            headers=auth_headers(token),
+        )
+        assert status.status_code == 200, status.text
+        status_data = status.json()
+        if status_data["processing_state"] == "ready" and status_data["report_id"]:
+            payload["report_id"] = status_data["report_id"]
+            return payload
+        if status_data["processing_state"] == "failed":
+            raise AssertionError(status_data.get("failure_reason") or "Report generation failed")
+        await asyncio.sleep(0.25)
+    raise AssertionError(f"Report was not ready for interview {interview_id}")
 
 
 async def _candidate_profile(client: AsyncClient, token: str) -> dict:
