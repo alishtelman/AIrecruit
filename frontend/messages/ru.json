@@ -157,7 +157,7 @@
     "aiSettings": {
       "loading": "Загружаем AI-настройки...",
       "title": "Глобальные настройки interview engine",
-      "description": "Эти настройки становятся дефолтом для candidate interview flow и базой для company-specific overrides.",
+      "description": "Эти platform-only настройки управляют runtime интервьюера и ассессора для всех workspace.",
       "save": "Сохранить AI-настройки",
       "saved": "AI-настройки обновлены",
       "errors": {
@@ -750,7 +750,7 @@
     },
     "ai": {
       "title": "AI и runtime-настройки",
-      "subtitle": "Просматривайте текущий runtime stack и задавайте workspace preferences для следующих интервью и отчётов.",
+      "subtitle": "AI runtime управляется platform admin. Company users видят только безопасный операционный статус.",
       "loading": "Загружаем AI-настройки...",
       "success": "AI-настройки компании сохранены.",
       "saving": "Сохраняем AI-настройки...",

@@ -1,4 +1,5 @@
 """Tests for company collaboration roles, notes, and activity log."""
+import asyncio
 import io
 import uuid
 
@@ -46,7 +47,23 @@ async def _complete_interview(client: AsyncClient, token: str, role: str = "back
         headers=auth_headers(token),
     )
     assert finish.status_code == 200, finish.text
-    return finish.json()
+    payload = finish.json()
+    if payload.get("report_id"):
+        return payload
+    for _ in range(160):
+        status = await client.get(
+            f"/api/v1/interviews/{interview_id}/report-status",
+            headers=auth_headers(token),
+        )
+        assert status.status_code == 200, status.text
+        status_data = status.json()
+        if status_data["processing_state"] == "ready" and status_data["report_id"]:
+            payload["report_id"] = status_data["report_id"]
+            return payload
+        if status_data["processing_state"] == "failed":
+            raise AssertionError(status_data.get("failure_reason") or "Report generation failed")
+        await asyncio.sleep(0.25)
+    raise AssertionError(f"Report was not ready for interview {interview_id}")
 
 
 async def _candidate_profile(client: AsyncClient, token: str) -> dict:
@@ -90,7 +107,9 @@ async def test_company_ai_settings_are_admin_managed(
     assert initial.status_code == 200, initial.text
     initial_data = initial.json()
     assert initial_data["proctoring_policy_mode"] in {"observe_only", "strict_flagging"}
-    assert "proctoring_policy_mode" in initial_data["runtime_applied_fields"]
+    assert initial_data["managed_by"] == "platform_admin"
+    assert "interviewer_provider" not in initial_data
+    assert "interviewer_runtime_model" not in initial_data
 
     updated = await client.put(
         "/api/v1/company/settings/ai",
@@ -101,17 +120,7 @@ async def test_company_ai_settings_are_admin_managed(
             "assessor_model_preference": "llama-3.1-8b-instant",
         },
     )
-    assert updated.status_code == 200, updated.text
-    data = updated.json()
-    assert data["proctoring_policy_mode"] == "strict_flagging"
-    assert data["interviewer_model_preference"] == "llama-3.1-8b-instant"
-    assert data["assessor_model_preference"] == "llama-3.1-8b-instant"
-    assert data["interviewer_runtime_model"] == "llama-3.1-8b-instant"
-    assert data["assessor_runtime_model"] == "llama-3.1-8b-instant"
-    assert "interviewer_model_preference" in data["stored_preference_fields"]
-    assert "assessor_model_preference" in data["stored_preference_fields"]
-    assert "interviewer_model_preference" in data["runtime_applied_fields"]
-    assert "assessor_model_preference" in data["runtime_applied_fields"]
+    assert updated.status_code == 403, updated.text
 
     _viewer_email, viewer_token = await _invite_and_login_member(client, company_token, "viewer")
     viewer_update = await client.put(

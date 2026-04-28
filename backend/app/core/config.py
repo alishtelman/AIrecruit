@@ -20,8 +20,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_INTERVIEW_MESSAGE_PER_MINUTE: int = 240
     RATE_LIMIT_TTS_PER_MINUTE: int = 180
     RATE_LIMIT_STT_PER_MINUTE: int = 90
-    ANTHROPIC_API_KEY: str = ""
     GROQ_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
+    ANTHROPIC_API_KEY: str = ""
     ALLOW_MOCK_AI: bool = True
     ELEVENLABS_API_KEY: str = ""
     TTS_PROVIDER: str = "groq"

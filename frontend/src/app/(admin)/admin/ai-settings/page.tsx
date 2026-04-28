@@ -21,6 +21,9 @@ export default function AdminAISettingsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
+  const provider = settings?.llm_provider ?? "groq";
+  const modelOptions = settings?.llm_model_options?.[provider] ?? [];
+
   useEffect(() => {
     if (authLoading) return;
     setLoading(true);
@@ -40,8 +43,13 @@ export default function AdminAISettingsPage() {
     try {
       const payload = await adminApi.updateAISettings({
         proctoring_policy_mode: settings.proctoring_policy_mode as "observe_only" | "strict_flagging",
-        interviewer_model_preference: settings.interviewer_model_preference,
-        assessor_model_preference: settings.assessor_model_preference,
+        llm_provider: settings.llm_provider,
+        interviewer_model: settings.interviewer_model,
+        assessor_model: settings.assessor_model,
+        interviewer_prompt_override: settings.interviewer_prompt_override,
+        assessor_prompt_override: settings.assessor_prompt_override,
+        llm_timeout_seconds: settings.llm_timeout_seconds,
+        llm_max_retries: settings.llm_max_retries,
       });
       setSettings(payload);
       setNotice(t("saved"));
@@ -68,6 +76,24 @@ export default function AdminAISettingsPage() {
 
         {!loading && settings && (
           <section className="ai-panel mt-6 rounded-[1.75rem] p-6">
+            <div className="mb-6 grid gap-3 md:grid-cols-3">
+              <StatusCard label="Active provider" value={settings.llm_provider} />
+              <StatusCard label="Interviewer model" value={settings.interviewer_model} />
+              <StatusCard label="Assessor model" value={settings.assessor_model} />
+              <StatusCard
+                label="Required API key"
+                value={settings.llm_api_key_available ? `${settings.llm_required_api_key} available` : `${settings.llm_required_api_key ?? "API key"} missing`}
+                tone={settings.llm_api_key_available ? "ok" : "warn"}
+              />
+              <StatusCard label="Mock AI" value={settings.mock_ai_enabled ? "Enabled" : "Disabled"} />
+              <StatusCard label="TTS" value={`${settings.tts_provider ?? "disabled"} -> ${settings.tts_fallback_provider ?? "none"}`} />
+            </div>
+            {settings.llm_configuration_warning && (
+              <div className="mb-6 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                {settings.llm_configuration_warning}
+              </div>
+            )}
+
             <div className="grid gap-5">
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-300">{t("fields.policy")}</label>
@@ -83,25 +109,101 @@ export default function AdminAISettingsPage() {
               </div>
 
               <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">LLM provider</label>
+                <select
+                  className="ai-input min-h-12 w-full appearance-none rounded-2xl px-4 pr-12"
+                  value={settings.llm_provider}
+                  onChange={(e) => {
+                    const nextProvider = e.target.value;
+                    const nextModels = settings.llm_model_options[nextProvider] ?? [];
+                    const nextModel = nextModels[0] ?? "";
+                    setSettings({
+                      ...settings,
+                      llm_provider: nextProvider,
+                      interviewer_model: nextModel,
+                      assessor_model: nextModel,
+                    });
+                  }}
+                >
+                  {Object.keys(settings.llm_model_options).map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+                <p className="mt-2 text-sm text-slate-500">Provider is platform-wide and hidden from company users.</p>
+              </div>
+
+              <div>
                 <label className="mb-2 block text-sm font-medium text-slate-300">{t("fields.interviewerModel")}</label>
-                <input
-                  className="ai-input min-h-12 w-full rounded-2xl px-4"
-                  value={settings.interviewer_model_preference ?? ""}
-                  onChange={(e) => setSettings({ ...settings, interviewer_model_preference: e.target.value || null })}
-                  placeholder="llama-3.1-8b-instant"
-                />
-                <p className="mt-2 text-sm text-slate-500">{t("hints.interviewerModel")}</p>
+                <select
+                  className="ai-input min-h-12 w-full appearance-none rounded-2xl px-4 pr-12"
+                  value={settings.interviewer_model}
+                  onChange={(e) => setSettings({ ...settings, interviewer_model: e.target.value })}
+                >
+                  {modelOptions.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+                <p className="mt-2 text-sm text-slate-500">Model list is curated for the selected provider.</p>
               </div>
 
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-300">{t("fields.assessorModel")}</label>
-                <input
-                  className="ai-input min-h-12 w-full rounded-2xl px-4"
-                  value={settings.assessor_model_preference ?? ""}
-                  onChange={(e) => setSettings({ ...settings, assessor_model_preference: e.target.value || null })}
-                  placeholder="llama-3.1-8b-instant"
+                <select
+                  className="ai-input min-h-12 w-full appearance-none rounded-2xl px-4 pr-12"
+                  value={settings.assessor_model}
+                  onChange={(e) => setSettings({ ...settings, assessor_model: e.target.value })}
+                >
+                  {modelOptions.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+                <p className="mt-2 text-sm text-slate-500">No cross-provider fallback is used.</p>
+              </div>
+
+              <div className="grid gap-5 md:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-300">Timeout seconds</label>
+                  <input
+                    type="number"
+                    min={5}
+                    max={120}
+                    className="ai-input min-h-12 w-full rounded-2xl px-4"
+                    value={settings.llm_timeout_seconds}
+                    onChange={(e) => setSettings({ ...settings, llm_timeout_seconds: Number(e.target.value) })}
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-300">Max retries</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={5}
+                    className="ai-input min-h-12 w-full rounded-2xl px-4"
+                    value={settings.llm_max_retries}
+                    onChange={(e) => setSettings({ ...settings, llm_max_retries: Number(e.target.value) })}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">Interviewer prompt override</label>
+                <textarea
+                  className="ai-input min-h-36 w-full rounded-2xl px-4 py-3"
+                  value={settings.interviewer_prompt_override ?? ""}
+                  onChange={(e) => setSettings({ ...settings, interviewer_prompt_override: e.target.value || null })}
+                  placeholder="Empty value uses the code default prompt."
                 />
-                <p className="mt-2 text-sm text-slate-500">{t("hints.assessorModel")}</p>
+                <p className="mt-2 text-sm text-slate-500">Audit logs record only that the prompt changed, not the prompt body.</p>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-slate-300">Assessor prompt override</label>
+                <textarea
+                  className="ai-input min-h-36 w-full rounded-2xl px-4 py-3"
+                  value={settings.assessor_prompt_override ?? ""}
+                  onChange={(e) => setSettings({ ...settings, assessor_prompt_override: e.target.value || null })}
+                  placeholder="Empty value uses the code default prompt."
+                />
               </div>
             </div>
 
@@ -118,6 +220,16 @@ export default function AdminAISettingsPage() {
           </section>
         )}
       </div>
+    </div>
+  );
+}
+
+function StatusCard({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "ok" | "warn" }) {
+  const toneClass = tone === "ok" ? "text-emerald-300" : tone === "warn" ? "text-amber-300" : "text-white";
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+      <div className="mb-1 text-xs uppercase tracking-[0.18em] text-slate-500">{label}</div>
+      <div className={`break-words text-sm font-medium ${toneClass}`}>{value}</div>
     </div>
   );
 }

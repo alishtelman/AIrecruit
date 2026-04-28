@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import pytest
 from httpx import AsyncClient
 
+from app.core.config import settings
 from tests.conftest import auth_headers
 
 
@@ -34,6 +35,15 @@ async def _register_company(client: AsyncClient, name: str = "Other Corp") -> st
         "email": email,
         "password": "testpass123",
     })
+    return resp.json()["access_token"]
+
+
+async def _admin_token(client: AsyncClient) -> str:
+    resp = await client.post("/api/v1/auth/login", json={
+        "email": settings.platform_admin_email,
+        "password": settings.platform_admin_password,
+    })
+    assert resp.status_code == 200, resp.text
     return resp.json()["access_token"]
 
 
@@ -313,55 +323,64 @@ async def test_company_ai_proctoring_policy_applies_to_new_assessment_interviews
     client: AsyncClient,
     company_token: str,
 ):
+    admin_token = await _admin_token(client)
     settings_resp = await client.put(
-        "/api/v1/company/settings/ai",
-        headers=auth_headers(company_token),
+        "/api/v1/admin/ai-settings",
+        headers=auth_headers(admin_token),
         json={"proctoring_policy_mode": "strict_flagging"},
     )
     assert settings_resp.status_code == 200, settings_resp.text
 
-    employee_email = f"strict_{uuid.uuid4().hex[:8]}@example.com"
-    assessment = await _create_assessment(client, company_token, employee_email, "Strict Policy Candidate")
-    candidate_token = await _register_candidate(client, employee_email, "Strict Policy Candidate")
-    await _upload_resume(client, candidate_token)
+    try:
+        employee_email = f"strict_{uuid.uuid4().hex[:8]}@example.com"
+        assessment = await _create_assessment(client, company_token, employee_email, "Strict Policy Candidate")
+        candidate_token = await _register_candidate(client, employee_email, "Strict Policy Candidate")
+        await _upload_resume(client, candidate_token)
 
-    start_resp = await client.post(
-        f"/api/v1/employee/invite/{assessment['invite_token']}/start",
-        headers=auth_headers(candidate_token),
-        json={"language": "en"},
-    )
-    assert start_resp.status_code == 200, start_resp.text
-    interview_id = start_resp.json()["interview_id"]
+        start_resp = await client.post(
+            f"/api/v1/employee/invite/{assessment['invite_token']}/start",
+            headers=auth_headers(candidate_token),
+            json={"language": "en"},
+        )
+        assert start_resp.status_code == 200, start_resp.text
+        interview_id = start_resp.json()["interview_id"]
 
-    signals_resp = await client.post(
-        f"/api/v1/interviews/{interview_id}/signals",
-        headers=auth_headers(candidate_token),
-        json={"paste_count": 1},
-    )
-    assert signals_resp.status_code == 204, signals_resp.text
+        signals_resp = await client.post(
+            f"/api/v1/interviews/{interview_id}/signals",
+            headers=auth_headers(candidate_token),
+            json={"paste_count": 1},
+        )
+        assert signals_resp.status_code == 204, signals_resp.text
 
-    await _answer_all_questions(client, candidate_token, interview_id)
-    finish_resp = await client.post(
-        f"/api/v1/interviews/{interview_id}/finish",
-        headers=auth_headers(candidate_token),
-    )
-    assert finish_resp.status_code == 200, finish_resp.text
-    report_id = finish_resp.json().get("report_id") or await _wait_for_report_id(client, candidate_token, interview_id)
+        await _answer_all_questions(client, candidate_token, interview_id)
+        finish_resp = await client.post(
+            f"/api/v1/interviews/{interview_id}/finish",
+            headers=auth_headers(candidate_token),
+        )
+        assert finish_resp.status_code == 200, finish_resp.text
+        report_id = finish_resp.json().get("report_id") or await _wait_for_report_id(client, candidate_token, interview_id)
 
-    timeline_resp = await client.get(
-        f"/api/v1/company/reports/{report_id}/proctoring-timeline",
-        headers=auth_headers(company_token),
-    )
-    assert timeline_resp.status_code == 200, timeline_resp.text
-    timeline = timeline_resp.json()
-    assert timeline["policy_mode"] == "strict_flagging"
-    paste_events = [event for event in timeline["events"] if event["event_type"] == "paste_detected"]
-    assert paste_events
-    assert paste_events[0]["severity"] == "medium"
+        timeline_resp = await client.get(
+            f"/api/v1/company/reports/{report_id}/proctoring-timeline",
+            headers=auth_headers(company_token),
+        )
+        assert timeline_resp.status_code == 200, timeline_resp.text
+        timeline = timeline_resp.json()
+        assert timeline["policy_mode"] == "strict_flagging"
+        paste_events = [event for event in timeline["events"] if event["event_type"] == "paste_detected"]
+        assert paste_events
+        assert paste_events[0]["severity"] == "medium"
+    finally:
+        reset_resp = await client.put(
+            "/api/v1/admin/ai-settings",
+            headers=auth_headers(admin_token),
+            json={"proctoring_policy_mode": "observe_only"},
+        )
+        assert reset_resp.status_code == 200, reset_resp.text
 
 
 @pytest.mark.asyncio
-async def test_company_ai_model_preference_applies_to_assessment_reports(
+async def test_company_ai_model_preference_cannot_override_assessment_reports(
     client: AsyncClient,
     company_token: str,
 ):
@@ -370,27 +389,7 @@ async def test_company_ai_model_preference_applies_to_assessment_reports(
         headers=auth_headers(company_token),
         json={"assessor_model_preference": "llama-3.1-8b-instant"},
     )
-    assert settings_resp.status_code == 200, settings_resp.text
-
-    employee_email = f"modelpref_{uuid.uuid4().hex[:8]}@example.com"
-    assessment = await _create_assessment(client, company_token, employee_email, "Model Preference Candidate")
-    candidate_token = await _register_candidate(client, employee_email, "Model Preference Candidate")
-    await _upload_resume(client, candidate_token)
-
-    interview_id, report_id = await _complete_employee_assessment(
-        client,
-        candidate_token,
-        assessment["invite_token"],
-    )
-    assert interview_id
-
-    report_resp = await client.get(
-        f"/api/v1/company/reports/{report_id}",
-        headers=auth_headers(company_token),
-    )
-    assert report_resp.status_code == 200, report_resp.text
-    report = report_resp.json()
-    assert "llama-3.1-8b-instant" in report["model_version"]
+    assert settings_resp.status_code == 403, settings_resp.text
 
 
 @pytest.mark.asyncio

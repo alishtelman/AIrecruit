@@ -87,14 +87,28 @@ async def update_admin_ai_settings(
     current_user: User = Depends(get_current_platform_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    payload = await update_admin_platform_settings(
-        db,
-        proctoring_policy_mode=body.proctoring_policy_mode,
-        interviewer_model_preference=body.interviewer_model_preference,
-        assessor_model_preference=body.assessor_model_preference,
-    )
+    try:
+        payload = await update_admin_platform_settings(
+            db,
+            proctoring_policy_mode=body.proctoring_policy_mode,
+            interviewer_model_preference=body.interviewer_model_preference,
+            assessor_model_preference=body.assessor_model_preference,
+            llm_provider=body.llm_provider,
+            interviewer_model=body.interviewer_model,
+            assessor_model=body.assessor_model,
+            interviewer_prompt_override=body.interviewer_prompt_override,
+            assessor_prompt_override=body.assessor_prompt_override,
+            llm_timeout_seconds=body.llm_timeout_seconds,
+            llm_max_retries=body.llm_max_retries,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     changed = body.model_dump(exclude_none=True)
     if changed:
+        safe_changed = {
+            key: ("changed" if key.endswith("_prompt_override") else value)
+            for key, value in changed.items()
+        }
         await create_admin_audit_log(
             db,
             actor_user_id=current_user.id,
@@ -102,7 +116,7 @@ async def update_admin_ai_settings(
             entity_type="platform_settings",
             entity_id="1",
             summary="Updated global AI defaults",
-            metadata_json=changed,
+            metadata_json=safe_changed,
         )
     return payload
 
