@@ -16,7 +16,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const defaultListenAddr = ":8080"
+const (
+	defaultListenAddr  = ":8080"
+	maxMarketplaceRows = 500
+)
 
 var allowedSorts = map[string]bool{
 	"latest":      true,
@@ -121,8 +124,9 @@ func (s *server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		"database_configured":           s.db != nil,
 		"endpoint":                      "/v1/company-candidates/search",
 		"supported_sorts":               []string{"score_desc", "score_asc", "latest", "salary_asc", "salary_desc"},
+		"max_results":                   maxMarketplaceRows,
 		"latest_report_semantics":       "assessment_reports.created_at desc, assessment_reports.id desc per candidate",
-		"skill_filtering_compatibility": "latest report skill_tags first, candidate_skills fallback only when report skill_tags are empty",
+		"skill_filtering":               "sql-side pre-filter (skill_tags first, candidate_skills fallback); go-side definitive filter",
 	})
 }
 
@@ -276,12 +280,41 @@ func buildMarketplaceQuery(req searchRequest) (string, []any) {
 			filters = append(filters, "COALESCE(c.salary_min, c.salary_max) <= "+nextArg(*req.SalaryMax))
 		}
 	}
+	if len(req.Skills) > 0 {
+		// Pre-filter by skills in SQL using the same fallback logic as Go/Python:
+		// - when report skill_tags is non-empty: require all skills to appear in skill_tags JSON
+		// - when report skill_tags is empty: require all skills to appear in candidate_skills rows
+		// Go-side filterBySkills remains the definitive gate; this clause reduces the result set size.
+		p := nextArg(req.Skills)
+		filters = append(filters, `(
+			CASE
+				WHEN jsonb_array_length(COALESCE(ar.skill_tags, '[]'::jsonb)) > 0 THEN
+					NOT EXISTS (
+						SELECT 1 FROM unnest(`+p+`::text[]) AS rs(required_skill)
+						WHERE NOT EXISTS (
+							SELECT 1 FROM jsonb_array_elements(ar.skill_tags) AS st
+							WHERE lower(trim(st->>'skill')) = rs.required_skill
+						)
+					)
+				ELSE
+					NOT EXISTS (
+						SELECT 1 FROM unnest(`+p+`::text[]) AS rs(required_skill)
+						WHERE NOT EXISTS (
+							SELECT 1 FROM candidate_skills cs_filter
+							WHERE cs_filter.candidate_id = c.id
+							  AND lower(trim(cs_filter.skill_name)) = rs.required_skill
+						)
+					)
+			END
+		)`)
+	}
 
 	where := "WHERE lrr.rank = 1"
 	if len(filters) > 0 {
 		where += " AND " + strings.Join(filters, " AND ")
 	}
 
+	limitArg := nextArg(maxMarketplaceRows)
 	return `
 WITH latest_report_rank AS (
 	SELECT
@@ -320,7 +353,8 @@ JOIN candidates c ON ar.candidate_id = c.id
 JOIN users u ON c.user_id = u.id
 LEFT JOIN hire_outcomes ho ON ho.company_id = $1::uuid AND ho.candidate_id = c.id
 ` + where + `
-` + orderByClause(req.Sort), args
+` + orderByClause(req.Sort) + `
+LIMIT ` + limitArg, args
 }
 
 func orderByClause(sort string) string {
