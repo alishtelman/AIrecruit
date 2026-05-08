@@ -222,6 +222,30 @@ a warning and falls back to the direct provider adapter.
 
 OpenRouter requests set `provider.allow_fallbacks=false` to preserve the product rule that the app does not implement cross-provider fallback.
 
+### `services/marketplace`
+
+Go read-model service for company marketplace candidate search.
+
+Current endpoints:
+
+```text
+GET /v1/status
+POST /v1/company-candidates/search
+```
+
+FastAPI still exposes the public route:
+
+```text
+GET /api/v1/company/candidates
+```
+
+FastAPI keeps company authentication, role checks, response-model validation, and Python fallback. The
+Go service owns the internal read query for latest marketplace report per candidate, SQL-side basic
+filters, shortlist membership loading, skill-tag aggregation, and Python-compatible skill filtering
+against rendered `skill_tags`.
+It is read-only and does not own schema migrations. If `MARKETPLACE_SERVICE_URL` is unavailable or
+returns an invalid payload, `company_service.py` logs a warning and falls back to the Python query path.
+
 ## Runtime Configuration
 
 Important env vars:
@@ -230,6 +254,7 @@ Important env vars:
 - `RESUME_SERVICE_URL`: when set in backend, candidate resume upload file processing proxies to `services/resume`.
 - `SANDBOX_SERVICE_URL`: when set in backend, coding-task runner and SQL live validation checks proxy to `services/sandbox`.
 - `LLM_SERVICE_URL`: when set in backend, LLM provider HTTP calls proxy to `services/llm`; direct Python adapters remain as an availability fallback.
+- `MARKETPLACE_SERVICE_URL`: when set in backend, company marketplace candidate search proxies to `services/marketplace`; Python query path remains as a fallback.
 - `REPORT_WORKER_MODE`: `embedded` keeps old `asyncio.create_task`; `external` lets the Go worker poll.
 - `INTERNAL_WORKER_TOKEN`: required for the internal report-worker endpoint.
 - `REPORT_WORKER_INTERVAL_SECONDS`: Go worker idle polling interval.
@@ -243,6 +268,7 @@ Docker Compose currently sets:
 - backend `RESUME_SERVICE_URL=http://resume-service:8080`
 - backend `SANDBOX_SERVICE_URL=http://sandbox-service:8080`
 - backend `LLM_SERVICE_URL=http://llm-service:8080`
+- backend `MARKETPLACE_SERVICE_URL=http://marketplace-service:8080`
 - backend `REPORT_WORKER_MODE=${REPORT_WORKER_MODE:-embedded}`
 - backend/report-worker `INTERNAL_WORKER_TOKEN=${INTERNAL_WORKER_TOKEN:-dev-internal-worker-token}`
 - report-worker `REPORT_WORKER_DRY_RUN=${REPORT_WORKER_DRY_RUN:-false}`
@@ -251,6 +277,7 @@ Docker Compose currently sets:
 - backend waits for healthy `resume-service`
 - backend waits for healthy `sandbox-service`
 - backend waits for healthy `llm-service`
+- backend waits for healthy `marketplace-service`
 - report-worker waits for healthy backend
 - report-worker is behind the Compose profile `workers` and is not started by default
 
@@ -258,7 +285,9 @@ Docker Compose currently sets:
 
 ### Company Marketplace Search
 
-Do not move company marketplace/search to Go yet. The bottleneck was Python loading a broad marketplace snapshot and then applying basic filters in memory.
+Company marketplace/search has started moving to Go behind the stable FastAPI public route. The
+original bottleneck was Python loading a broad marketplace snapshot and then applying basic filters in
+memory.
 
 Current state:
 
@@ -269,9 +298,12 @@ Current state:
   locks down latest-report semantics before any Go read model.
 - Alembic revision `x3y4z5a6b7c8` adds marketplace-search indexes for latest-report lookup,
   interview filters, candidate visibility, candidate skills, and shortlist membership.
+- `services/marketplace` implements the same latest-report query and Python-compatible skill matching
+  behind `MARKETPLACE_SERVICE_URL`: latest report `skill_tags` are used first, and `candidate_skills`
+  fill the response only when the latest report has no tags.
 
-If continuing this area, build the Go read model against the locked latest-report semantics and keep
-skill filtering behavior identical until there is a separate parity decision.
+If continuing this area, expand parity tests across salary, shortlist, hire outcome, sort orders, and
+candidate access behavior before removing the Python fallback.
 
 ## Local Development Notes
 
@@ -280,7 +312,7 @@ The local DB may contain old `completed` or `report_processing` interviews with 
 Default local startup is safe and uses embedded Python scheduling:
 
 ```bash
-docker compose up -d backend media-service resume-service sandbox-service llm-service frontend
+docker compose up -d backend media-service resume-service sandbox-service llm-service marketplace-service frontend
 ```
 
 To explicitly test the Go report worker, start with dry-run mode so backlog visibility does not trigger Groq calls:
@@ -318,6 +350,7 @@ docker run --rm -v "$PWD/services/media:/src" -w /src golang:1.23-alpine go test
 docker run --rm -v "$PWD/services/resume:/src" -w /src golang:1.23-alpine go test ./...
 docker run --rm -v "$PWD/services/sandbox:/src" -w /src golang:1.23-alpine go test ./...
 docker run --rm -v "$PWD/services/llm:/src" -w /src golang:1.23-alpine go test ./...
+docker run --rm -v "$PWD/services/marketplace:/src" -w /src golang:1.23-alpine go test ./...
 docker run --rm -v "$PWD/services/report-worker:/src" -w /src golang:1.23-alpine go test ./...
 docker compose config --quiet
 docker compose exec -T backend python -m pytest tests/test_resume_service_proxy.py tests/test_sandbox_runner_proxy.py tests/test_report_worker_internal.py tests/test_media_service_proxy.py tests/test_tts.py tests/test_llm_runtime.py -v
@@ -326,7 +359,7 @@ docker compose exec -T backend python -m pytest tests/test_resume_service_proxy.
 Build checks:
 
 ```bash
-docker compose build media-service resume-service sandbox-service llm-service report-worker
+docker compose build media-service resume-service sandbox-service llm-service marketplace-service report-worker
 docker compose --profile workers build report-worker
 ```
 
@@ -339,6 +372,8 @@ curl -fsS http://localhost:8082/health
 curl -fsS http://localhost:8082/v1/status
 curl -fsS http://localhost:8083/health
 curl -fsS http://localhost:8084/health
+curl -fsS http://localhost:8085/health
+curl -fsS http://localhost:8085/v1/status
 curl -fsS http://localhost:8001/health
 docker compose exec -T report-worker wget -qO- http://127.0.0.1:8080/health
 curl -fsS -X POST \
@@ -378,7 +413,7 @@ BT (Codex Resume Smoke) Tj ET
 1. Finish Phase 1 by expanding `services/sandbox` with remaining deterministic Python-compatible runners only when each scenario has a clear function contract and parity tests.
 2. Harden `services/llm` into a Phase 2 internal API: provider status endpoint, structured-output adapter tests, and retry/timeout execution in Go.
 3. Harden `services/report-worker`: backlog visibility, dry-run/safety guard, and external worker mode validation before making it default.
-4. Start a Go-owned marketplace/search read model behind FastAPI only after verifying SQL parity on current fixtures.
+4. Expand marketplace/search parity and move remaining company marketplace read endpoints behind Go.
 5. Only migrate AI interviewer/assessor/report shaping after golden transcript-to-report parity exists.
 
 ## Do Not Do

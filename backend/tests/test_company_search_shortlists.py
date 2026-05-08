@@ -253,7 +253,9 @@ async def test_company_search_filters_by_skills_and_shortlist(
 @pytest.mark.asyncio
 async def test_company_search_uses_latest_marketplace_report_for_sql_filters(
     db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    monkeypatch.setattr("app.services.company_service.settings.MARKETPLACE_SERVICE_URL", "")
     company_id, candidate_id, old_report_id, new_report_id, search_name = await _seed_marketplace_candidate_with_reports(
         db_session,
     )
