@@ -134,11 +134,12 @@ Go worker for report-generation orchestration.
 It calls:
 
 ```text
-POST /api/v1/internal/report-worker/tick
+POST /api/v1/internal/report-worker/tick?dry_run=true|false
+GET /api/v1/internal/report-worker/status
 X-Internal-Worker-Token: <INTERNAL_WORKER_TOKEN>
 ```
 
-FastAPI still owns report generation, assessment, locking, retries, and DB writes. The Go worker only polls and triggers work.
+FastAPI still owns report generation, assessment, locking, retries, and DB writes. The Go worker only polls, inspects backlog status, and triggers work.
 
 Health endpoint:
 
@@ -146,7 +147,7 @@ Health endpoint:
 GET /health
 ```
 
-The health payload includes startup time, last tick time, last successful tick, last processed interview id, and last error.
+The health payload includes startup time, dry-run mode, max jobs per cycle, last tick time, last successful tick, last candidate interview id, last processed interview id, pending count, processed/error counters, and last error.
 
 ### `services/sandbox`
 
@@ -208,6 +209,8 @@ Important env vars:
 - `INTERNAL_WORKER_TOKEN`: required for the internal report-worker endpoint.
 - `REPORT_WORKER_INTERVAL_SECONDS`: Go worker idle polling interval.
 - `REPORT_WORKER_REQUEST_TIMEOUT_SECONDS`: request timeout for a report-worker tick.
+- `REPORT_WORKER_DRY_RUN`: when `true`, the Go worker selects the next candidate job without triggering report generation.
+- `REPORT_WORKER_MAX_JOBS_PER_CYCLE`: caps consecutive processed jobs before the Go worker sleeps.
 
 Docker Compose currently sets:
 
@@ -217,6 +220,8 @@ Docker Compose currently sets:
 - backend `LLM_SERVICE_URL=http://llm-service:8080`
 - backend `REPORT_WORKER_MODE=${REPORT_WORKER_MODE:-embedded}`
 - backend/report-worker `INTERNAL_WORKER_TOKEN=${INTERNAL_WORKER_TOKEN:-dev-internal-worker-token}`
+- report-worker `REPORT_WORKER_DRY_RUN=${REPORT_WORKER_DRY_RUN:-false}`
+- report-worker `REPORT_WORKER_MAX_JOBS_PER_CYCLE=${REPORT_WORKER_MAX_JOBS_PER_CYCLE:-1}`
 - backend waits for healthy `media-service`
 - backend waits for healthy `resume-service`
 - backend waits for healthy `sandbox-service`
@@ -248,10 +253,18 @@ Default local startup is safe and uses embedded Python scheduling:
 docker compose up -d backend media-service resume-service sandbox-service llm-service frontend
 ```
 
-To explicitly test the Go report worker, opt in with the `workers` profile and external worker mode:
+To explicitly test the Go report worker, start with dry-run mode so backlog visibility does not trigger Groq calls:
 
 ```bash
-REPORT_WORKER_MODE=external docker compose --profile workers up -d backend report-worker
+REPORT_WORKER_MODE=external REPORT_WORKER_DRY_RUN=true docker compose --profile workers up -d backend report-worker
+curl -fsS -H "X-Internal-Worker-Token: dev-internal-worker-token" http://localhost:8001/api/v1/internal/report-worker/status
+docker compose exec -T report-worker wget -qO- http://127.0.0.1:8080/health
+```
+
+After confirming pending backlog and quota impact, disable dry-run explicitly:
+
+```bash
+REPORT_WORKER_MODE=external REPORT_WORKER_DRY_RUN=false REPORT_WORKER_MAX_JOBS_PER_CYCLE=1 docker compose --profile workers up -d backend report-worker
 ```
 
 If quota/rate limits matter, leave it stopped until explicitly testing worker behavior:
@@ -263,7 +276,7 @@ docker compose stop report-worker
 To run it again:
 
 ```bash
-REPORT_WORKER_MODE=external docker compose --profile workers up -d report-worker
+REPORT_WORKER_MODE=external REPORT_WORKER_DRY_RUN=true docker compose --profile workers up -d report-worker
 ```
 
 ## Validation Commands

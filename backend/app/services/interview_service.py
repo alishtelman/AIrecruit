@@ -16,7 +16,7 @@ import re
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, outerjoin, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.assessor import AssessmentResult, assessor
@@ -3970,38 +3970,67 @@ def _schedule_report_generation(interview_id: uuid.UUID) -> None:
     asyncio.create_task(_run_report_generation_job(interview_id))
 
 
-async def run_next_external_report_generation_job() -> dict[str, Any]:
-    from sqlalchemy import outerjoin
+def _report_worker_pending_base():
+    return outerjoin(
+        Interview,
+        AssessmentReport,
+        AssessmentReport.interview_id == Interview.id,
+    )
 
+
+def _report_worker_pending_where():
+    return (
+        Interview.status.in_(("completed", "report_processing")),
+        AssessmentReport.id.is_(None),
+    )
+
+
+async def get_external_report_worker_status() -> dict[str, Any]:
     async with AsyncSessionLocal() as session:
-        stmt = (
-            select(Interview.id)
-            .select_from(
-                outerjoin(
-                    Interview,
-                    AssessmentReport,
-                    AssessmentReport.interview_id == Interview.id,
-                )
-            )
+        pending_count = await session.scalar(
+            select(func.count())
+            .select_from(_report_worker_pending_base())
+            .where(*_report_worker_pending_where())
+        )
+        next_row = await session.execute(
+            select(Interview.id, Interview.updated_at)
+            .select_from(_report_worker_pending_base())
             .where(
-                Interview.status.in_(("completed", "report_processing")),
-                AssessmentReport.id.is_(None),
+                *_report_worker_pending_where(),
             )
             .order_by(Interview.updated_at.asc())
             .limit(1)
         )
-        interview_id = await session.scalar(stmt)
+        next_item = next_row.first()
+
+    next_interview_id = str(next_item[0]) if next_item else None
+    oldest_pending_updated_at = next_item[1].isoformat() if next_item and next_item[1] else None
+    return {
+        "pending_count": int(pending_count or 0),
+        "next_interview_id": next_interview_id,
+        "oldest_pending_updated_at": oldest_pending_updated_at,
+        "worker_mode": settings.REPORT_WORKER_MODE.strip().lower(),
+        "max_auto_retries": _report_max_auto_retries(),
+    }
+
+
+async def run_next_external_report_generation_job(*, dry_run: bool = False) -> dict[str, Any]:
+    status_payload = await get_external_report_worker_status()
+    interview_id = status_payload.get("next_interview_id")
 
     if interview_id is None:
-        return {"processed": False, "interview_id": None}
+        return {"processed": False, "interview_id": None, "dry_run": dry_run, **status_payload}
+
+    if dry_run:
+        return {"processed": False, "interview_id": interview_id, "dry_run": True, **status_payload}
 
     _increment_report_pipeline_metric("report_external_worker_tick_total")
     _log_report_pipeline_event(
         "report_external_worker_tick",
         interview_id=interview_id,
     )
-    await _run_report_generation_job(interview_id)
-    return {"processed": True, "interview_id": str(interview_id)}
+    await _run_report_generation_job(uuid.UUID(str(interview_id)))
+    return {"processed": True, "interview_id": str(interview_id), "dry_run": False, **status_payload}
 
 
 async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
