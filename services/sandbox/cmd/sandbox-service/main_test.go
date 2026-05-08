@@ -141,6 +141,45 @@ def allow_request(user_id: str, now: int, limit: int = 5, window_seconds: int = 
 	}
 }
 
+func TestRunPythonExecutesFeatureFreshnessChecks(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not available")
+	}
+	srv := &server{pythonBin: "python3"}
+	code := `def evaluate_feature_freshness(record, now_ts, max_age_seconds=3600):
+    age = record.get("feature_age_seconds")
+    features = record.get("features", {})
+    fallback = record.get("fallback_features", {})
+    if age is None or age > max_age_seconds:
+        return {"allowed": False, "reason": "feature data is stale"}
+    used_fallback = False
+    risk_score = features.get("risk_score")
+    if risk_score is None:
+        risk_score = fallback.get("risk_score")
+        used_fallback = True
+    if risk_score is None:
+        return {"allowed": False, "reason": "risk_score is missing"}
+    return {"allowed": True, "used_fallback": used_fallback, "reason": "fresh enough for scoring"}
+`
+
+	result, err := srv.runPython(context.Background(), runRequest{
+		ScenarioID:     "feature_freshness_monitor",
+		Language:       "python",
+		Code:           code,
+		TimeoutSeconds: 2,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RunnerScore == nil || *result.RunnerScore != 10.0 {
+		t.Fatalf("unexpected score: %v", result.RunnerScore)
+	}
+	if len(result.RunnerChecks) != 4 {
+		t.Fatalf("unexpected checks: %#v", result.RunnerChecks)
+	}
+}
+
 func TestValidateSQLExecutesScenarioChecks(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 is not available")

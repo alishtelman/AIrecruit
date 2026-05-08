@@ -372,8 +372,8 @@ _CODING_TASK_SCENARIOS: dict[str, dict[str, str]] = {
         "stack_focus_en": "Python data logic, feature validation, and scoring pipeline safeguards",
         "stack_focus_ru": "Python data logic, feature validation и safeguards для scoring pipeline",
         "preferred_language": "python",
-        "workspace_hint_en": "A free-form data solution is acceptable. Show thresholds, null/fallback handling, and how the logic would fit into a scoring or feature-serving pipeline.",
-        "workspace_hint_ru": "Подойдёт свободное data-решение. Покажите thresholds, обработку null/fallback и то, как логика встроится в scoring или feature-serving pipeline.",
+        "workspace_hint_en": "A free-form data solution is acceptable. Show thresholds, null/fallback handling, and how the logic would fit into a scoring or feature-serving pipeline. If you write executable Python, expose evaluate_feature_freshness(record, now_ts, max_age_seconds=3600).",
+        "workspace_hint_ru": "Подойдёт свободное data-решение. Покажите thresholds, обработку null/fallback и то, как логика встроится в scoring или feature-serving pipeline. Если пишете исполняемый Python, вынесите evaluate_feature_freshness(record, now_ts, max_age_seconds=3600).",
     },
     "product_manager": {
         "scenario_id": "experiment_guardrail_parser",

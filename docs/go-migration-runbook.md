@@ -91,6 +91,7 @@ POST /v1/sql/validate
 Current supported coding scenario:
 
 - `rate_limiter_window_counter`
+- `feature_freshness_monitor`
 
 Current supported SQL live scenarios:
 

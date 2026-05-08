@@ -128,6 +128,48 @@ def allow_request(user_id: str, now: int, limit: int = 5, window_seconds: int = 
     assert any(check["check_key"] == "runner_blocks_over_limit" for check in checks)
 
 
+def test_build_coding_task_runner_checks_supports_feature_freshness_fallback(monkeypatch: pytest.MonkeyPatch):
+    original_url = settings.SANDBOX_SERVICE_URL
+    settings.SANDBOX_SERVICE_URL = "http://sandbox-service:8080"
+
+    def _failing_sandbox(**kwargs):
+        raise httpx.ConnectError("unavailable")
+
+    monkeypatch.setattr("app.ai.assessor._run_coding_task_runner_in_sandbox", _failing_sandbox)
+    try:
+        checks, score = _build_coding_task_runner_checks(
+            scenario_id="feature_freshness_monitor",
+            artifact_code="""
+def evaluate_feature_freshness(record, now_ts, max_age_seconds=3600):
+    age = record.get("feature_age_seconds")
+    features = record.get("features", {})
+    fallback = record.get("fallback_features", {})
+    if age is None or age > max_age_seconds:
+        return {"allowed": False, "reason": "feature data is stale"}
+    used_fallback = False
+    risk_score = features.get("risk_score")
+    if risk_score is None:
+        risk_score = fallback.get("risk_score")
+        used_fallback = True
+    if risk_score is None:
+        return {"allowed": False, "reason": "risk_score is missing"}
+    return {"allowed": True, "used_fallback": used_fallback, "reason": "fresh enough for scoring"}
+""",
+            artifact_language="python",
+            report_language="en",
+        )
+    finally:
+        settings.SANDBOX_SERVICE_URL = original_url
+
+    assert score == 10.0
+    assert {check["check_key"] for check in checks} == {
+        "runner_allows_fresh_features",
+        "runner_blocks_stale_features",
+        "runner_uses_fallback_for_missing_feature",
+        "runner_explains_feature_decision",
+    }
+
+
 def test_run_sql_live_validation_in_sandbox_maps_payload(monkeypatch: pytest.MonkeyPatch):
     original_url = settings.SANDBOX_SERVICE_URL
     settings.SANDBOX_SERVICE_URL = "http://sandbox-service:8080"

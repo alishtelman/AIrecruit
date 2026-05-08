@@ -118,7 +118,7 @@ func (s *server) handleRunPython(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "only python code is supported")
 		return
 	}
-	if payload.ScenarioID != "rate_limiter_window_counter" {
+	if !isSupportedCodingScenario(payload.ScenarioID) {
 		writeError(w, http.StatusUnprocessableEntity, "unsupported scenario")
 		return
 	}
@@ -208,6 +208,15 @@ func (s *server) validateSQL(ctx context.Context, payload sqlValidationRequest) 
 func isSupportedSQLScenario(value string) bool {
 	switch value {
 	case "customer_revenue_rollup", "signup_funnel_rollup", "incident_error_budget_audit":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSupportedCodingScenario(value string) bool {
+	switch value {
+	case "rate_limiter_window_counter", "feature_freshness_monitor":
 		return true
 	default:
 		return false
@@ -367,6 +376,111 @@ def run_rate_limiter_checks(ns):
     })
     return results
 
+def _call_feature_freshness(fn, record, now_ts=10000):
+    try:
+        return fn(record, now_ts, max_age_seconds=3600)
+    except TypeError:
+        try:
+            return fn(record, now_ts)
+        except TypeError:
+            return fn(record)
+
+def _decision_allows(result):
+    if isinstance(result, bool):
+        return result
+    if isinstance(result, str):
+        lowered = result.strip().lower()
+        if any(token in lowered for token in ("allow", "allowed", "pass", "ok")):
+            return True
+        if any(token in lowered for token in ("block", "blocked", "deny", "reject", "stale")):
+            return False
+    if isinstance(result, dict):
+        if "allowed" in result:
+            return bool(result.get("allowed"))
+        if "allow" in result:
+            return bool(result.get("allow"))
+        if "blocked" in result:
+            return not bool(result.get("blocked"))
+        if "block" in result:
+            return not bool(result.get("block"))
+        for key in ("decision", "status", "action", "recommendation"):
+            value = str(result.get(key) or "").strip().lower()
+            if value in {"allow", "allowed", "pass", "ok", "use_fallback"}:
+                return True
+            if value in {"block", "blocked", "deny", "reject", "stale"}:
+                return False
+    return None
+
+def _used_fallback(result):
+    if not isinstance(result, dict):
+        return False
+    if bool(result.get("used_fallback") or result.get("fallback_used") or result.get("fallback")):
+        return True
+    return str(result.get("source") or "").strip().lower() == "fallback"
+
+def _has_reason(result):
+    if isinstance(result, str):
+        return bool(result.strip())
+    if not isinstance(result, dict):
+        return False
+    for key in ("reason", "explanation", "message", "details"):
+        if str(result.get(key) or "").strip():
+            return True
+    return False
+
+def run_feature_freshness_checks(ns):
+    fn = ns.get("evaluate_feature_freshness")
+    if not callable(fn):
+        raise ValueError("evaluate_feature_freshness function was not found")
+
+    fresh_record = {
+        "feature_age_seconds": 120,
+        "features": {"risk_score": 0.42},
+        "fallback_features": {"risk_score": 0.50},
+    }
+    stale_record = {
+        "feature_age_seconds": 7200,
+        "features": {"risk_score": 0.42},
+        "fallback_features": {"risk_score": 0.50},
+    }
+    missing_record = {
+        "feature_age_seconds": 120,
+        "features": {"risk_score": None},
+        "fallback_features": {"risk_score": 0.55},
+    }
+
+    fresh_result = _call_feature_freshness(fn, fresh_record)
+    stale_result = _call_feature_freshness(fn, stale_record)
+    fallback_result = _call_feature_freshness(fn, missing_record)
+    fresh_decision = _decision_allows(fresh_result)
+    stale_decision = _decision_allows(stale_result)
+    fallback_decision = _decision_allows(fallback_result)
+
+    reason_present = any(_has_reason(item) for item in (fresh_result, stale_result, fallback_result))
+    results = [
+        {
+            "check_key": "runner_allows_fresh_features",
+            "passed": fresh_decision is True,
+            "details": f"fresh_decision={fresh_decision}",
+        },
+        {
+            "check_key": "runner_blocks_stale_features",
+            "passed": stale_decision is False,
+            "details": f"stale_decision={stale_decision}",
+        },
+        {
+            "check_key": "runner_uses_fallback_for_missing_feature",
+            "passed": fallback_decision is True and _used_fallback(fallback_result),
+            "details": f"fallback_decision={fallback_decision}; used_fallback={_used_fallback(fallback_result)}",
+        },
+        {
+            "check_key": "runner_explains_feature_decision",
+            "passed": reason_present,
+            "details": f"reason_present={reason_present}",
+        },
+    ]
+    return results
+
 payload = json.loads(sys.stdin.read())
 source = str(payload.get("code") or "")
 scenario_id = str(payload.get("scenario_id") or "")
@@ -378,6 +492,8 @@ exec(compile(tree, "<candidate_code>", "exec"), ns, ns)
 
 if scenario_id == "rate_limiter_window_counter":
     results = run_rate_limiter_checks(ns)
+elif scenario_id == "feature_freshness_monitor":
+    results = run_feature_freshness_checks(ns)
 else:
     results = []
 

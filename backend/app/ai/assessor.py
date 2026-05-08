@@ -1928,6 +1928,28 @@ _CODING_TASK_RUNNER_CHECK_DEFS = {
             "title_ru": "Сохраняет изоляцию состояния между пользователями",
         },
     ),
+    "feature_freshness_monitor": (
+        {
+            "check_key": "runner_allows_fresh_features",
+            "title_en": "Allows scoring when required features are fresh",
+            "title_ru": "Разрешает scoring, когда необходимые фичи свежие",
+        },
+        {
+            "check_key": "runner_blocks_stale_features",
+            "title_en": "Blocks scoring when feature age exceeds the threshold",
+            "title_ru": "Блокирует scoring, когда возраст фич превышает threshold",
+        },
+        {
+            "check_key": "runner_uses_fallback_for_missing_feature",
+            "title_en": "Uses fallback data for a missing feature value",
+            "title_ru": "Использует fallback-данные для отсутствующей фичи",
+        },
+        {
+            "check_key": "runner_explains_feature_decision",
+            "title_en": "Returns a reason explaining the freshness decision",
+            "title_ru": "Возвращает причину freshness-решения",
+        },
+    ),
 }
 
 
@@ -2934,6 +2956,110 @@ def _build_coding_task_runner_checks(
             })
             return results
 
+        def _call_feature_freshness(fn, record, now_ts=10000):
+            try:
+                return fn(record, now_ts, max_age_seconds=3600)
+            except TypeError:
+                try:
+                    return fn(record, now_ts)
+                except TypeError:
+                    return fn(record)
+
+        def _decision_allows(result):
+            if isinstance(result, bool):
+                return result
+            if isinstance(result, str):
+                lowered = result.strip().lower()
+                if any(token in lowered for token in ("allow", "allowed", "pass", "ok")):
+                    return True
+                if any(token in lowered for token in ("block", "blocked", "deny", "reject", "stale")):
+                    return False
+            if isinstance(result, dict):
+                if "allowed" in result:
+                    return bool(result.get("allowed"))
+                if "allow" in result:
+                    return bool(result.get("allow"))
+                if "blocked" in result:
+                    return not bool(result.get("blocked"))
+                if "block" in result:
+                    return not bool(result.get("block"))
+                for key in ("decision", "status", "action", "recommendation"):
+                    value = str(result.get(key) or "").strip().lower()
+                    if value in {"allow", "allowed", "pass", "ok", "use_fallback"}:
+                        return True
+                    if value in {"block", "blocked", "deny", "reject", "stale"}:
+                        return False
+            return None
+
+        def _used_fallback(result):
+            if not isinstance(result, dict):
+                return False
+            if bool(result.get("used_fallback") or result.get("fallback_used") or result.get("fallback")):
+                return True
+            return str(result.get("source") or "").strip().lower() == "fallback"
+
+        def _has_reason(result):
+            if isinstance(result, str):
+                return bool(result.strip())
+            if not isinstance(result, dict):
+                return False
+            for key in ("reason", "explanation", "message", "details"):
+                if str(result.get(key) or "").strip():
+                    return True
+            return False
+
+        def run_feature_freshness_checks(ns):
+            fn = ns.get("evaluate_feature_freshness")
+            if not callable(fn):
+                raise ValueError("evaluate_feature_freshness function was not found")
+
+            fresh_record = {
+                "feature_age_seconds": 120,
+                "features": {"risk_score": 0.42},
+                "fallback_features": {"risk_score": 0.50},
+            }
+            stale_record = {
+                "feature_age_seconds": 7200,
+                "features": {"risk_score": 0.42},
+                "fallback_features": {"risk_score": 0.50},
+            }
+            missing_record = {
+                "feature_age_seconds": 120,
+                "features": {"risk_score": None},
+                "fallback_features": {"risk_score": 0.55},
+            }
+
+            fresh_result = _call_feature_freshness(fn, fresh_record)
+            stale_result = _call_feature_freshness(fn, stale_record)
+            fallback_result = _call_feature_freshness(fn, missing_record)
+            fresh_decision = _decision_allows(fresh_result)
+            stale_decision = _decision_allows(stale_result)
+            fallback_decision = _decision_allows(fallback_result)
+
+            results = [
+                {
+                    "check_key": "runner_allows_fresh_features",
+                    "passed": fresh_decision is True,
+                    "details": f"fresh_decision={fresh_decision}",
+                },
+                {
+                    "check_key": "runner_blocks_stale_features",
+                    "passed": stale_decision is False,
+                    "details": f"stale_decision={stale_decision}",
+                },
+                {
+                    "check_key": "runner_uses_fallback_for_missing_feature",
+                    "passed": fallback_decision is True and _used_fallback(fallback_result),
+                    "details": f"fallback_decision={fallback_decision}; used_fallback={_used_fallback(fallback_result)}",
+                },
+                {
+                    "check_key": "runner_explains_feature_decision",
+                    "passed": any(_has_reason(item) for item in (fresh_result, stale_result, fallback_result)),
+                    "details": "reason_present=" + str(any(_has_reason(item) for item in (fresh_result, stale_result, fallback_result))),
+                },
+            ]
+            return results
+
         payload = json.loads(sys.stdin.read())
         source = str(payload.get("code") or "")
         scenario_id = str(payload.get("scenario_id") or "")
@@ -2945,6 +3071,8 @@ def _build_coding_task_runner_checks(
 
         if scenario_id == "rate_limiter_window_counter":
             results = run_rate_limiter_checks(ns)
+        elif scenario_id == "feature_freshness_monitor":
+            results = run_feature_freshness_checks(ns)
         else:
             results = []
 
@@ -2985,8 +3113,8 @@ def _build_coding_task_runner_checks(
                 ]
                 runner_score = payload.get("runner_score")
                 return runner_checks, round(float(runner_score), 1) if isinstance(runner_score, (int, float)) else None
-            except httpx.RequestError:
-                pass
+            except Exception:
+                logger.warning("Coding task sandbox runner failed, falling back to local runner", exc_info=True)
 
         with tempfile.NamedTemporaryFile("w", suffix="_coding_runner.py", delete=False) as handle:
             handle.write(wrapper)
