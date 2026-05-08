@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,21 @@ import (
 	"sync"
 	"time"
 )
+
+const (
+	defaultRateLimitBackoff    = 60 * time.Second
+	consecutiveErrorThreshold  = 3
+	consecutiveErrorBackoff    = 30 * time.Second
+	maxConsecutiveErrorBackoff = 5 * time.Minute
+)
+
+type rateLimitError struct {
+	RetryAfter time.Duration
+}
+
+func (e *rateLimitError) Error() string {
+	return fmt.Sprintf("backend rate limited, retry after %s", e.RetryAfter)
+}
 
 type config struct {
 	BackendURL      string
@@ -34,19 +50,22 @@ type tickResponse struct {
 }
 
 type workerState struct {
-	mu               sync.RWMutex
-	startedAt        time.Time
-	dryRun           bool
-	maxJobsPerCycle  int
-	lastTickAt       time.Time
-	lastSuccessAt    time.Time
-	lastProcessedAt  time.Time
-	lastInterviewID  string
-	lastCandidateID  string
-	lastPendingCount int
-	processedTotal   int64
-	errorTotal       int64
-	lastError        string
+	mu                sync.RWMutex
+	startedAt         time.Time
+	dryRun            bool
+	maxJobsPerCycle   int
+	lastTickAt        time.Time
+	lastSuccessAt     time.Time
+	lastProcessedAt   time.Time
+	lastInterviewID   string
+	lastCandidateID   string
+	lastPendingCount  int
+	oldestPendingAt   string
+	processedTotal    int64
+	errorTotal        int64
+	lastError         string
+	consecutiveErrors int
+	backoffUntil      time.Time
 }
 
 func main() {
@@ -81,7 +100,20 @@ func main() {
 	}
 }
 
+func (s *workerState) backoffRemaining() time.Duration {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.backoffUntil.IsZero() {
+		return 0
+	}
+	return time.Until(s.backoffUntil)
+}
+
 func runCycle(ctx context.Context, client *http.Client, cfg config, state *workerState) int {
+	if rem := state.backoffRemaining(); rem > 0 {
+		log.Printf("report-worker backing off for %s, skipping cycle", rem.Round(time.Second))
+		return 0
+	}
 	limit := cfg.MaxJobsPerCycle
 	if limit <= 0 {
 		limit = 1
@@ -128,6 +160,15 @@ func runTick(ctx context.Context, client *http.Client, cfg config) (tickResponse
 	if err != nil {
 		return tickResponse{}, err
 	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		retryAfter := defaultRateLimitBackoff
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if secs, err2 := strconv.Atoi(ra); err2 == nil && secs > 0 {
+				retryAfter = time.Duration(secs) * time.Second
+			}
+		}
+		return tickResponse{}, &rateLimitError{RetryAfter: retryAfter}
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return tickResponse{}, fmt.Errorf("backend status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
@@ -161,17 +202,41 @@ func (s *workerState) recordTick(result tickResponse, err error) {
 	if result.PendingCount > 0 || err == nil {
 		s.lastPendingCount = result.PendingCount
 	}
+	if result.OldestPendingUpdatedAt != "" {
+		s.oldestPendingAt = result.OldestPendingUpdatedAt
+	}
 	if result.DryRun && result.InterviewID != "" {
 		s.lastCandidateID = result.InterviewID
 	}
 	if err != nil {
 		s.lastError = err.Error()
 		s.errorTotal++
+		var rl *rateLimitError
+		if errors.As(err, &rl) {
+			s.backoffUntil = now.Add(rl.RetryAfter)
+			s.consecutiveErrors = 0
+			log.Printf("report-worker rate limited, backoff until %s", s.backoffUntil.Format(time.RFC3339))
+		} else {
+			s.consecutiveErrors++
+			if s.consecutiveErrors >= consecutiveErrorThreshold {
+				backoff := time.Duration(s.consecutiveErrors-consecutiveErrorThreshold+1) * consecutiveErrorBackoff
+				if backoff > maxConsecutiveErrorBackoff {
+					backoff = maxConsecutiveErrorBackoff
+				}
+				s.backoffUntil = now.Add(backoff)
+				log.Printf("report-worker %d consecutive errors, backoff until %s", s.consecutiveErrors, s.backoffUntil.Format(time.RFC3339))
+			}
+		}
 		return
 	}
 	s.lastSuccessAt = now
 	s.lastError = ""
+	s.consecutiveErrors = 0
+	s.backoffUntil = time.Time{}
 	if result.Processed {
+		if result.InterviewID != "" && result.InterviewID == s.lastInterviewID {
+			log.Printf("report-worker warning: interview_id=%s was already the last processed; Python lock may be contended", result.InterviewID)
+		}
 		s.lastProcessedAt = now
 		s.lastInterviewID = result.InterviewID
 		s.processedTotal++
@@ -194,9 +259,12 @@ func (s *workerState) snapshot() map[string]any {
 		"last_interview_id":           s.lastInterviewID,
 		"last_candidate_interview_id": s.lastCandidateID,
 		"last_pending_count":          s.lastPendingCount,
+		"oldest_pending_updated_at":   s.oldestPendingAt,
 		"processed_total":             s.processedTotal,
 		"error_total":                 s.errorTotal,
 		"last_error":                  s.lastError,
+		"consecutive_errors":          s.consecutiveErrors,
+		"backoff_until":               formatTime(s.backoffUntil),
 	}
 }
 
