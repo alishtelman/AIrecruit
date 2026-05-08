@@ -9,11 +9,26 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
 
 const defaultTimeoutSeconds = 2
+const maxTimeoutSeconds = 10
+
+var supportedCodingScenarios = []string{
+	"deployment_rollout_guard",
+	"feature_freshness_monitor",
+	"flaky_test_classifier",
+	"rate_limiter_window_counter",
+}
+
+var supportedSQLScenarios = []string{
+	"customer_revenue_rollup",
+	"incident_error_budget_audit",
+	"signup_funnel_rollup",
+}
 
 type runRequest struct {
 	ScenarioID     string  `json:"scenario_id"`
@@ -53,6 +68,16 @@ type sqlValidationResponse struct {
 	ValidationChecks []sqlValidationCheck `json:"validation_checks"`
 }
 
+type statusResponse struct {
+	Service                  string   `json:"service"`
+	PythonAvailable          bool     `json:"python_available"`
+	SupportedLanguages       []string `json:"supported_languages"`
+	SupportedCodingScenarios []string `json:"supported_coding_scenarios"`
+	SupportedSQLScenarios    []string `json:"supported_sql_scenarios"`
+	DefaultTimeoutSeconds    int      `json:"default_timeout_seconds"`
+	MaxTimeoutSeconds        int      `json:"max_timeout_seconds"`
+}
+
 type server struct {
 	pythonBin string
 	run       func(context.Context, runRequest) (runResponse, error)
@@ -65,9 +90,8 @@ func main() {
 	srv.validate = srv.validateSQL
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "sandbox-service"})
-	})
+	mux.HandleFunc("GET /health", srv.handleHealth)
+	mux.HandleFunc("GET /v1/status", srv.handleStatus)
 	mux.HandleFunc("POST /v1/coding/python", srv.handleRunPython)
 	mux.HandleFunc("POST /v1/sql/validate", srv.handleValidateSQL)
 
@@ -75,6 +99,20 @@ func main() {
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		panic(err)
 	}
+}
+
+func (s *server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":                 "ok",
+		"service":                "sandbox-service",
+		"python_available":       s.pythonAvailable(),
+		"coding_scenarios_count": len(supportedCodingScenarios),
+		"sql_scenarios_count":    len(supportedSQLScenarios),
+	})
+}
+
+func (s *server) handleStatus(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.status())
 }
 
 func (s *server) handleValidateSQL(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +156,7 @@ func (s *server) handleRunPython(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "only python code is supported")
 		return
 	}
-	if payload.ScenarioID != "rate_limiter_window_counter" {
+	if !isSupportedCodingScenario(payload.ScenarioID) {
 		writeError(w, http.StatusUnprocessableEntity, "unsupported scenario")
 		return
 	}
@@ -129,6 +167,26 @@ func (s *server) handleRunPython(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *server) status() statusResponse {
+	return statusResponse{
+		Service:                  "sandbox-service",
+		PythonAvailable:          s.pythonAvailable(),
+		SupportedLanguages:       []string{"python"},
+		SupportedCodingScenarios: scenarioList(supportedCodingScenarios),
+		SupportedSQLScenarios:    scenarioList(supportedSQLScenarios),
+		DefaultTimeoutSeconds:    defaultTimeoutSeconds,
+		MaxTimeoutSeconds:        maxTimeoutSeconds,
+	}
+}
+
+func (s *server) pythonAvailable() bool {
+	if strings.TrimSpace(s.pythonBin) == "" {
+		return false
+	}
+	_, err := exec.LookPath(s.pythonBin)
+	return err == nil
 }
 
 func (s *server) runPython(ctx context.Context, payload runRequest) (runResponse, error) {
@@ -206,20 +264,34 @@ func (s *server) validateSQL(ctx context.Context, payload sqlValidationRequest) 
 }
 
 func isSupportedSQLScenario(value string) bool {
-	switch value {
-	case "customer_revenue_rollup", "signup_funnel_rollup", "incident_error_budget_audit":
-		return true
-	default:
-		return false
+	return containsScenario(supportedSQLScenarios, value)
+}
+
+func isSupportedCodingScenario(value string) bool {
+	return containsScenario(supportedCodingScenarios, value)
+}
+
+func containsScenario(scenarios []string, value string) bool {
+	for _, scenario := range scenarios {
+		if value == scenario {
+			return true
+		}
 	}
+	return false
+}
+
+func scenarioList(scenarios []string) []string {
+	values := append([]string(nil), scenarios...)
+	sort.Strings(values)
+	return values
 }
 
 func timeoutDuration(value float64) time.Duration {
 	if value <= 0 {
 		value = defaultTimeoutSeconds
 	}
-	if value > 10 {
-		value = 10
+	if value > maxTimeoutSeconds {
+		value = maxTimeoutSeconds
 	}
 	return time.Duration(value * float64(time.Second))
 }
@@ -367,6 +439,314 @@ def run_rate_limiter_checks(ns):
     })
     return results
 
+def _call_feature_freshness(fn, record, now_ts=10000):
+    try:
+        return fn(record, now_ts, max_age_seconds=3600)
+    except TypeError:
+        try:
+            return fn(record, now_ts)
+        except TypeError:
+            return fn(record)
+
+def _decision_allows(result):
+    if isinstance(result, bool):
+        return result
+    if isinstance(result, str):
+        lowered = result.strip().lower()
+        if any(token in lowered for token in ("allow", "allowed", "pass", "ok")):
+            return True
+        if any(token in lowered for token in ("block", "blocked", "deny", "reject", "stale")):
+            return False
+    if isinstance(result, dict):
+        if "allowed" in result:
+            return bool(result.get("allowed"))
+        if "allow" in result:
+            return bool(result.get("allow"))
+        if "blocked" in result:
+            return not bool(result.get("blocked"))
+        if "block" in result:
+            return not bool(result.get("block"))
+        for key in ("decision", "status", "action", "recommendation"):
+            value = str(result.get(key) or "").strip().lower()
+            if value in {"allow", "allowed", "pass", "ok", "use_fallback"}:
+                return True
+            if value in {"block", "blocked", "deny", "reject", "stale"}:
+                return False
+    return None
+
+def _used_fallback(result):
+    if not isinstance(result, dict):
+        return False
+    if bool(result.get("used_fallback") or result.get("fallback_used") or result.get("fallback")):
+        return True
+    return str(result.get("source") or "").strip().lower() == "fallback"
+
+def _has_reason(result):
+    if isinstance(result, str):
+        return bool(result.strip())
+    if not isinstance(result, dict):
+        return False
+    for key in ("reason", "explanation", "message", "details"):
+        if str(result.get(key) or "").strip():
+            return True
+    return False
+
+def run_feature_freshness_checks(ns):
+    fn = ns.get("evaluate_feature_freshness")
+    if not callable(fn):
+        raise ValueError("evaluate_feature_freshness function was not found")
+
+    fresh_record = {
+        "feature_age_seconds": 120,
+        "features": {"risk_score": 0.42},
+        "fallback_features": {"risk_score": 0.50},
+    }
+    stale_record = {
+        "feature_age_seconds": 7200,
+        "features": {"risk_score": 0.42},
+        "fallback_features": {"risk_score": 0.50},
+    }
+    missing_record = {
+        "feature_age_seconds": 120,
+        "features": {"risk_score": None},
+        "fallback_features": {"risk_score": 0.55},
+    }
+
+    fresh_result = _call_feature_freshness(fn, fresh_record)
+    stale_result = _call_feature_freshness(fn, stale_record)
+    fallback_result = _call_feature_freshness(fn, missing_record)
+    fresh_decision = _decision_allows(fresh_result)
+    stale_decision = _decision_allows(stale_result)
+    fallback_decision = _decision_allows(fallback_result)
+
+    reason_present = any(_has_reason(item) for item in (fresh_result, stale_result, fallback_result))
+    results = [
+        {
+            "check_key": "runner_allows_fresh_features",
+            "passed": fresh_decision is True,
+            "details": f"fresh_decision={fresh_decision}",
+        },
+        {
+            "check_key": "runner_blocks_stale_features",
+            "passed": stale_decision is False,
+            "details": f"stale_decision={stale_decision}",
+        },
+        {
+            "check_key": "runner_uses_fallback_for_missing_feature",
+            "passed": fallback_decision is True and _used_fallback(fallback_result),
+            "details": f"fallback_decision={fallback_decision}; used_fallback={_used_fallback(fallback_result)}",
+        },
+        {
+            "check_key": "runner_explains_feature_decision",
+            "passed": reason_present,
+            "details": f"reason_present={reason_present}",
+        },
+    ]
+    return results
+
+def _call_flaky_classifier(fn, runs):
+    try:
+        return fn(runs)
+    except TypeError:
+        return fn(test_runs=runs)
+
+def _item_name(item):
+    if isinstance(item, str):
+        return item
+    if not isinstance(item, dict):
+        return ""
+    for key in ("test_id", "test", "name", "id", "nodeid"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+def _items_from_keys(result, keys):
+    if isinstance(result, dict):
+        for key in keys:
+            value = result.get(key)
+            if isinstance(value, (list, tuple, set)):
+                return list(value)
+    if isinstance(result, (list, tuple, set)):
+        return list(result)
+    return []
+
+def _contains_named_item(items, target):
+    return any(_item_name(item) == target for item in items)
+
+def _has_flaky(result, target):
+    flaky_items = _items_from_keys(result, ("flaky_tests", "flaky", "flakes", "unstable_tests", "unstable"))
+    if _contains_named_item(flaky_items, target):
+        return True
+    for item in flaky_items:
+        if isinstance(item, dict) and bool(item.get("flaky")) and _item_name(item) == target:
+            return True
+    if isinstance(result, (list, tuple, set)):
+        for item in result:
+            if not isinstance(item, dict) or _item_name(item) != target:
+                continue
+            classification = str(item.get("classification") or item.get("status") or item.get("kind") or "").lower()
+            if bool(item.get("flaky")) or "flaky" in classification:
+                return True
+    return False
+
+def _has_stable_failure(result, target):
+    stable_items = _items_from_keys(result, ("stable_failures", "persistent_failures", "consistent_failures", "failed_tests"))
+    if _contains_named_item(stable_items, target):
+        return True
+    if isinstance(result, (list, tuple, set)):
+        for item in result:
+            if not isinstance(item, dict) or _item_name(item) != target:
+                continue
+            classification = str(item.get("classification") or item.get("status") or item.get("kind") or "").lower()
+            if "stable" in classification or "persistent" in classification or "consistent" in classification:
+                return True
+    return False
+
+def _has_diagnostics(result):
+    if isinstance(result, str):
+        return bool(result.strip())
+    if isinstance(result, dict):
+        for key in ("summary", "diagnostics", "report", "message"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                return True
+            if isinstance(value, (list, tuple, dict)) and value:
+                return True
+    return False
+
+def run_flaky_classifier_checks(ns):
+    fn = ns.get("classify_flaky_tests")
+    if not callable(fn):
+        raise ValueError("classify_flaky_tests function was not found")
+
+    runs = [
+        {"test_id": "test_login", "run_id": "build-1", "status": "failed"},
+        {"test_id": "test_login", "run_id": "build-2", "status": "passed"},
+        {"test_id": "test_checkout", "run_id": "build-1", "status": "failed"},
+        {"test_id": "test_checkout", "run_id": "build-2", "status": "failed"},
+        {"test_id": "test_search", "run_id": "build-1", "status": "passed"},
+        {"test_id": "test_search", "run_id": "build-2", "status": "passed"},
+    ]
+
+def _call_rollout_guard(fn, snapshot):
+    try:
+        return fn(snapshot)
+    except TypeError:
+        return fn(metrics=snapshot)
+
+def _rollout_action(result):
+    if isinstance(result, str):
+        lowered = result.strip().lower()
+        if "rollback" in lowered or "roll back" in lowered:
+            return "rollback"
+        if "pause" in lowered or "hold" in lowered:
+            return "pause"
+        if "continue" in lowered or "proceed" in lowered:
+            return "continue"
+    if isinstance(result, dict):
+        for key in ("action", "decision", "recommendation", "status"):
+            value = str(result.get(key) or "").strip().lower().replace("-", "_")
+            if value in {"rollback", "roll_back", "revert"}:
+                return "rollback"
+            if value in {"pause", "hold", "stop", "wait"}:
+                return "pause"
+            if value in {"continue", "proceed", "advance", "ok"}:
+                return "continue"
+    return ""
+
+def run_deployment_rollout_checks(ns):
+    fn = ns.get("evaluate_rollout_health")
+    if not callable(fn):
+        raise ValueError("evaluate_rollout_health function was not found")
+
+    healthy = {
+        "stage": "canary",
+        "error_rate": 0.004,
+        "latency_p95_ms": 180,
+        "slo_burn_rate": 0.7,
+        "alerts": [],
+        "events": [{"type": "deploy_started", "severity": "info"}],
+    }
+    degraded = {
+        "stage": "canary",
+        "error_rate": 0.018,
+        "latency_p95_ms": 460,
+        "slo_burn_rate": 1.8,
+        "alerts": [{"name": "latency-warning", "severity": "warning"}],
+        "events": [{"type": "latency_regression", "severity": "warning"}],
+    }
+    critical = {
+        "stage": "canary",
+        "error_rate": 0.082,
+        "latency_p95_ms": 1250,
+        "slo_burn_rate": 6.5,
+        "alerts": [{"name": "error-budget-burn", "severity": "critical"}],
+        "events": [{"type": "customer-impact", "severity": "critical"}],
+    }
+
+    healthy_result = _call_rollout_guard(fn, healthy)
+    degraded_result = _call_rollout_guard(fn, degraded)
+    critical_result = _call_rollout_guard(fn, critical)
+    healthy_action = _rollout_action(healthy_result)
+    degraded_action = _rollout_action(degraded_result)
+    critical_action = _rollout_action(critical_result)
+    reason_present = any(_has_reason(item) for item in (healthy_result, degraded_result, critical_result))
+
+    return [
+        {
+            "check_key": "runner_continues_healthy_rollout",
+            "passed": healthy_action == "continue",
+            "details": f"healthy_action={healthy_action}",
+        },
+        {
+            "check_key": "runner_pauses_degraded_rollout",
+            "passed": degraded_action == "pause",
+            "details": f"degraded_action={degraded_action}",
+        },
+        {
+            "check_key": "runner_rolls_back_critical_failure",
+            "passed": critical_action == "rollback",
+            "details": f"critical_action={critical_action}",
+        },
+        {
+            "check_key": "runner_explains_rollout_decision",
+            "passed": reason_present,
+            "details": f"reason_present={reason_present}",
+        },
+    ]
+    result = _call_flaky_classifier(fn, runs)
+    grouped = False
+    if isinstance(result, dict):
+        groups = result.get("groups") or result.get("by_test") or result.get("grouped_runs")
+        grouped = isinstance(groups, dict) and "test_login" in groups and "test_checkout" in groups
+    flags_flaky = _has_flaky(result, "test_login")
+    separates_stable = _has_stable_failure(result, "test_checkout") and not _has_flaky(result, "test_checkout")
+    diagnostics_present = _has_diagnostics(result)
+
+    return [
+        {
+            "check_key": "runner_groups_repeated_runs",
+            "passed": grouped,
+            "details": f"grouped={grouped}",
+        },
+        {
+            "check_key": "runner_flags_flaky_mixed_outcomes",
+            "passed": flags_flaky,
+            "details": f"test_login_flaky={flags_flaky}",
+        },
+        {
+            "check_key": "runner_separates_stable_failures",
+            "passed": separates_stable,
+            "details": f"test_checkout_stable_failure={separates_stable}",
+        },
+        {
+            "check_key": "runner_emits_ci_diagnostics",
+            "passed": diagnostics_present,
+            "details": f"diagnostics_present={diagnostics_present}",
+        },
+    ]
+
 payload = json.loads(sys.stdin.read())
 source = str(payload.get("code") or "")
 scenario_id = str(payload.get("scenario_id") or "")
@@ -378,6 +758,12 @@ exec(compile(tree, "<candidate_code>", "exec"), ns, ns)
 
 if scenario_id == "rate_limiter_window_counter":
     results = run_rate_limiter_checks(ns)
+elif scenario_id == "feature_freshness_monitor":
+    results = run_feature_freshness_checks(ns)
+elif scenario_id == "flaky_test_classifier":
+    results = run_flaky_classifier_checks(ns)
+elif scenario_id == "deployment_rollout_guard":
+    results = run_deployment_rollout_checks(ns)
 else:
     results = []
 

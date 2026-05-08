@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -49,6 +50,59 @@ func TestHandleUploadRejectsUnsupportedContentType(t *testing.T) {
 
 	if rec.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("expected status 415, got %d", rec.Code)
+	}
+}
+
+func TestHandleStatusReturnsSafeDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	rec := httptest.NewRecorder()
+
+	srv := &server{storageDir: dir, maxBytes: 10 * 1024 * 1024}
+	srv.handleStatus(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), dir) {
+		t.Fatalf("status should not expose storage path: %s", rec.Body.String())
+	}
+	var payload statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Service != "resume-service" || !payload.StorageConfigured || !payload.StorageWritable {
+		t.Fatalf("unexpected status payload: %#v", payload)
+	}
+	if payload.MaxResumeSizeMB != 10 || payload.RawTextMaxChars != rawTextMaxChars {
+		t.Fatalf("unexpected limits: %#v", payload)
+	}
+	if len(payload.AllowedContentTypes) != 2 || payload.AllowedContentTypes[0] != "application/pdf" {
+		t.Fatalf("unexpected content types: %#v", payload.AllowedContentTypes)
+	}
+}
+
+func TestHandleHealthReportsStorageWritable(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+
+	srv := &server{storageDir: t.TempDir(), maxBytes: 10 * 1024 * 1024}
+	srv.handleHealth(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"storage_writable":true`) {
+		t.Fatalf("expected writable health payload: %s", rec.Body.String())
+	}
+}
+
+func TestStatusReportsUnconfiguredStorage(t *testing.T) {
+	srv := &server{storageDir: "", maxBytes: 10 * 1024 * 1024}
+	status := srv.status()
+
+	if status.StorageConfigured || status.StorageWritable {
+		t.Fatalf("expected unconfigured storage to be unsafe: %#v", status)
 	}
 }
 

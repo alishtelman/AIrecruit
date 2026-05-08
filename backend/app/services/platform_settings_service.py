@@ -1,6 +1,8 @@
+import logging
 from collections.abc import Mapping
 from typing import Any
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +21,13 @@ from app.ai.model_preferences import (
 from app.models.platform_settings import PlatformSettings
 
 _ALLOWED_PROCTORING_POLICY_MODES = {"observe_only", "strict_flagging"}
-_PROVIDERS_REQUIRING_KEYS = {"groq": "GROQ_API_KEY", "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+_PROVIDERS_REQUIRING_KEYS = {
+    "groq": "GROQ_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+}
+logger = logging.getLogger(__name__)
 
 
 def _normalize_model_preference(value: str | None) -> str | None:
@@ -55,7 +63,64 @@ def _api_key_available(provider: str) -> bool:
         return bool(settings.OPENAI_API_KEY)
     if provider == "anthropic":
         return bool(settings.ANTHROPIC_API_KEY)
+    if provider == "openrouter":
+        return bool(settings.OPENROUTER_API_KEY)
     return False
+
+
+async def _llm_service_provider_statuses() -> dict[str, dict[str, Any]] | None:
+    base_url = str(settings.LLM_SERVICE_URL or "").strip().rstrip("/")
+    if not base_url:
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            response = await client.get(f"{base_url}/v1/status")
+        if response.status_code >= 400:
+            logger.warning("LLM service status returned HTTP %s", response.status_code)
+            return None
+        payload = response.json()
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        logger.warning("LLM service status unavailable; using local env fallback: %s", exc)
+        return None
+
+    providers = payload.get("providers") if isinstance(payload, Mapping) else None
+    if not isinstance(providers, list):
+        logger.warning("LLM service status payload is missing providers list")
+        return None
+
+    statuses: dict[str, dict[str, Any]] = {}
+    allowed_providers = model_options_payload()
+    for item in providers:
+        if not isinstance(item, Mapping):
+            continue
+        provider = normalize_llm_provider(str(item.get("provider") or ""))
+        if provider not in allowed_providers:
+            continue
+        configured = item.get("configured")
+        if not isinstance(configured, bool):
+            continue
+        required_key = str(item.get("required_api_key") or _PROVIDERS_REQUIRING_KEYS.get(provider) or "").strip()
+        statuses[provider] = {
+            "configured": configured,
+            "required_api_key": required_key or None,
+        }
+
+    return statuses or None
+
+
+def _resolve_provider_key_status(
+    provider: str,
+    provider_statuses: Mapping[str, Mapping[str, Any]] | None = None,
+) -> tuple[bool, str | None]:
+    required_key = _PROVIDERS_REQUIRING_KEYS.get(provider)
+    status = provider_statuses.get(provider) if provider_statuses else None
+    if isinstance(status, Mapping):
+        service_required_key = str(status.get("required_api_key") or required_key or "").strip() or None
+        configured = status.get("configured")
+        if isinstance(configured, bool):
+            return configured, service_required_key
+    return _api_key_available(provider), required_key
 
 
 def _normalize_policy_mode(value: str | None) -> str:
@@ -109,7 +174,8 @@ async def get_platform_settings_payload(db: AsyncSession) -> dict[str, Any]:
         provider,
         row.assessor_model or row.assessor_model_preference,
     )
-    key_available = _api_key_available(provider)
+    provider_statuses = await _llm_service_provider_statuses()
+    key_available, required_key = _resolve_provider_key_status(provider, provider_statuses)
     return {
         "candidate_registration_enabled": row.candidate_registration_enabled,
         "company_registration_enabled": row.company_registration_enabled,
@@ -127,8 +193,8 @@ async def get_platform_settings_payload(db: AsyncSession) -> dict[str, Any]:
         "llm_max_retries": _normalize_max_retries(row.llm_max_retries),
         "llm_model_options": model_options_payload(),
         "llm_api_key_available": key_available,
-        "llm_required_api_key": _PROVIDERS_REQUIRING_KEYS.get(provider),
-        "llm_configuration_warning": None if key_available else f"{_PROVIDERS_REQUIRING_KEYS.get(provider, 'API key')} is not configured",
+        "llm_required_api_key": required_key,
+        "llm_configuration_warning": None if key_available else f"{required_key or 'API key'} is not configured",
         "mock_ai_enabled": settings.allow_mock_ai,
         "tts_provider": settings.TTS_PROVIDER,
         "tts_fallback_provider": settings.TTS_FALLBACK_PROVIDER,
@@ -217,6 +283,11 @@ async def candidate_registration_enabled(db: AsyncSession) -> bool:
 async def company_registration_enabled(db: AsyncSession) -> bool:
     row = await get_or_create_platform_settings(db)
     return row.company_registration_enabled
+
+
+async def get_platform_proctoring_policy_mode(db: AsyncSession) -> str:
+    row = await get_or_create_platform_settings(db)
+    return _normalize_policy_mode(row.proctoring_policy_mode)
 
 
 async def employee_invites_enabled(db: AsyncSession) -> bool:

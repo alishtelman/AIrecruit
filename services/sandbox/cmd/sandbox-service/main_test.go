@@ -106,6 +106,56 @@ func TestHandleValidateSQLRejectsUnsupportedScenario(t *testing.T) {
 	}
 }
 
+func TestHandleStatusReturnsSafeDiagnostics(t *testing.T) {
+	srv := &server{pythonBin: "/secret/python"}
+	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	rec := httptest.NewRecorder()
+
+	srv.handleStatus(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "/secret/python") {
+		t.Fatalf("status leaked python path: %s", body)
+	}
+	var payload statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Service != "sandbox-service" || payload.PythonAvailable {
+		t.Fatalf("unexpected runtime status: %#v", payload)
+	}
+	if payload.DefaultTimeoutSeconds != defaultTimeoutSeconds || payload.MaxTimeoutSeconds != maxTimeoutSeconds {
+		t.Fatalf("unexpected timeout limits: %#v", payload)
+	}
+	if len(payload.SupportedCodingScenarios) != 4 || payload.SupportedCodingScenarios[0] != "deployment_rollout_guard" {
+		t.Fatalf("unexpected coding scenarios: %#v", payload.SupportedCodingScenarios)
+	}
+	if len(payload.SupportedSQLScenarios) != 3 || payload.SupportedSQLScenarios[0] != "customer_revenue_rollup" {
+		t.Fatalf("unexpected sql scenarios: %#v", payload.SupportedSQLScenarios)
+	}
+}
+
+func TestHandleHealthReportsRuntimeAndScenarioCounts(t *testing.T) {
+	srv := &server{pythonBin: "python3"}
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+
+	srv.handleHealth(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"coding_scenarios_count":4`) {
+		t.Fatalf("expected coding scenario count: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"sql_scenarios_count":3`) {
+		t.Fatalf("expected sql scenario count: %s", rec.Body.String())
+	}
+}
+
 func TestRunPythonExecutesRateLimiterChecks(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 is not available")
@@ -125,6 +175,125 @@ def allow_request(user_id: str, now: int, limit: int = 5, window_seconds: int = 
 
 	result, err := srv.runPython(context.Background(), runRequest{
 		ScenarioID:     "rate_limiter_window_counter",
+		Language:       "python",
+		Code:           code,
+		TimeoutSeconds: 2,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RunnerScore == nil || *result.RunnerScore != 10.0 {
+		t.Fatalf("unexpected score: %v", result.RunnerScore)
+	}
+	if len(result.RunnerChecks) != 4 {
+		t.Fatalf("unexpected checks: %#v", result.RunnerChecks)
+	}
+}
+
+func TestRunPythonExecutesFeatureFreshnessChecks(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not available")
+	}
+	srv := &server{pythonBin: "python3"}
+	code := `def evaluate_feature_freshness(record, now_ts, max_age_seconds=3600):
+    age = record.get("feature_age_seconds")
+    features = record.get("features", {})
+    fallback = record.get("fallback_features", {})
+    if age is None or age > max_age_seconds:
+        return {"allowed": False, "reason": "feature data is stale"}
+    used_fallback = False
+    risk_score = features.get("risk_score")
+    if risk_score is None:
+        risk_score = fallback.get("risk_score")
+        used_fallback = True
+    if risk_score is None:
+        return {"allowed": False, "reason": "risk_score is missing"}
+    return {"allowed": True, "used_fallback": used_fallback, "reason": "fresh enough for scoring"}
+`
+
+	result, err := srv.runPython(context.Background(), runRequest{
+		ScenarioID:     "feature_freshness_monitor",
+		Language:       "python",
+		Code:           code,
+		TimeoutSeconds: 2,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RunnerScore == nil || *result.RunnerScore != 10.0 {
+		t.Fatalf("unexpected score: %v", result.RunnerScore)
+	}
+	if len(result.RunnerChecks) != 4 {
+		t.Fatalf("unexpected checks: %#v", result.RunnerChecks)
+	}
+}
+
+func TestRunPythonExecutesFlakyClassifierChecks(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not available")
+	}
+	srv := &server{pythonBin: "python3"}
+	code := `from collections import defaultdict
+
+def classify_flaky_tests(runs):
+    groups = defaultdict(list)
+    for item in runs:
+        groups[item["test_id"]].append(item)
+    flaky_tests = []
+    stable_failures = []
+    for test_id, items in groups.items():
+        statuses = {item["status"] for item in items}
+        if "failed" in statuses and "passed" in statuses:
+            flaky_tests.append(test_id)
+        elif statuses == {"failed"}:
+            stable_failures.append(test_id)
+    return {
+        "groups": dict(groups),
+        "flaky_tests": flaky_tests,
+        "stable_failures": stable_failures,
+        "summary": f"{len(flaky_tests)} flaky, {len(stable_failures)} stable failures",
+    }
+`
+
+	result, err := srv.runPython(context.Background(), runRequest{
+		ScenarioID:     "flaky_test_classifier",
+		Language:       "python",
+		Code:           code,
+		TimeoutSeconds: 2,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RunnerScore == nil || *result.RunnerScore != 10.0 {
+		t.Fatalf("unexpected score: %v", result.RunnerScore)
+	}
+	if len(result.RunnerChecks) != 4 {
+		t.Fatalf("unexpected checks: %#v", result.RunnerChecks)
+	}
+}
+
+func TestRunPythonExecutesDeploymentRolloutChecks(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not available")
+	}
+	srv := &server{pythonBin: "python3"}
+	code := `def evaluate_rollout_health(snapshot):
+    error_rate = snapshot.get("error_rate", 0)
+    latency = snapshot.get("latency_p95_ms", 0)
+    burn = snapshot.get("slo_burn_rate", 0)
+    has_critical = any(item.get("severity") == "critical" for item in snapshot.get("alerts", []))
+    if has_critical or error_rate >= 0.05 or latency >= 1000 or burn >= 4:
+        return {"action": "rollback", "reason": "critical rollout health regression"}
+    if error_rate >= 0.01 or latency >= 400 or burn >= 1.5:
+        return {"action": "pause", "reason": "degraded metrics require investigation"}
+    return {"action": "continue", "reason": "canary metrics are healthy"}
+`
+
+	result, err := srv.runPython(context.Background(), runRequest{
+		ScenarioID:     "deployment_rollout_guard",
 		Language:       "python",
 		Code:           code,
 		TimeoutSeconds: 2,

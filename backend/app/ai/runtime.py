@@ -85,6 +85,8 @@ def _api_key_for_provider(provider: str) -> str:
         return settings.OPENAI_API_KEY
     if provider == "anthropic":
         return settings.ANTHROPIC_API_KEY
+    if provider == "openrouter":
+        return settings.OPENROUTER_API_KEY
     return ""
 
 
@@ -93,6 +95,7 @@ def _required_key_name(provider: str) -> str:
         "groq": "GROQ_API_KEY",
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
     }.get(provider, "API key")
 
 
@@ -126,6 +129,28 @@ def _extract_json(text: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise LLMRuntimeError("invalid_structured_output", "Provider returned non-object JSON")
     return parsed
+
+
+def _safe_response_json(response: httpx.Response) -> dict[str, Any]:
+    try:
+        payload = response.json()
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _normalize_error_category(value: Any) -> LLMErrorCategory:
+    normalized = str(value or "").strip()
+    if normalized in {
+        "configuration_error",
+        "auth_error",
+        "timeout_error",
+        "rate_limit_error",
+        "provider_error",
+        "invalid_structured_output",
+    }:
+        return normalized  # type: ignore[return-value]
+    return "provider_error"
 
 
 class LLMRuntime:
@@ -205,12 +230,22 @@ class LLMRuntime:
         temperature: float,
     ) -> LLMResult:
         self._validate_runtime(runtime_settings)
+        proxied = await self._llm_service_complete(
+            runtime_settings=runtime_settings,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        if proxied is not None:
+            return proxied
         if runtime_settings.provider == "groq":
             return await self._groq_chat(runtime_settings, messages, max_tokens=max_tokens, temperature=temperature)
         if runtime_settings.provider == "openai":
             return await self._openai_response(runtime_settings, messages, max_tokens=max_tokens, temperature=temperature)
         if runtime_settings.provider == "anthropic":
             return await self._anthropic_message(runtime_settings, messages, max_tokens=max_tokens, temperature=temperature)
+        if runtime_settings.provider == "openrouter":
+            return await self._openrouter_chat(runtime_settings, messages, max_tokens=max_tokens, temperature=temperature)
         raise LLMRuntimeError("configuration_error", f"Unsupported LLM provider '{runtime_settings.provider}'")
 
     async def _complete_structured_once(
@@ -223,6 +258,15 @@ class LLMRuntime:
         tool: dict[str, Any],
     ) -> LLMResult:
         self._validate_runtime(runtime_settings)
+        proxied = await self._llm_service_complete(
+            runtime_settings=runtime_settings,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tool=tool,
+        )
+        if proxied is not None:
+            return proxied
         if runtime_settings.provider == "groq":
             return await self._groq_chat(
                 runtime_settings,
@@ -260,7 +304,61 @@ class LLMRuntime:
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
+        if runtime_settings.provider == "openrouter":
+            return await self._openrouter_chat(
+                runtime_settings,
+                structured_messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
         raise LLMRuntimeError("configuration_error", f"Unsupported LLM provider '{runtime_settings.provider}'")
+
+    async def _llm_service_complete(
+        self,
+        *,
+        runtime_settings: LLMRuntimeSettings,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        temperature: float,
+        tool: dict[str, Any] | None = None,
+    ) -> LLMResult | None:
+        base_url = str(settings.LLM_SERVICE_URL or "").strip().rstrip("/")
+        if not base_url:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=runtime_settings.timeout_seconds + 1.0) as client:
+                response = await client.post(
+                    f"{base_url}/v1/complete",
+                    json={
+                        "provider": runtime_settings.provider,
+                        "model": runtime_settings.model,
+                        "messages": messages,
+                        "prompt_override": runtime_settings.prompt_override,
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                        "timeout_seconds": runtime_settings.timeout_seconds,
+                        "max_retries": runtime_settings.max_retries,
+                        **({"tool": tool} if tool else {}),
+                    },
+                )
+        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            logger.warning("LLM service unavailable, falling back to direct provider call: %s", exc)
+            return None
+
+        payload = _safe_response_json(response)
+        if response.status_code >= 400:
+            raise LLMRuntimeError(
+                _normalize_error_category(payload.get("category")),
+                str(payload.get("detail") or payload.get("message") or f"LLM service failed with status {response.status_code}"),
+                retryable=bool(payload.get("retryable")),
+            )
+
+        return LLMResult(
+            text=str(payload.get("text") or "").strip(),
+            model=str(payload.get("model") or runtime_settings.model),
+            provider=str(payload.get("provider") or runtime_settings.provider),
+            raw=payload.get("raw"),
+        )
 
     async def _groq_chat(
         self,
@@ -364,6 +462,36 @@ class LLMRuntime:
             extract_text=_extract_anthropic_text,
         )
 
+    async def _openrouter_chat(
+        self,
+        runtime_settings: LLMRuntimeSettings,
+        messages: list[dict[str, Any]],
+        *,
+        max_tokens: int,
+        temperature: float,
+    ) -> LLMResult:
+        system, chat_messages = _normalize_messages(messages, runtime_settings.prompt_override)
+        if system:
+            chat_messages.insert(0, {"role": "system", "content": system})
+        headers = {"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"}
+        if settings.APP_URL:
+            headers["HTTP-Referer"] = settings.APP_URL
+        headers["X-Title"] = "AIRecruit"
+        return await self._http_json_request(
+            runtime_settings,
+            provider="openrouter",
+            url="https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            payload={
+                "model": runtime_settings.model,
+                "messages": [{"role": msg["role"], "content": msg["content"]} for msg in chat_messages],
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "provider": {"allow_fallbacks": False},
+            },
+            extract_text=_extract_chat_completion_text,
+        )
+
     async def _http_json_request(
         self,
         runtime_settings: LLMRuntimeSettings,
@@ -412,6 +540,17 @@ def _extract_anthropic_text(data: dict[str, Any]) -> str:
         if isinstance(content, dict) and content.get("type") == "text":
             chunks.append(str(content.get("text") or ""))
     return "\n".join(chunks).strip()
+
+
+def _extract_chat_completion_text(data: dict[str, Any]) -> str:
+    choices = data.get("choices") or []
+    if not choices or not isinstance(choices[0], dict):
+        return ""
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+    if isinstance(content, list):
+        return "\n".join(str(part.get("text") or "") for part in content if isinstance(part, dict)).strip()
+    return str(content or "").strip()
 
 
 runtime = LLMRuntime()

@@ -1,11 +1,15 @@
+import logging
 import uuid
 from collections import defaultdict
 from datetime import datetime
 from statistics import median
 
+import httpx
+from pydantic import ValidationError
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.candidate import Candidate, PROFILE_VISIBILITY_MARKETPLACE
 from app.models.company_assessment import CompanyAssessment
 from app.models.hire_outcome import HireOutcome
@@ -56,6 +60,7 @@ _PROFICIENCY_RANK = {
     "advanced": 2,
     "expert": 3,
 }
+logger = logging.getLogger(__name__)
 
 
 def _normalize_skill_name(value: str) -> str:
@@ -388,6 +393,53 @@ def _apply_candidate_filters(
     return filtered
 
 
+async def _load_marketplace_snapshot_with_marketplace_service(
+    *,
+    company_id: uuid.UUID,
+    q: str | None = None,
+    role: str | None = None,
+    skills: list[str] | None = None,
+    min_score: float | None = None,
+    recommendation: str | None = None,
+    salary_min: int | None = None,
+    salary_max: int | None = None,
+    hire_outcome: str | None = None,
+    shortlist_id: uuid.UUID | None = None,
+    sort: str = "score_desc",
+) -> list[CandidateListItemResponse] | None:
+    base_url = str(settings.MARKETPLACE_SERVICE_URL or "").strip().rstrip("/")
+    if not base_url:
+        return None
+
+    payload = {
+        "company_id": str(company_id),
+        "q": q,
+        "role": role,
+        "skills": skills or [],
+        "min_score": min_score,
+        "recommendation": recommendation,
+        "salary_min": salary_min,
+        "salary_max": salary_max,
+        "hire_outcome": hire_outcome,
+        "shortlist_id": str(shortlist_id) if shortlist_id else None,
+        "sort": sort,
+    }
+    try:
+        async with httpx.AsyncClient(base_url=base_url, timeout=10.0) as client:
+            response = await client.post("/v1/company-candidates/search", json=payload)
+        if not response.is_success:
+            logger.warning("Marketplace service returned HTTP %s; using Python fallback", response.status_code)
+            return None
+        data = response.json()
+        if not isinstance(data, list):
+            logger.warning("Marketplace service returned invalid payload; using Python fallback")
+            return None
+        return [CandidateListItemResponse.model_validate(item) for item in data]
+    except (httpx.HTTPError, ValueError, ValidationError) as exc:
+        logger.warning("Marketplace service unavailable; using Python fallback: %s", exc)
+        return None
+
+
 async def list_verified_candidates(
     db: AsyncSession,
     company_id: uuid.UUID,
@@ -403,6 +455,22 @@ async def list_verified_candidates(
     shortlist_id: uuid.UUID | None = None,
     sort: str = "score_desc",
 ) -> list[CandidateListItemResponse]:
+    proxied = await _load_marketplace_snapshot_with_marketplace_service(
+        company_id=company_id,
+        q=q,
+        role=role,
+        skills=skills,
+        min_score=min_score,
+        recommendation=recommendation,
+        salary_min=salary_min,
+        salary_max=salary_max,
+        hire_outcome=hire_outcome,
+        shortlist_id=shortlist_id,
+        sort=sort,
+    )
+    if proxied is not None:
+        return proxied
+
     items = await _load_marketplace_snapshot(
         db,
         company_id,

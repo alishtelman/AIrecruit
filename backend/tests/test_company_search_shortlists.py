@@ -2,13 +2,14 @@
 import io
 import os
 import uuid
+from datetime import datetime, timedelta
 
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.models.candidate import Candidate  # noqa: F401
+from app.models.candidate import PROFILE_VISIBILITY_MARKETPLACE, Candidate  # noqa: F401
 from app.models.company import Company  # noqa: F401
 from app.models.company_assessment import CompanyAssessment  # noqa: F401
 from app.models.company_member import CompanyMember  # noqa: F401
@@ -20,6 +21,7 @@ from app.models.skill import CandidateSkill
 from app.models.shortlist import CompanyShortlist, CompanyShortlistCandidate  # noqa: F401
 from app.models.template import InterviewTemplate  # noqa: F401
 from app.models.user import User  # noqa: F401
+from app.services.company_service import list_verified_candidates
 from tests.conftest import auth_headers
 
 TEST_DATABASE_URL = os.getenv(
@@ -83,6 +85,98 @@ async def _candidate_profile(client: AsyncClient, token: str) -> dict:
     resp = await client.get("/api/v1/auth/me/candidate", headers=auth_headers(token))
     assert resp.status_code == 200, resp.text
     return resp.json()["candidate"]
+
+
+async def _seed_marketplace_candidate_with_reports(
+    db: AsyncSession,
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, str]:
+    marker = uuid.uuid4().hex
+    full_name = f"Latest Report Candidate {marker}"
+    company_user = User(
+        id=uuid.uuid4(),
+        email=f"company_search_{marker}@example.com",
+        hashed_password="unused",
+        role="company_admin",
+    )
+    company = Company(
+        id=uuid.uuid4(),
+        owner_user_id=company_user.id,
+        name=f"Search Parity {marker}",
+    )
+    candidate_user = User(
+        id=uuid.uuid4(),
+        email=f"candidate_search_{marker}@example.com",
+        hashed_password="unused",
+        role="candidate",
+    )
+    candidate = Candidate(
+        id=uuid.uuid4(),
+        user_id=candidate_user.id,
+        full_name=full_name,
+        profile_visibility=PROFILE_VISIBILITY_MARKETPLACE,
+    )
+    now = datetime.utcnow()
+    old_interview = Interview(
+        id=uuid.uuid4(),
+        candidate_id=candidate.id,
+        status="report_generated",
+        target_role="backend_engineer",
+        completed_at=now - timedelta(days=2),
+    )
+    new_interview = Interview(
+        id=uuid.uuid4(),
+        candidate_id=candidate.id,
+        status="report_generated",
+        target_role="devops_engineer",
+        completed_at=now - timedelta(days=1),
+    )
+    old_report = AssessmentReport(
+        id=uuid.uuid4(),
+        interview_id=old_interview.id,
+        candidate_id=candidate.id,
+        overall_score=9.5,
+        hard_skills_score=9.0,
+        soft_skills_score=8.5,
+        communication_score=8.0,
+        strengths=[],
+        weaknesses=[],
+        recommendations=[],
+        hiring_recommendation="strong_yes",
+        interview_summary="Older strong Python report",
+        skill_tags=[{"skill": "Python", "proficiency": "expert", "mentions_count": 4}],
+        red_flags=[],
+        full_report_json={},
+        model_version="test",
+        created_at=now - timedelta(days=2),
+    )
+    new_report = AssessmentReport(
+        id=uuid.uuid4(),
+        interview_id=new_interview.id,
+        candidate_id=candidate.id,
+        overall_score=4.0,
+        hard_skills_score=4.0,
+        soft_skills_score=5.0,
+        communication_score=5.0,
+        strengths=[],
+        weaknesses=[],
+        recommendations=[],
+        hiring_recommendation="no",
+        interview_summary="Latest lower Go report",
+        skill_tags=[{"skill": "Go", "proficiency": "intermediate", "mentions_count": 2}],
+        red_flags=[],
+        full_report_json={},
+        model_version="test",
+        created_at=now - timedelta(days=1),
+    )
+    db.add_all([company_user, candidate_user])
+    await db.flush()
+    db.add_all([company, candidate])
+    await db.flush()
+    db.add_all([old_interview, new_interview])
+    await db.flush()
+    db.add_all([old_report, new_report])
+    await db.flush()
+    return company.id, candidate.id, old_report.id, new_report.id, full_name
 
 
 @pytest.mark.asyncio
@@ -154,6 +248,72 @@ async def test_company_search_filters_by_skills_and_shortlist(
     )
     assert missing.status_code == 200, missing.text
     assert missing.json() == []
+
+
+@pytest.mark.asyncio
+async def test_company_search_uses_latest_marketplace_report_for_sql_filters(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr("app.services.company_service.settings.MARKETPLACE_SERVICE_URL", "")
+    company_id, candidate_id, old_report_id, new_report_id, search_name = await _seed_marketplace_candidate_with_reports(
+        db_session,
+    )
+
+    items = await list_verified_candidates(
+        db_session,
+        company_id=company_id,
+        q=search_name,
+    )
+
+    target = next((item for item in items if item.candidate_id == candidate_id), None)
+    assert target is not None
+    assert target.report_id == new_report_id
+    assert target.report_id != old_report_id
+    assert target.target_role == "devops_engineer"
+    assert target.overall_score == 4.0
+    assert target.hiring_recommendation == "no"
+    assert [tag["skill"] for tag in target.skill_tags or []] == ["Go"]
+
+    old_score_filtered = await list_verified_candidates(
+        db_session,
+        company_id=company_id,
+        q=search_name,
+        min_score=9,
+    )
+    assert all(item.candidate_id != candidate_id for item in old_score_filtered)
+
+    old_recommendation_filtered = await list_verified_candidates(
+        db_session,
+        company_id=company_id,
+        q=search_name,
+        recommendation="strong_yes",
+    )
+    assert all(item.candidate_id != candidate_id for item in old_recommendation_filtered)
+
+    old_role_filtered = await list_verified_candidates(
+        db_session,
+        company_id=company_id,
+        q=search_name,
+        role="backend_engineer",
+    )
+    assert all(item.candidate_id != candidate_id for item in old_role_filtered)
+
+    old_skill_filtered = await list_verified_candidates(
+        db_session,
+        company_id=company_id,
+        q=search_name,
+        skills=["python"],
+    )
+    assert all(item.candidate_id != candidate_id for item in old_skill_filtered)
+
+    latest_skill_filtered = await list_verified_candidates(
+        db_session,
+        company_id=company_id,
+        q=search_name,
+        skills=["go"],
+    )
+    assert [item.candidate_id for item in latest_skill_filtered] == [candidate_id]
 
 
 @pytest.mark.asyncio

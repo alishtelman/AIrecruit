@@ -128,6 +128,134 @@ def allow_request(user_id: str, now: int, limit: int = 5, window_seconds: int = 
     assert any(check["check_key"] == "runner_blocks_over_limit" for check in checks)
 
 
+def test_build_coding_task_runner_checks_supports_feature_freshness_fallback(monkeypatch: pytest.MonkeyPatch):
+    original_url = settings.SANDBOX_SERVICE_URL
+    settings.SANDBOX_SERVICE_URL = "http://sandbox-service:8080"
+
+    def _failing_sandbox(**kwargs):
+        raise httpx.ConnectError("unavailable")
+
+    monkeypatch.setattr("app.ai.assessor._run_coding_task_runner_in_sandbox", _failing_sandbox)
+    try:
+        checks, score = _build_coding_task_runner_checks(
+            scenario_id="feature_freshness_monitor",
+            artifact_code="""
+def evaluate_feature_freshness(record, now_ts, max_age_seconds=3600):
+    age = record.get("feature_age_seconds")
+    features = record.get("features", {})
+    fallback = record.get("fallback_features", {})
+    if age is None or age > max_age_seconds:
+        return {"allowed": False, "reason": "feature data is stale"}
+    used_fallback = False
+    risk_score = features.get("risk_score")
+    if risk_score is None:
+        risk_score = fallback.get("risk_score")
+        used_fallback = True
+    if risk_score is None:
+        return {"allowed": False, "reason": "risk_score is missing"}
+    return {"allowed": True, "used_fallback": used_fallback, "reason": "fresh enough for scoring"}
+""",
+            artifact_language="python",
+            report_language="en",
+        )
+    finally:
+        settings.SANDBOX_SERVICE_URL = original_url
+
+    assert score == 10.0
+    assert {check["check_key"] for check in checks} == {
+        "runner_allows_fresh_features",
+        "runner_blocks_stale_features",
+        "runner_uses_fallback_for_missing_feature",
+        "runner_explains_feature_decision",
+    }
+
+
+def test_build_coding_task_runner_checks_supports_flaky_classifier_fallback(monkeypatch: pytest.MonkeyPatch):
+    original_url = settings.SANDBOX_SERVICE_URL
+    settings.SANDBOX_SERVICE_URL = "http://sandbox-service:8080"
+
+    def _failing_sandbox(**kwargs):
+        raise httpx.ConnectError("unavailable")
+
+    monkeypatch.setattr("app.ai.assessor._run_coding_task_runner_in_sandbox", _failing_sandbox)
+    try:
+        checks, score = _build_coding_task_runner_checks(
+            scenario_id="flaky_test_classifier",
+            artifact_code="""
+from collections import defaultdict
+
+def classify_flaky_tests(runs):
+    groups = defaultdict(list)
+    for item in runs:
+        groups[item["test_id"]].append(item)
+    flaky_tests = []
+    stable_failures = []
+    for test_id, items in groups.items():
+        statuses = {item["status"] for item in items}
+        if "failed" in statuses and "passed" in statuses:
+            flaky_tests.append(test_id)
+        elif statuses == {"failed"}:
+            stable_failures.append(test_id)
+    return {
+        "groups": dict(groups),
+        "flaky_tests": flaky_tests,
+        "stable_failures": stable_failures,
+        "summary": f"{len(flaky_tests)} flaky, {len(stable_failures)} stable failures",
+    }
+""",
+            artifact_language="python",
+            report_language="en",
+        )
+    finally:
+        settings.SANDBOX_SERVICE_URL = original_url
+
+    assert score == 10.0
+    assert {check["check_key"] for check in checks} == {
+        "runner_groups_repeated_runs",
+        "runner_flags_flaky_mixed_outcomes",
+        "runner_separates_stable_failures",
+        "runner_emits_ci_diagnostics",
+    }
+
+
+def test_build_coding_task_runner_checks_supports_deployment_rollout_fallback(monkeypatch: pytest.MonkeyPatch):
+    original_url = settings.SANDBOX_SERVICE_URL
+    settings.SANDBOX_SERVICE_URL = "http://sandbox-service:8080"
+
+    def _failing_sandbox(**kwargs):
+        raise httpx.ConnectError("unavailable")
+
+    monkeypatch.setattr("app.ai.assessor._run_coding_task_runner_in_sandbox", _failing_sandbox)
+    try:
+        checks, score = _build_coding_task_runner_checks(
+            scenario_id="deployment_rollout_guard",
+            artifact_code="""
+def evaluate_rollout_health(snapshot):
+    error_rate = snapshot.get("error_rate", 0)
+    latency = snapshot.get("latency_p95_ms", 0)
+    burn = snapshot.get("slo_burn_rate", 0)
+    has_critical = any(item.get("severity") == "critical" for item in snapshot.get("alerts", []))
+    if has_critical or error_rate >= 0.05 or latency >= 1000 or burn >= 4:
+        return {"action": "rollback", "reason": "critical rollout health regression"}
+    if error_rate >= 0.01 or latency >= 400 or burn >= 1.5:
+        return {"action": "pause", "reason": "degraded metrics require investigation"}
+    return {"action": "continue", "reason": "canary metrics are healthy"}
+""",
+            artifact_language="python",
+            report_language="en",
+        )
+    finally:
+        settings.SANDBOX_SERVICE_URL = original_url
+
+    assert score == 10.0
+    assert {check["check_key"] for check in checks} == {
+        "runner_continues_healthy_rollout",
+        "runner_pauses_degraded_rollout",
+        "runner_rolls_back_critical_failure",
+        "runner_explains_rollout_decision",
+    }
+
+
 def test_run_sql_live_validation_in_sandbox_maps_payload(monkeypatch: pytest.MonkeyPatch):
     original_url = settings.SANDBOX_SERVICE_URL
     settings.SANDBOX_SERVICE_URL = "http://sandbox-service:8080"

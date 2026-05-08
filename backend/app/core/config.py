@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
+    OPENROUTER_API_KEY: str = ""
     ALLOW_MOCK_AI: bool = True
     ELEVENLABS_API_KEY: str = ""
     TTS_PROVIDER: str = "groq"
@@ -32,6 +33,8 @@ class Settings(BaseSettings):
     MEDIA_SERVICE_URL: str = ""
     RESUME_SERVICE_URL: str = ""
     SANDBOX_SERVICE_URL: str = ""
+    LLM_SERVICE_URL: str = ""
+    MARKETPLACE_SERVICE_URL: str = ""
     REPORT_SYNC_GENERATION_TIMEOUT_SECONDS: float = 8.0
     REPORT_ASSESSMENT_TIMEOUT_SECONDS: float = 25.0
     REPORT_MAX_AUTO_RETRIES: int = 3

@@ -4,14 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.company import Company
-from app.services.platform_settings_service import get_platform_settings_payload
+from app.services.platform_settings_service import get_platform_proctoring_policy_mode
 
 _ALLOWED_PROCTORING_POLICY_MODES = {"observe_only", "strict_flagging"}
 
 
 async def get_company_ai_settings_response(db: AsyncSession, company: Company) -> dict[str, Any]:
-    platform_settings = await get_platform_settings_payload(db)
-    configured_policy = str(platform_settings.get("proctoring_policy_mode") or "").strip().lower()
+    configured_policy = await get_platform_proctoring_policy_mode(db)
     if configured_policy not in _ALLOWED_PROCTORING_POLICY_MODES:
         configured_policy = "observe_only"
 

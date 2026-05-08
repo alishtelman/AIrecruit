@@ -16,62 +16,101 @@ import (
 )
 
 type config struct {
-	BackendURL string
-	Token      string
-	Interval   time.Duration
-	Timeout    time.Duration
-	HealthAddr string
+	BackendURL      string
+	Token           string
+	Interval        time.Duration
+	Timeout         time.Duration
+	HealthAddr      string
+	DryRun          bool
+	MaxJobsPerCycle int
 }
 
 type tickResponse struct {
-	Processed   bool   `json:"processed"`
-	InterviewID string `json:"interview_id"`
+	Processed              bool   `json:"processed"`
+	InterviewID            string `json:"interview_id"`
+	DryRun                 bool   `json:"dry_run"`
+	PendingCount           int    `json:"pending_count"`
+	OldestPendingUpdatedAt string `json:"oldest_pending_updated_at"`
 }
 
 type workerState struct {
-	mu              sync.RWMutex
-	startedAt       time.Time
-	lastTickAt      time.Time
-	lastSuccessAt   time.Time
-	lastProcessedAt time.Time
-	lastInterviewID string
-	lastError       string
+	mu               sync.RWMutex
+	startedAt        time.Time
+	dryRun           bool
+	maxJobsPerCycle  int
+	lastTickAt       time.Time
+	lastSuccessAt    time.Time
+	lastProcessedAt  time.Time
+	lastInterviewID  string
+	lastCandidateID  string
+	lastPendingCount int
+	processedTotal   int64
+	errorTotal       int64
+	lastError        string
 }
 
 func main() {
 	cfg := config{
-		BackendURL: strings.TrimRight(envOrDefault("BACKEND_INTERNAL_URL", "http://backend:8000"), "/"),
-		Token:      strings.TrimSpace(os.Getenv("INTERNAL_WORKER_TOKEN")),
-		Interval:   time.Duration(envIntOrDefault("REPORT_WORKER_INTERVAL_SECONDS", 5)) * time.Second,
-		Timeout:    time.Duration(envIntOrDefault("REPORT_WORKER_REQUEST_TIMEOUT_SECONDS", 300)) * time.Second,
-		HealthAddr: envOrDefault("REPORT_WORKER_HEALTH_ADDR", ":8080"),
+		BackendURL:      strings.TrimRight(envOrDefault("BACKEND_INTERNAL_URL", "http://backend:8000"), "/"),
+		Token:           strings.TrimSpace(os.Getenv("INTERNAL_WORKER_TOKEN")),
+		Interval:        time.Duration(envIntOrDefault("REPORT_WORKER_INTERVAL_SECONDS", 5)) * time.Second,
+		Timeout:         time.Duration(envIntOrDefault("REPORT_WORKER_REQUEST_TIMEOUT_SECONDS", 300)) * time.Second,
+		HealthAddr:      envOrDefault("REPORT_WORKER_HEALTH_ADDR", ":8080"),
+		DryRun:          envBoolOrDefault("REPORT_WORKER_DRY_RUN", false),
+		MaxJobsPerCycle: envIntOrDefault("REPORT_WORKER_MAX_JOBS_PER_CYCLE", 1),
 	}
 	if cfg.Token == "" {
 		log.Fatal("INTERNAL_WORKER_TOKEN is required")
 	}
 
 	client := &http.Client{Timeout: cfg.Timeout}
-	state := &workerState{startedAt: time.Now().UTC()}
+	state := &workerState{startedAt: time.Now().UTC(), dryRun: cfg.DryRun, maxJobsPerCycle: cfg.MaxJobsPerCycle}
 	go serveHealth(cfg.HealthAddr, state)
-	log.Printf("report-worker started backend=%s interval=%s timeout=%s", cfg.BackendURL, cfg.Interval, cfg.Timeout)
+	log.Printf(
+		"report-worker started backend=%s interval=%s timeout=%s dry_run=%t max_jobs_per_cycle=%d",
+		cfg.BackendURL,
+		cfg.Interval,
+		cfg.Timeout,
+		cfg.DryRun,
+		cfg.MaxJobsPerCycle,
+	)
 
 	for {
-		result, err := runTick(context.Background(), client, cfg)
-		state.recordTick(result, err)
-		if err != nil {
-			log.Printf("report-worker tick failed: %v", err)
-		}
-		if !result.Processed {
-			time.Sleep(cfg.Interval)
-		}
+		runCycle(context.Background(), client, cfg, state)
+		time.Sleep(cfg.Interval)
 	}
 }
 
+func runCycle(ctx context.Context, client *http.Client, cfg config, state *workerState) int {
+	limit := cfg.MaxJobsPerCycle
+	if limit <= 0 {
+		limit = 1
+	}
+	ticks := 0
+	for ticks < limit {
+		result, err := runTick(ctx, client, cfg)
+		ticks++
+		state.recordTick(result, err)
+		if err != nil {
+			log.Printf("report-worker tick failed: %v", err)
+			break
+		}
+		if cfg.DryRun || !result.Processed {
+			break
+		}
+	}
+	return ticks
+}
+
 func runTick(ctx context.Context, client *http.Client, cfg config) (tickResponse, error) {
+	endpoint := cfg.BackendURL + "/api/v1/internal/report-worker/tick"
+	if cfg.DryRun {
+		endpoint += "?dry_run=true"
+	}
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		cfg.BackendURL+"/api/v1/internal/report-worker/tick",
+		endpoint,
 		bytes.NewReader(nil),
 	)
 	if err != nil {
@@ -119,8 +158,15 @@ func (s *workerState) recordTick(result tickResponse, err error) {
 
 	now := time.Now().UTC()
 	s.lastTickAt = now
+	if result.PendingCount > 0 || err == nil {
+		s.lastPendingCount = result.PendingCount
+	}
+	if result.DryRun && result.InterviewID != "" {
+		s.lastCandidateID = result.InterviewID
+	}
 	if err != nil {
 		s.lastError = err.Error()
+		s.errorTotal++
 		return
 	}
 	s.lastSuccessAt = now
@@ -128,6 +174,7 @@ func (s *workerState) recordTick(result tickResponse, err error) {
 	if result.Processed {
 		s.lastProcessedAt = now
 		s.lastInterviewID = result.InterviewID
+		s.processedTotal++
 	}
 }
 
@@ -136,14 +183,20 @@ func (s *workerState) snapshot() map[string]any {
 	defer s.mu.RUnlock()
 
 	return map[string]any{
-		"status":            "ok",
-		"service":           "report-worker",
-		"started_at":        formatTime(s.startedAt),
-		"last_tick_at":      formatTime(s.lastTickAt),
-		"last_success_at":   formatTime(s.lastSuccessAt),
-		"last_processed_at": formatTime(s.lastProcessedAt),
-		"last_interview_id": s.lastInterviewID,
-		"last_error":        s.lastError,
+		"status":                      "ok",
+		"service":                     "report-worker",
+		"dry_run":                     s.dryRun,
+		"max_jobs_per_cycle":          s.maxJobsPerCycle,
+		"started_at":                  formatTime(s.startedAt),
+		"last_tick_at":                formatTime(s.lastTickAt),
+		"last_success_at":             formatTime(s.lastSuccessAt),
+		"last_processed_at":           formatTime(s.lastProcessedAt),
+		"last_interview_id":           s.lastInterviewID,
+		"last_candidate_interview_id": s.lastCandidateID,
+		"last_pending_count":          s.lastPendingCount,
+		"processed_total":             s.processedTotal,
+		"error_total":                 s.errorTotal,
+		"last_error":                  s.lastError,
 	}
 }
 
@@ -175,6 +228,18 @@ func envIntOrDefault(key string, fallback int) int {
 	}
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func envBoolOrDefault(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
 		return fallback
 	}
 	return parsed
