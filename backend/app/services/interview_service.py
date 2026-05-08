@@ -348,8 +348,8 @@ _CODING_TASK_SCENARIOS: dict[str, dict[str, str]] = {
         "stack_focus_en": "QA automation, pytest/playwright-style test strategy, and flaky-test diagnostics",
         "stack_focus_ru": "QA automation, pytest/playwright-style test strategy и flaky-test diagnostics",
         "preferred_language": "python",
-        "workspace_hint_en": "A free-form QA solution is acceptable. Show how you would model failures, assertions, fixtures, reporting, or CI diagnostics instead of only describing the idea at a high level.",
-        "workspace_hint_ru": "Подойдёт свободное QA-решение. Покажите, как вы моделируете failures, assertions, fixtures, reporting или CI diagnostics, а не только общую идею.",
+        "workspace_hint_en": "A free-form QA solution is acceptable. Show how you would model failures, assertions, fixtures, reporting, or CI diagnostics instead of only describing the idea at a high level. If you write executable Python, expose classify_flaky_tests(runs).",
+        "workspace_hint_ru": "Подойдёт свободное QA-решение. Покажите, как вы моделируете failures, assertions, fixtures, reporting или CI diagnostics, а не только общую идею. Если пишете исполняемый Python, вынесите classify_flaky_tests(runs).",
     },
     "devops_engineer": {
         "scenario_id": "deployment_rollout_guard",

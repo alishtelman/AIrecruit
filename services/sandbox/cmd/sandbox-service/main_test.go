@@ -180,6 +180,51 @@ func TestRunPythonExecutesFeatureFreshnessChecks(t *testing.T) {
 	}
 }
 
+func TestRunPythonExecutesFlakyClassifierChecks(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not available")
+	}
+	srv := &server{pythonBin: "python3"}
+	code := `from collections import defaultdict
+
+def classify_flaky_tests(runs):
+    groups = defaultdict(list)
+    for item in runs:
+        groups[item["test_id"]].append(item)
+    flaky_tests = []
+    stable_failures = []
+    for test_id, items in groups.items():
+        statuses = {item["status"] for item in items}
+        if "failed" in statuses and "passed" in statuses:
+            flaky_tests.append(test_id)
+        elif statuses == {"failed"}:
+            stable_failures.append(test_id)
+    return {
+        "groups": dict(groups),
+        "flaky_tests": flaky_tests,
+        "stable_failures": stable_failures,
+        "summary": f"{len(flaky_tests)} flaky, {len(stable_failures)} stable failures",
+    }
+`
+
+	result, err := srv.runPython(context.Background(), runRequest{
+		ScenarioID:     "flaky_test_classifier",
+		Language:       "python",
+		Code:           code,
+		TimeoutSeconds: 2,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RunnerScore == nil || *result.RunnerScore != 10.0 {
+		t.Fatalf("unexpected score: %v", result.RunnerScore)
+	}
+	if len(result.RunnerChecks) != 4 {
+		t.Fatalf("unexpected checks: %#v", result.RunnerChecks)
+	}
+}
+
 func TestValidateSQLExecutesScenarioChecks(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 is not available")

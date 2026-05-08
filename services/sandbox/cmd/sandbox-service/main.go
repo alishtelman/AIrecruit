@@ -216,7 +216,7 @@ func isSupportedSQLScenario(value string) bool {
 
 func isSupportedCodingScenario(value string) bool {
 	switch value {
-	case "rate_limiter_window_counter", "feature_freshness_monitor":
+	case "rate_limiter_window_counter", "feature_freshness_monitor", "flaky_test_classifier":
 		return true
 	default:
 		return false
@@ -481,6 +481,122 @@ def run_feature_freshness_checks(ns):
     ]
     return results
 
+def _call_flaky_classifier(fn, runs):
+    try:
+        return fn(runs)
+    except TypeError:
+        return fn(test_runs=runs)
+
+def _item_name(item):
+    if isinstance(item, str):
+        return item
+    if not isinstance(item, dict):
+        return ""
+    for key in ("test_id", "test", "name", "id", "nodeid"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+def _items_from_keys(result, keys):
+    if isinstance(result, dict):
+        for key in keys:
+            value = result.get(key)
+            if isinstance(value, (list, tuple, set)):
+                return list(value)
+    if isinstance(result, (list, tuple, set)):
+        return list(result)
+    return []
+
+def _contains_named_item(items, target):
+    return any(_item_name(item) == target for item in items)
+
+def _has_flaky(result, target):
+    flaky_items = _items_from_keys(result, ("flaky_tests", "flaky", "flakes", "unstable_tests", "unstable"))
+    if _contains_named_item(flaky_items, target):
+        return True
+    for item in flaky_items:
+        if isinstance(item, dict) and bool(item.get("flaky")) and _item_name(item) == target:
+            return True
+    if isinstance(result, (list, tuple, set)):
+        for item in result:
+            if not isinstance(item, dict) or _item_name(item) != target:
+                continue
+            classification = str(item.get("classification") or item.get("status") or item.get("kind") or "").lower()
+            if bool(item.get("flaky")) or "flaky" in classification:
+                return True
+    return False
+
+def _has_stable_failure(result, target):
+    stable_items = _items_from_keys(result, ("stable_failures", "persistent_failures", "consistent_failures", "failed_tests"))
+    if _contains_named_item(stable_items, target):
+        return True
+    if isinstance(result, (list, tuple, set)):
+        for item in result:
+            if not isinstance(item, dict) or _item_name(item) != target:
+                continue
+            classification = str(item.get("classification") or item.get("status") or item.get("kind") or "").lower()
+            if "stable" in classification or "persistent" in classification or "consistent" in classification:
+                return True
+    return False
+
+def _has_diagnostics(result):
+    if isinstance(result, str):
+        return bool(result.strip())
+    if isinstance(result, dict):
+        for key in ("summary", "diagnostics", "report", "message"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                return True
+            if isinstance(value, (list, tuple, dict)) and value:
+                return True
+    return False
+
+def run_flaky_classifier_checks(ns):
+    fn = ns.get("classify_flaky_tests")
+    if not callable(fn):
+        raise ValueError("classify_flaky_tests function was not found")
+
+    runs = [
+        {"test_id": "test_login", "run_id": "build-1", "status": "failed"},
+        {"test_id": "test_login", "run_id": "build-2", "status": "passed"},
+        {"test_id": "test_checkout", "run_id": "build-1", "status": "failed"},
+        {"test_id": "test_checkout", "run_id": "build-2", "status": "failed"},
+        {"test_id": "test_search", "run_id": "build-1", "status": "passed"},
+        {"test_id": "test_search", "run_id": "build-2", "status": "passed"},
+    ]
+    result = _call_flaky_classifier(fn, runs)
+    grouped = False
+    if isinstance(result, dict):
+        groups = result.get("groups") or result.get("by_test") or result.get("grouped_runs")
+        grouped = isinstance(groups, dict) and "test_login" in groups and "test_checkout" in groups
+    flags_flaky = _has_flaky(result, "test_login")
+    separates_stable = _has_stable_failure(result, "test_checkout") and not _has_flaky(result, "test_checkout")
+    diagnostics_present = _has_diagnostics(result)
+
+    return [
+        {
+            "check_key": "runner_groups_repeated_runs",
+            "passed": grouped,
+            "details": f"grouped={grouped}",
+        },
+        {
+            "check_key": "runner_flags_flaky_mixed_outcomes",
+            "passed": flags_flaky,
+            "details": f"test_login_flaky={flags_flaky}",
+        },
+        {
+            "check_key": "runner_separates_stable_failures",
+            "passed": separates_stable,
+            "details": f"test_checkout_stable_failure={separates_stable}",
+        },
+        {
+            "check_key": "runner_emits_ci_diagnostics",
+            "passed": diagnostics_present,
+            "details": f"diagnostics_present={diagnostics_present}",
+        },
+    ]
+
 payload = json.loads(sys.stdin.read())
 source = str(payload.get("code") or "")
 scenario_id = str(payload.get("scenario_id") or "")
@@ -494,6 +610,8 @@ if scenario_id == "rate_limiter_window_counter":
     results = run_rate_limiter_checks(ns)
 elif scenario_id == "feature_freshness_monitor":
     results = run_feature_freshness_checks(ns)
+elif scenario_id == "flaky_test_classifier":
+    results = run_flaky_classifier_checks(ns)
 else:
     results = []
 

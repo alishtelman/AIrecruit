@@ -92,6 +92,7 @@ Current supported coding scenario:
 
 - `rate_limiter_window_counter`
 - `feature_freshness_monitor`
+- `flaky_test_classifier`
 
 Current supported SQL live scenarios:
 

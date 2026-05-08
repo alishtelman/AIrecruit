@@ -170,6 +170,54 @@ def evaluate_feature_freshness(record, now_ts, max_age_seconds=3600):
     }
 
 
+def test_build_coding_task_runner_checks_supports_flaky_classifier_fallback(monkeypatch: pytest.MonkeyPatch):
+    original_url = settings.SANDBOX_SERVICE_URL
+    settings.SANDBOX_SERVICE_URL = "http://sandbox-service:8080"
+
+    def _failing_sandbox(**kwargs):
+        raise httpx.ConnectError("unavailable")
+
+    monkeypatch.setattr("app.ai.assessor._run_coding_task_runner_in_sandbox", _failing_sandbox)
+    try:
+        checks, score = _build_coding_task_runner_checks(
+            scenario_id="flaky_test_classifier",
+            artifact_code="""
+from collections import defaultdict
+
+def classify_flaky_tests(runs):
+    groups = defaultdict(list)
+    for item in runs:
+        groups[item["test_id"]].append(item)
+    flaky_tests = []
+    stable_failures = []
+    for test_id, items in groups.items():
+        statuses = {item["status"] for item in items}
+        if "failed" in statuses and "passed" in statuses:
+            flaky_tests.append(test_id)
+        elif statuses == {"failed"}:
+            stable_failures.append(test_id)
+    return {
+        "groups": dict(groups),
+        "flaky_tests": flaky_tests,
+        "stable_failures": stable_failures,
+        "summary": f"{len(flaky_tests)} flaky, {len(stable_failures)} stable failures",
+    }
+""",
+            artifact_language="python",
+            report_language="en",
+        )
+    finally:
+        settings.SANDBOX_SERVICE_URL = original_url
+
+    assert score == 10.0
+    assert {check["check_key"] for check in checks} == {
+        "runner_groups_repeated_runs",
+        "runner_flags_flaky_mixed_outcomes",
+        "runner_separates_stable_failures",
+        "runner_emits_ci_diagnostics",
+    }
+
+
 def test_run_sql_live_validation_in_sandbox_maps_payload(monkeypatch: pytest.MonkeyPatch):
     original_url = settings.SANDBOX_SERVICE_URL
     settings.SANDBOX_SERVICE_URL = "http://sandbox-service:8080"
