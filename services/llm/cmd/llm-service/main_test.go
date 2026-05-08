@@ -159,3 +159,184 @@ func TestStructuredGroqExtractsToolCall(t *testing.T) {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 }
+
+func TestRetriesTransientProviderErrorInsideService(t *testing.T) {
+	calls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "temporary"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"content": "retried ok"}}},
+		})
+	}))
+	defer upstream.Close()
+
+	srv := &server{cfg: config{GroqAPIKey: "groq-key", GroqURL: upstream.URL}, client: upstream.Client()}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/complete",
+		strings.NewReader(`{"provider":"groq","model":"llama-3.3-70b-versatile","messages":[{"role":"user","content":"hello"}],"max_retries":1}`),
+	)
+	rec := httptest.NewRecorder()
+
+	srv.handleComplete(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if calls != 2 {
+		t.Fatalf("expected 2 upstream calls, got %d", calls)
+	}
+	if !strings.Contains(rec.Body.String(), "retried ok") {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+}
+
+func TestExhaustedTransientRetriesAreTerminalForCaller(t *testing.T) {
+	calls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "temporary"})
+	}))
+	defer upstream.Close()
+
+	srv := &server{cfg: config{GroqAPIKey: "groq-key", GroqURL: upstream.URL}, client: upstream.Client()}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/complete",
+		strings.NewReader(`{"provider":"groq","model":"llama-3.3-70b-versatile","messages":[{"role":"user","content":"hello"}],"max_retries":1}`),
+	)
+	rec := httptest.NewRecorder()
+
+	srv.handleComplete(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if calls != 2 {
+		t.Fatalf("expected 2 upstream calls, got %d", calls)
+	}
+	if !strings.Contains(rec.Body.String(), `"retryable":false`) {
+		t.Fatalf("expected terminal error after Go retries: %s", rec.Body.String())
+	}
+}
+
+func TestStructuredOpenAIResponseUsesJSONSchemaFormat(t *testing.T) {
+	var captured map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer openai-key" {
+			t.Fatalf("missing auth header: %s", r.Header.Get("Authorization"))
+		}
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		writeJSON(w, http.StatusOK, map[string]any{"output_text": `{"ok":true}`})
+	}))
+	defer upstream.Close()
+
+	srv := &server{cfg: config{OpenAIAPIKey: "openai-key", OpenAIURL: upstream.URL}, client: upstream.Client()}
+	result, err := srv.complete(context.Background(), completeRequest{
+		Provider: "openai",
+		Model:    "gpt-4.1-mini",
+		Messages: []message{{Role: "user", Content: "hello"}},
+		Tool: map[string]any{"function": map[string]any{
+			"name":       "submit_result",
+			"parameters": map[string]any{"type": "object"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != `{"ok":true}` {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	text, ok := captured["text"].(map[string]any)
+	if !ok || text["format"] == nil {
+		t.Fatalf("expected OpenAI JSON schema format: %#v", captured)
+	}
+	input := captured["input"].([]any)
+	last := input[len(input)-1].(map[string]any)
+	if !strings.Contains(last["content"].(string), "Return only valid JSON") {
+		t.Fatalf("expected structured instruction: %#v", input)
+	}
+}
+
+func TestStructuredAnthropicResponseUsesMessagesAPI(t *testing.T) {
+	var captured map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-api-key") != "anthropic-key" {
+			t.Fatalf("missing api key header: %s", r.Header.Get("x-api-key"))
+		}
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": `{"ok":true}`}},
+		})
+	}))
+	defer upstream.Close()
+
+	srv := &server{cfg: config{AnthropicAPIKey: "anthropic-key", AnthropicURL: upstream.URL}, client: upstream.Client()}
+	result, err := srv.complete(context.Background(), completeRequest{
+		Provider: "anthropic",
+		Model:    "claude-3-5-haiku-latest",
+		Messages: []message{{Role: "system", Content: "sys"}, {Role: "user", Content: "hello"}},
+		Tool: map[string]any{"function": map[string]any{
+			"name":       "submit_result",
+			"parameters": map[string]any{"type": "object"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != `{"ok":true}` {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if captured["system"] != "sys" {
+		t.Fatalf("expected system prompt: %#v", captured)
+	}
+	messages := captured["messages"].([]any)
+	last := messages[len(messages)-1].(map[string]any)
+	if !strings.Contains(last["content"].(string), "Return only valid JSON") {
+		t.Fatalf("expected structured instruction: %#v", messages)
+	}
+}
+
+func TestStructuredOpenRouterResponseUsesChatCompletionsInstruction(t *testing.T) {
+	var captured map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"content": `{"ok":true}`}}},
+		})
+	}))
+	defer upstream.Close()
+
+	srv := &server{
+		cfg:    config{OpenRouterAPIKey: "or-key", AppURL: "http://app.test", OpenRouterURL: upstream.URL},
+		client: upstream.Client(),
+	}
+	result, err := srv.complete(context.Background(), completeRequest{
+		Provider: "openrouter",
+		Model:    "openrouter/free",
+		Messages: []message{{Role: "user", Content: "hello"}},
+		Tool: map[string]any{"function": map[string]any{
+			"name":       "submit_result",
+			"parameters": map[string]any{"type": "object"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != `{"ok":true}` {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	messages := captured["messages"].([]any)
+	last := messages[len(messages)-1].(map[string]any)
+	if !strings.Contains(last["content"].(string), "Return only valid JSON") {
+		t.Fatalf("expected structured instruction: %#v", messages)
+	}
+	provider := captured["provider"].(map[string]any)
+	if provider["allow_fallbacks"] != false {
+		t.Fatalf("expected OpenRouter fallbacks disabled: %#v", captured)
+	}
+}

@@ -194,12 +194,14 @@ Supported providers:
 - `openrouter`
 
 FastAPI/Python still owns platform settings, prompt selection, interviewer/assessor business logic,
-structured-output parsing, retry policy, public errors, and report/interview contracts. The Go service
-only normalizes outbound provider HTTP calls, provider error categories, and safe provider-key status.
-Admin runtime status uses `GET /v1/status` when `LLM_SERVICE_URL` is configured, then falls back to
-local env-key checks if the sidecar is unavailable or returns an invalid status payload. If
-`LLM_SERVICE_URL` is unavailable at request time, Python logs a warning and falls back to the direct
-provider adapter.
+structured-output parsing, public errors, and report/interview contracts. The Go service normalizes
+outbound provider HTTP calls, provider error categories, safe provider-key status, and executes
+provider retry attempts from the platform `llm_max_retries` setting for transient failures only. After
+the Go service exhausts its internal retry budget, it returns a terminal error to avoid multiplying
+retries in the Python compatibility layer. Admin runtime status uses `GET /v1/status` when
+`LLM_SERVICE_URL` is configured, then falls back to local env-key checks if the sidecar is unavailable
+or returns an invalid status payload. If `LLM_SERVICE_URL` is unavailable at request time, Python logs
+a warning and falls back to the direct provider adapter.
 
 OpenRouter requests set `provider.allow_fallbacks=false` to preserve the product rule that the app does not implement cross-provider fallback.
 

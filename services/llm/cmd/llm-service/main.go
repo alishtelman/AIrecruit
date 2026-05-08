@@ -44,6 +44,7 @@ type completeRequest struct {
 	MaxTokens      int            `json:"max_tokens"`
 	Temperature    float64        `json:"temperature"`
 	TimeoutSeconds float64        `json:"timeout_seconds"`
+	MaxRetries     int            `json:"max_retries"`
 	Tool           map[string]any `json:"tool"`
 }
 
@@ -132,11 +133,12 @@ func (s *server) handleComplete(w http.ResponseWriter, r *http.Request) {
 	if payload.TimeoutSeconds <= 0 {
 		payload.TimeoutSeconds = 30
 	}
+	payload.MaxRetries = normalizeMaxRetries(payload.MaxRetries)
 
 	ctx, cancel := context.WithTimeout(r.Context(), timeoutDuration(payload.TimeoutSeconds))
 	defer cancel()
 
-	result, err := s.complete(ctx, payload)
+	result, err := s.completeWithRetries(ctx, payload)
 	if err != nil {
 		var llmErr llmError
 		if asLLMError(err, &llmErr) {
@@ -147,6 +149,36 @@ func (s *server) handleComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *server) completeWithRetries(ctx context.Context, req completeRequest) (completeResponse, error) {
+	attempts := normalizeMaxRetries(req.MaxRetries) + 1
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		result, err := s.complete(ctx, req)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+
+		var llmErr llmError
+		if !asLLMError(err, &llmErr) || !llmErr.retry || attempt >= attempts-1 {
+			if attempt >= attempts-1 && asLLMError(err, &llmErr) {
+				llmErr.retry = false
+				return completeResponse{}, llmErr
+			}
+			return completeResponse{}, err
+		}
+
+		if err := sleepBeforeRetry(ctx, attempt); err != nil {
+			return completeResponse{}, llmError{
+				status:   http.StatusGatewayTimeout,
+				category: "timeout_error",
+				detail:   "LLM retry timeout exceeded",
+			}
+		}
+	}
+	return completeResponse{}, lastErr
 }
 
 func (s *server) complete(ctx context.Context, req completeRequest) (completeResponse, error) {
@@ -239,7 +271,11 @@ func (s *server) openAIResponse(ctx context.Context, req completeRequest) (compl
 	if err != nil {
 		return completeResponse{}, err
 	}
-	return completeResponse{Text: extractOpenAIText(data), Model: req.Model, Provider: "openai"}, nil
+	text := extractOpenAIText(data)
+	if text == "" && len(req.Tool) > 0 {
+		return completeResponse{}, llmError{status: http.StatusBadGateway, category: "invalid_structured_output", detail: "openai returned empty structured output"}
+	}
+	return completeResponse{Text: text, Model: req.Model, Provider: "openai"}, nil
 }
 
 func (s *server) anthropicMessage(ctx context.Context, req completeRequest) (completeResponse, error) {
@@ -263,7 +299,11 @@ func (s *server) anthropicMessage(ctx context.Context, req completeRequest) (com
 	if err != nil {
 		return completeResponse{}, err
 	}
-	return completeResponse{Text: extractAnthropicText(data), Model: req.Model, Provider: "anthropic"}, nil
+	text := extractAnthropicText(data)
+	if text == "" && len(req.Tool) > 0 {
+		return completeResponse{}, llmError{status: http.StatusBadGateway, category: "invalid_structured_output", detail: "anthropic returned empty structured output"}
+	}
+	return completeResponse{Text: text, Model: req.Model, Provider: "anthropic"}, nil
 }
 
 func (s *server) postJSON(ctx context.Context, provider string, url string, headers map[string]string, payload map[string]any) (map[string]any, error) {
@@ -443,6 +483,31 @@ func timeoutDuration(value float64) time.Duration {
 		value = 180
 	}
 	return time.Duration(value * float64(time.Second))
+}
+
+func normalizeMaxRetries(value int) int {
+	if value < 0 {
+		return 0
+	}
+	if value > 5 {
+		return 5
+	}
+	return value
+}
+
+func sleepBeforeRetry(ctx context.Context, attempt int) error {
+	delay := time.Duration(250*(1<<attempt)) * time.Millisecond
+	if delay > 2*time.Second {
+		delay = 2 * time.Second
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func envOrDefault(key string, fallback string) string {

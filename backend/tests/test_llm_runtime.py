@@ -108,7 +108,12 @@ async def test_runtime_uses_llm_service_when_configured(monkeypatch):
     monkeypatch.setattr("app.ai.runtime.httpx.AsyncClient", _FakeClient)
 
     result = await runtime.complete_text(
-        runtime_settings=LLMRuntimeSettings(provider="groq", model="llama-3.3-70b-versatile", timeout_seconds=11),
+        runtime_settings=LLMRuntimeSettings(
+            provider="groq",
+            model="llama-3.3-70b-versatile",
+            timeout_seconds=11,
+            max_retries=3,
+        ),
         messages=[{"role": "user", "content": "hello"}],
         max_tokens=8,
         temperature=0,
@@ -119,6 +124,7 @@ async def test_runtime_uses_llm_service_when_configured(monkeypatch):
     assert captured["timeout"] == 12
     assert captured["payload"]["provider"] == "groq"
     assert captured["payload"]["timeout_seconds"] == 11
+    assert captured["payload"]["max_retries"] == 3
 
 
 @pytest.mark.asyncio

@@ -337,6 +337,7 @@ class LLMRuntime:
                         "max_tokens": max_tokens,
                         "temperature": temperature,
                         "timeout_seconds": runtime_settings.timeout_seconds,
+                        "max_retries": runtime_settings.max_retries,
                         **({"tool": tool} if tool else {}),
                     },
                 )
