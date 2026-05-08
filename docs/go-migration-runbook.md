@@ -22,9 +22,80 @@ Do not continue this migration directly on `main`.
 
 - Keep the public frontend contract stable. `frontend/src/lib/api.ts` should not need route changes for these slices.
 - Move infrastructure-heavy work to Go first: media streaming, provider proxying, worker orchestration, sandbox/runtime services.
-- Keep core AI/domain scoring in Python until there are golden tests for report payload parity.
+- The target state is Go-owned backend services behind the same public `/api/v1` contracts, with FastAPI reduced to a compatibility gateway only during the migration.
+- Keep core AI/domain scoring in Python until there are golden tests for transcript-to-report payload parity.
 - Avoid duplicating database schema ownership in Go unless a slice has a clear data boundary. Prefer FastAPI-owned internal endpoints when the Go service is only orchestrating existing Python business logic.
 - Preserve fallback paths during migration. A Go sidecar failure should not break local development when a safe Python fallback exists.
+
+## Full Go Migration Roadmap
+
+### Phase 1: Sidecars Behind FastAPI
+
+Current phase. Add Go services behind existing FastAPI routes while keeping public `/api/v1` contracts stable and keeping safe Python fallbacks.
+
+Exit criteria:
+
+- Go sidecars cover media, resume file processing, sandbox/runtime checks, LLM provider HTTP calls, and report-worker orchestration.
+- Each sidecar has unit tests, Compose healthchecks, and documented smoke checks.
+- Backend proxy tests cover success, fallback, and error mapping.
+
+### Phase 2: Go-Owned Internal APIs
+
+Move from "Go sidecar as helper" to "Go service owns an internal contract" for slices with clear boundaries.
+
+Candidates:
+
+- `services/report-worker`: own worker polling, backlog throttling, idempotency, and safe external-worker mode.
+- `services/llm`: own provider status, key availability diagnostics, timeout/retry execution, and structured output provider adapters.
+- `services/sandbox`: own deterministic runners and validation fixtures for every supported executable scenario.
+- `services/media` and `services/resume`: own file processing contracts with richer health/status and observability.
+
+Exit criteria:
+
+- FastAPI code for those areas becomes a thin auth/compatibility proxy.
+- Fallback paths are explicitly feature-flagged and tested.
+- Operational metrics/logging exist for each Go service.
+
+### Phase 3: Data-Bound Go Services
+
+Move DB-backed domains only after the data ownership boundary is explicit. Do not let Go and Python both own migrations for the same tables.
+
+Candidate order:
+
+- Company marketplace/search read model after SQL parity tests and index decisions.
+- Report generation queue/read model after report-worker idempotency is proven.
+- Candidate/company settings only after platform settings contracts are stable.
+
+Exit criteria:
+
+- SQL/query parity tests exist before each move.
+- One migration owner is chosen for each table group.
+- Public API payloads remain backward-compatible.
+
+### Phase 4: AI/Assessment Core
+
+Move interviewer, assessor, report shaping, and scoring last.
+
+Required before starting:
+
+- Golden transcript-to-report fixtures for representative roles, modules, languages, proctoring states, and provider outputs.
+- Deterministic report normalization tests for every public report section.
+- Clear strategy for prompts, structured-output validation, and model-provider differences.
+
+Exit criteria:
+
+- Go and Python produce equivalent report payloads on golden fixtures.
+- Rollback can switch traffic back to Python without changing frontend contracts.
+
+### Phase 5: FastAPI Gateway Removal
+
+Only after phases 2-4 are stable, replace the compatibility gateway with Go-owned public `/api/v1` routes.
+
+Exit criteria:
+
+- Auth, CSRF/cookie behavior, rate limiting, API schemas, error shapes, and localization expectations are covered by integration tests.
+- Frontend does not need route changes.
+- Deployment has a rollback path to the previous gateway.
 
 ## Implemented Slices
 
@@ -111,6 +182,7 @@ Current endpoint:
 
 ```text
 POST /v1/complete
+GET /v1/status
 ```
 
 Supported providers:
@@ -120,7 +192,7 @@ Supported providers:
 - `anthropic`
 - `openrouter`
 
-FastAPI/Python still owns platform settings, prompt selection, interviewer/assessor business logic, structured-output parsing, retry policy, public errors, and report/interview contracts. The Go service only normalizes outbound provider HTTP calls and provider error categories. If `LLM_SERVICE_URL` is unavailable at request time, Python logs a warning and falls back to the direct provider adapter.
+FastAPI/Python still owns platform settings, prompt selection, interviewer/assessor business logic, structured-output parsing, retry policy, public errors, and report/interview contracts. The Go service only normalizes outbound provider HTTP calls, provider error categories, and safe provider-key status. If `LLM_SERVICE_URL` is unavailable at request time, Python logs a warning and falls back to the direct provider adapter.
 
 OpenRouter requests set `provider.allow_fallbacks=false` to preserve the product rule that the app does not implement cross-provider fallback.
 
@@ -257,9 +329,11 @@ BT (Codex Resume Smoke) Tj ET
 
 ## Recommended Next Slices
 
-1. Expand `services/sandbox` with additional deterministic assessment runtimes only when each scenario has parity tests and a clear function contract.
-2. Continue company marketplace/search with SQL/index work before considering a Go rewrite; language alone will not fix poor query shape.
-3. Only consider migrating AI interviewer/assessor after adding golden tests for transcript-to-report parity.
+1. Finish Phase 1 by expanding `services/sandbox` with remaining deterministic Python-compatible runners only when each scenario has a clear function contract and parity tests.
+2. Harden `services/llm` into a Phase 2 internal API: provider status endpoint, structured-output adapter tests, and retry/timeout execution in Go.
+3. Harden `services/report-worker`: backlog visibility, dry-run/safety guard, and external worker mode validation before making it default.
+4. Add marketplace/search SQL parity tests and indexes before considering a Go-owned read model.
+5. Only migrate AI interviewer/assessor/report shaping after golden transcript-to-report parity exists.
 
 ## Do Not Do
 

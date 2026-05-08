@@ -53,6 +53,12 @@ type completeResponse struct {
 	Provider string `json:"provider"`
 }
 
+type providerStatus struct {
+	Provider       string `json:"provider"`
+	RequiredAPIKey string `json:"required_api_key"`
+	Configured     bool   `json:"configured"`
+}
+
 type llmError struct {
 	status   int
 	category string
@@ -82,11 +88,28 @@ func main() {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "llm-service"})
 	})
+	mux.HandleFunc("GET /v1/status", srv.handleStatus)
 	mux.HandleFunc("POST /v1/complete", srv.handleComplete)
 
 	addr := envOrDefault("LLM_SERVICE_ADDR", defaultListenAddr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		panic(err)
+	}
+}
+
+func (s *server) handleStatus(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"service":   "llm-service",
+		"providers": s.providerStatuses(),
+	})
+}
+
+func (s *server) providerStatuses() []providerStatus {
+	return []providerStatus{
+		{Provider: "groq", RequiredAPIKey: "GROQ_API_KEY", Configured: s.cfg.GroqAPIKey != ""},
+		{Provider: "openai", RequiredAPIKey: "OPENAI_API_KEY", Configured: s.cfg.OpenAIAPIKey != ""},
+		{Provider: "anthropic", RequiredAPIKey: "ANTHROPIC_API_KEY", Configured: s.cfg.AnthropicAPIKey != ""},
+		{Provider: "openrouter", RequiredAPIKey: "OPENROUTER_API_KEY", Configured: s.cfg.OpenRouterAPIKey != ""},
 	}
 }
 

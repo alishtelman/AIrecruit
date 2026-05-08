@@ -50,6 +50,34 @@ func TestHandleCompleteUsesGroqChatCompletions(t *testing.T) {
 	}
 }
 
+func TestHandleStatusDoesNotExposeSecrets(t *testing.T) {
+	srv := &server{
+		cfg: config{
+			GroqAPIKey:       "groq-secret",
+			OpenRouterAPIKey: "openrouter-secret",
+		},
+		client: http.DefaultClient,
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	rec := httptest.NewRecorder()
+
+	srv.handleStatus(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "groq-secret") || strings.Contains(body, "openrouter-secret") {
+		t.Fatalf("status leaked secret: %s", body)
+	}
+	if !strings.Contains(body, `"provider":"groq"`) || !strings.Contains(body, `"required_api_key":"OPENROUTER_API_KEY"`) {
+		t.Fatalf("status missing provider metadata: %s", body)
+	}
+	if !strings.Contains(body, `"configured":true`) || !strings.Contains(body, `"configured":false`) {
+		t.Fatalf("status missing configured flags: %s", body)
+	}
+}
+
 func TestOpenRouterDisablesProviderFallbacks(t *testing.T) {
 	var captured map[string]any
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
