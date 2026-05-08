@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,9 +27,54 @@ type config struct {
 	OpenRouterURL    string
 }
 
+type providerMetrics struct {
+	mu              sync.Mutex
+	requestsTotal   int64
+	successTotal    int64
+	errorTotal      int64
+	rateLimitTotal  int64
+	lastSuccessAt   time.Time
+	lastErrorAt     time.Time
+	lastLatencyMs   int64
+	lastErrorDetail string
+}
+
 type server struct {
-	cfg    config
-	client *http.Client
+	cfg     config
+	client  *http.Client
+	metrics map[string]*providerMetrics
+}
+
+func newMetrics() map[string]*providerMetrics {
+	return map[string]*providerMetrics{
+		"groq":       {},
+		"openai":     {},
+		"anthropic":  {},
+		"openrouter": {},
+	}
+}
+
+func (s *server) recordRequest(provider string, latency time.Duration, err error) {
+	m, ok := s.metrics[provider]
+	if !ok {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.requestsTotal++
+	m.lastLatencyMs = latency.Milliseconds()
+	if err == nil {
+		m.successTotal++
+		m.lastSuccessAt = time.Now().UTC()
+	} else {
+		m.errorTotal++
+		m.lastErrorAt = time.Now().UTC()
+		m.lastErrorDetail = truncate(err.Error(), 200)
+		var llmErr llmError
+		if asLLMError(err, &llmErr) && llmErr.category == "rate_limit_error" {
+			m.rateLimitTotal++
+		}
+	}
 }
 
 type message struct {
@@ -55,9 +101,17 @@ type completeResponse struct {
 }
 
 type providerStatus struct {
-	Provider       string `json:"provider"`
-	RequiredAPIKey string `json:"required_api_key"`
-	Configured     bool   `json:"configured"`
+	Provider        string `json:"provider"`
+	RequiredAPIKey  string `json:"required_api_key"`
+	Configured      bool   `json:"configured"`
+	RequestsTotal   int64  `json:"requests_total"`
+	SuccessTotal    int64  `json:"success_total"`
+	ErrorTotal      int64  `json:"error_total"`
+	RateLimitTotal  int64  `json:"rate_limit_total"`
+	LastSuccessAt   string `json:"last_success_at,omitempty"`
+	LastErrorAt     string `json:"last_error_at,omitempty"`
+	LastLatencyMs   int64  `json:"last_latency_ms,omitempty"`
+	LastErrorDetail string `json:"last_error_detail,omitempty"`
 }
 
 type llmError struct {
@@ -83,7 +137,7 @@ func main() {
 		AnthropicURL:     envOrDefault("ANTHROPIC_MESSAGES_URL", "https://api.anthropic.com/v1/messages"),
 		OpenRouterURL:    envOrDefault("OPENROUTER_CHAT_COMPLETIONS_URL", "https://openrouter.ai/api/v1/chat/completions"),
 	}
-	srv := &server{cfg: cfg, client: &http.Client{}}
+	srv := &server{cfg: cfg, client: &http.Client{}, metrics: newMetrics()}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
@@ -106,12 +160,38 @@ func (s *server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *server) providerStatuses() []providerStatus {
-	return []providerStatus{
-		{Provider: "groq", RequiredAPIKey: "GROQ_API_KEY", Configured: s.cfg.GroqAPIKey != ""},
-		{Provider: "openai", RequiredAPIKey: "OPENAI_API_KEY", Configured: s.cfg.OpenAIAPIKey != ""},
-		{Provider: "anthropic", RequiredAPIKey: "ANTHROPIC_API_KEY", Configured: s.cfg.AnthropicAPIKey != ""},
-		{Provider: "openrouter", RequiredAPIKey: "OPENROUTER_API_KEY", Configured: s.cfg.OpenRouterAPIKey != ""},
+	defs := []struct {
+		name       string
+		key        string
+		configured bool
+	}{
+		{"groq", "GROQ_API_KEY", s.cfg.GroqAPIKey != ""},
+		{"openai", "OPENAI_API_KEY", s.cfg.OpenAIAPIKey != ""},
+		{"anthropic", "ANTHROPIC_API_KEY", s.cfg.AnthropicAPIKey != ""},
+		{"openrouter", "OPENROUTER_API_KEY", s.cfg.OpenRouterAPIKey != ""},
 	}
+	result := make([]providerStatus, 0, len(defs))
+	for _, d := range defs {
+		ps := providerStatus{Provider: d.name, RequiredAPIKey: d.key, Configured: d.configured}
+		if m, ok := s.metrics[d.name]; ok {
+			m.mu.Lock()
+			ps.RequestsTotal = m.requestsTotal
+			ps.SuccessTotal = m.successTotal
+			ps.ErrorTotal = m.errorTotal
+			ps.RateLimitTotal = m.rateLimitTotal
+			ps.LastLatencyMs = m.lastLatencyMs
+			ps.LastErrorDetail = m.lastErrorDetail
+			if !m.lastSuccessAt.IsZero() {
+				ps.LastSuccessAt = m.lastSuccessAt.Format(time.RFC3339)
+			}
+			if !m.lastErrorAt.IsZero() {
+				ps.LastErrorAt = m.lastErrorAt.Format(time.RFC3339)
+			}
+			m.mu.Unlock()
+		}
+		result = append(result, ps)
+	}
+	return result
 }
 
 func (s *server) handleComplete(w http.ResponseWriter, r *http.Request) {
@@ -138,7 +218,10 @@ func (s *server) handleComplete(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeoutDuration(payload.TimeoutSeconds))
 	defer cancel()
 
+	start := time.Now()
 	result, err := s.completeWithRetries(ctx, payload)
+	s.recordRequest(payload.Provider, time.Since(start), err)
+
 	if err != nil {
 		var llmErr llmError
 		if asLLMError(err, &llmErr) {

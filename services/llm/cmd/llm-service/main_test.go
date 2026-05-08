@@ -301,6 +301,132 @@ func TestStructuredAnthropicResponseUsesMessagesAPI(t *testing.T) {
 	}
 }
 
+func TestHandleCompleteRecordsSuccessMetrics(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"content": "ok"}}},
+		})
+	}))
+	defer upstream.Close()
+
+	srv := &server{
+		cfg:     config{GroqAPIKey: "groq-key", GroqURL: upstream.URL},
+		client:  upstream.Client(),
+		metrics: newMetrics(),
+	}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/complete",
+		strings.NewReader(`{"provider":"groq","model":"llama","messages":[{"role":"user","content":"hi"}]}`),
+	)
+	srv.handleComplete(httptest.NewRecorder(), req)
+
+	m := srv.metrics["groq"]
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.requestsTotal != 1 || m.successTotal != 1 || m.errorTotal != 0 {
+		t.Fatalf("unexpected metrics after success: req=%d ok=%d err=%d", m.requestsTotal, m.successTotal, m.errorTotal)
+	}
+	if m.lastSuccessAt.IsZero() {
+		t.Fatal("expected lastSuccessAt to be set")
+	}
+	if m.lastLatencyMs < 0 {
+		t.Fatalf("unexpected latency: %d", m.lastLatencyMs)
+	}
+}
+
+func TestHandleCompleteRecordsErrorMetrics(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "boom"})
+	}))
+	defer upstream.Close()
+
+	srv := &server{
+		cfg:     config{GroqAPIKey: "groq-key", GroqURL: upstream.URL},
+		client:  upstream.Client(),
+		metrics: newMetrics(),
+	}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/complete",
+		strings.NewReader(`{"provider":"groq","model":"llama","messages":[{"role":"user","content":"hi"}],"max_retries":0}`),
+	)
+	srv.handleComplete(httptest.NewRecorder(), req)
+
+	m := srv.metrics["groq"]
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.requestsTotal != 1 || m.successTotal != 0 || m.errorTotal != 1 {
+		t.Fatalf("unexpected metrics after error: req=%d ok=%d err=%d", m.requestsTotal, m.successTotal, m.errorTotal)
+	}
+	if m.lastErrorAt.IsZero() {
+		t.Fatal("expected lastErrorAt to be set")
+	}
+	if m.lastErrorDetail == "" {
+		t.Fatal("expected lastErrorDetail to be set")
+	}
+}
+
+func TestHandleCompleteRecordsRateLimitMetric(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer upstream.Close()
+
+	srv := &server{
+		cfg:     config{GroqAPIKey: "groq-key", GroqURL: upstream.URL},
+		client:  upstream.Client(),
+		metrics: newMetrics(),
+	}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/complete",
+		strings.NewReader(`{"provider":"groq","model":"llama","messages":[{"role":"user","content":"hi"}],"max_retries":0}`),
+	)
+	srv.handleComplete(httptest.NewRecorder(), req)
+
+	m := srv.metrics["groq"]
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.rateLimitTotal != 1 {
+		t.Fatalf("expected rate_limit_total=1, got %d", m.rateLimitTotal)
+	}
+}
+
+func TestHandleStatusIncludesMetrics(t *testing.T) {
+	srv := &server{
+		cfg:     config{GroqAPIKey: "groq-key"},
+		client:  http.DefaultClient,
+		metrics: newMetrics(),
+	}
+	srv.metrics["groq"].requestsTotal = 5
+	srv.metrics["groq"].successTotal = 4
+	srv.metrics["groq"].errorTotal = 1
+	srv.metrics["groq"].rateLimitTotal = 1
+	srv.metrics["groq"].lastLatencyMs = 340
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	rec := httptest.NewRecorder()
+	srv.handleStatus(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `"requests_total":5`) {
+		t.Fatalf("expected requests_total in status: %s", body)
+	}
+	if !strings.Contains(body, `"success_total":4`) {
+		t.Fatalf("expected success_total in status: %s", body)
+	}
+	if !strings.Contains(body, `"rate_limit_total":1`) {
+		t.Fatalf("expected rate_limit_total in status: %s", body)
+	}
+	if !strings.Contains(body, `"last_latency_ms":340`) {
+		t.Fatalf("expected last_latency_ms in status: %s", body)
+	}
+	if strings.Contains(body, "groq-key") {
+		t.Fatalf("status response must not leak API key: %s", body)
+	}
+}
+
 func TestStructuredOpenRouterResponseUsesChatCompletionsInstruction(t *testing.T) {
 	var captured map[string]any
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
