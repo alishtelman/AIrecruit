@@ -106,6 +106,7 @@ async def test_admin_can_update_platform_ai_runtime_without_prompt_body_in_audit
     assert payload["llm_max_retries"] == 2
     assert payload["llm_required_api_key"] == "GROQ_API_KEY"
     assert "groq" in payload["llm_model_options"]
+    assert payload["llm_model_options"]["openrouter"] == ["openrouter/free"]
 
     audit = await client.get("/api/v1/admin/audit-log", headers=auth_headers(token))
     assert audit.status_code == 200, audit.text

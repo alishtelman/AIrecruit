@@ -27,12 +27,16 @@ ALLOWED_LLM_MODELS_BY_PROVIDER: dict[str, tuple[str, ...]] = {
         "claude-3-7-sonnet-20250219",
         "claude-3-5-haiku-20241022",
     ),
+    "openrouter": (
+        "openrouter/free",
+    ),
 }
 
 DEFAULT_LLM_MODELS_BY_PROVIDER = {
     "groq": DEFAULT_LLM_MODEL,
     "openai": "gpt-4.1-mini",
     "anthropic": "claude-sonnet-4-20250514",
+    "openrouter": "openrouter/free",
 }
 
 ALLOWED_LLM_MODELS = set(ALLOWED_LLM_MODELS_BY_PROVIDER["groq"])
