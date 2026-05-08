@@ -360,8 +360,8 @@ _CODING_TASK_SCENARIOS: dict[str, dict[str, str]] = {
         "stack_focus_en": "Deployment automation, metrics-driven decisions, and ops safety controls",
         "stack_focus_ru": "Deployment automation, metrics-driven decisions и ops safety controls",
         "preferred_language": "python",
-        "workspace_hint_en": "A free-form DevOps solution is acceptable. Show rollback thresholds, health checks, event inputs, and how the logic would fit into automation or control-plane code.",
-        "workspace_hint_ru": "Подойдёт свободное DevOps-решение. Покажите rollback thresholds, health checks, входные события и то, как логика встроится в automation или control-plane code.",
+        "workspace_hint_en": "A free-form DevOps solution is acceptable. Show rollback thresholds, health checks, event inputs, and how the logic would fit into automation or control-plane code. If you write executable Python, expose evaluate_rollout_health(snapshot).",
+        "workspace_hint_ru": "Подойдёт свободное DevOps-решение. Покажите rollback thresholds, health checks, входные события и то, как логика встроится в automation или control-plane code. Если пишете исполняемый Python, вынесите evaluate_rollout_health(snapshot).",
     },
     "data_scientist": {
         "scenario_id": "feature_freshness_monitor",

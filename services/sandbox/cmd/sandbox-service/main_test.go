@@ -225,6 +225,41 @@ def classify_flaky_tests(runs):
 	}
 }
 
+func TestRunPythonExecutesDeploymentRolloutChecks(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not available")
+	}
+	srv := &server{pythonBin: "python3"}
+	code := `def evaluate_rollout_health(snapshot):
+    error_rate = snapshot.get("error_rate", 0)
+    latency = snapshot.get("latency_p95_ms", 0)
+    burn = snapshot.get("slo_burn_rate", 0)
+    has_critical = any(item.get("severity") == "critical" for item in snapshot.get("alerts", []))
+    if has_critical or error_rate >= 0.05 or latency >= 1000 or burn >= 4:
+        return {"action": "rollback", "reason": "critical rollout health regression"}
+    if error_rate >= 0.01 or latency >= 400 or burn >= 1.5:
+        return {"action": "pause", "reason": "degraded metrics require investigation"}
+    return {"action": "continue", "reason": "canary metrics are healthy"}
+`
+
+	result, err := srv.runPython(context.Background(), runRequest{
+		ScenarioID:     "deployment_rollout_guard",
+		Language:       "python",
+		Code:           code,
+		TimeoutSeconds: 2,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RunnerScore == nil || *result.RunnerScore != 10.0 {
+		t.Fatalf("unexpected score: %v", result.RunnerScore)
+	}
+	if len(result.RunnerChecks) != 4 {
+		t.Fatalf("unexpected checks: %#v", result.RunnerChecks)
+	}
+}
+
 func TestValidateSQLExecutesScenarioChecks(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 is not available")

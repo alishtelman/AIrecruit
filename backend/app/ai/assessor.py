@@ -1972,6 +1972,28 @@ _CODING_TASK_RUNNER_CHECK_DEFS = {
             "title_ru": "Формирует стабильную CI diagnostic summary",
         },
     ),
+    "deployment_rollout_guard": (
+        {
+            "check_key": "runner_continues_healthy_rollout",
+            "title_en": "Continues rollout when canary health is good",
+            "title_ru": "Продолжает rollout, когда canary health в норме",
+        },
+        {
+            "check_key": "runner_pauses_degraded_rollout",
+            "title_en": "Pauses rollout when metrics degrade but rollback is not mandatory",
+            "title_ru": "Ставит rollout на паузу при деградации без обязательного rollback",
+        },
+        {
+            "check_key": "runner_rolls_back_critical_failure",
+            "title_en": "Rolls back when error or latency thresholds are critical",
+            "title_ru": "Откатывает при критических error/latency thresholds",
+        },
+        {
+            "check_key": "runner_explains_rollout_decision",
+            "title_en": "Returns a clear reason for the rollout decision",
+            "title_ru": "Возвращает понятную причину rollout-решения",
+        },
+    ),
 }
 
 
@@ -3197,6 +3219,92 @@ def _build_coding_task_runner_checks(
                 },
             ]
 
+        def _call_rollout_guard(fn, snapshot):
+            try:
+                return fn(snapshot)
+            except TypeError:
+                return fn(metrics=snapshot)
+
+        def _rollout_action(result):
+            if isinstance(result, str):
+                lowered = result.strip().lower()
+                if "rollback" in lowered or "roll back" in lowered:
+                    return "rollback"
+                if "pause" in lowered or "hold" in lowered:
+                    return "pause"
+                if "continue" in lowered or "proceed" in lowered:
+                    return "continue"
+            if isinstance(result, dict):
+                for key in ("action", "decision", "recommendation", "status"):
+                    value = str(result.get(key) or "").strip().lower().replace("-", "_")
+                    if value in {"rollback", "roll_back", "revert"}:
+                        return "rollback"
+                    if value in {"pause", "hold", "stop", "wait"}:
+                        return "pause"
+                    if value in {"continue", "proceed", "advance", "ok"}:
+                        return "continue"
+            return ""
+
+        def run_deployment_rollout_checks(ns):
+            fn = ns.get("evaluate_rollout_health")
+            if not callable(fn):
+                raise ValueError("evaluate_rollout_health function was not found")
+
+            healthy = {
+                "stage": "canary",
+                "error_rate": 0.004,
+                "latency_p95_ms": 180,
+                "slo_burn_rate": 0.7,
+                "alerts": [],
+                "events": [{"type": "deploy_started", "severity": "info"}],
+            }
+            degraded = {
+                "stage": "canary",
+                "error_rate": 0.018,
+                "latency_p95_ms": 460,
+                "slo_burn_rate": 1.8,
+                "alerts": [{"name": "latency-warning", "severity": "warning"}],
+                "events": [{"type": "latency_regression", "severity": "warning"}],
+            }
+            critical = {
+                "stage": "canary",
+                "error_rate": 0.082,
+                "latency_p95_ms": 1250,
+                "slo_burn_rate": 6.5,
+                "alerts": [{"name": "error-budget-burn", "severity": "critical"}],
+                "events": [{"type": "customer-impact", "severity": "critical"}],
+            }
+
+            healthy_result = _call_rollout_guard(fn, healthy)
+            degraded_result = _call_rollout_guard(fn, degraded)
+            critical_result = _call_rollout_guard(fn, critical)
+            healthy_action = _rollout_action(healthy_result)
+            degraded_action = _rollout_action(degraded_result)
+            critical_action = _rollout_action(critical_result)
+
+            return [
+                {
+                    "check_key": "runner_continues_healthy_rollout",
+                    "passed": healthy_action == "continue",
+                    "details": f"healthy_action={healthy_action}",
+                },
+                {
+                    "check_key": "runner_pauses_degraded_rollout",
+                    "passed": degraded_action == "pause",
+                    "details": f"degraded_action={degraded_action}",
+                },
+                {
+                    "check_key": "runner_rolls_back_critical_failure",
+                    "passed": critical_action == "rollback",
+                    "details": f"critical_action={critical_action}",
+                },
+                {
+                    "check_key": "runner_explains_rollout_decision",
+                    "passed": any(_has_reason(item) for item in (healthy_result, degraded_result, critical_result)),
+                    "details": "reason_present=" + str(any(_has_reason(item) for item in (healthy_result, degraded_result, critical_result))),
+                },
+            ]
+
         payload = json.loads(sys.stdin.read())
         source = str(payload.get("code") or "")
         scenario_id = str(payload.get("scenario_id") or "")
@@ -3212,6 +3320,8 @@ def _build_coding_task_runner_checks(
             results = run_feature_freshness_checks(ns)
         elif scenario_id == "flaky_test_classifier":
             results = run_flaky_classifier_checks(ns)
+        elif scenario_id == "deployment_rollout_guard":
+            results = run_deployment_rollout_checks(ns)
         else:
             results = []
 

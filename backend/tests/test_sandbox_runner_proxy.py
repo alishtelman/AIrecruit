@@ -218,6 +218,44 @@ def classify_flaky_tests(runs):
     }
 
 
+def test_build_coding_task_runner_checks_supports_deployment_rollout_fallback(monkeypatch: pytest.MonkeyPatch):
+    original_url = settings.SANDBOX_SERVICE_URL
+    settings.SANDBOX_SERVICE_URL = "http://sandbox-service:8080"
+
+    def _failing_sandbox(**kwargs):
+        raise httpx.ConnectError("unavailable")
+
+    monkeypatch.setattr("app.ai.assessor._run_coding_task_runner_in_sandbox", _failing_sandbox)
+    try:
+        checks, score = _build_coding_task_runner_checks(
+            scenario_id="deployment_rollout_guard",
+            artifact_code="""
+def evaluate_rollout_health(snapshot):
+    error_rate = snapshot.get("error_rate", 0)
+    latency = snapshot.get("latency_p95_ms", 0)
+    burn = snapshot.get("slo_burn_rate", 0)
+    has_critical = any(item.get("severity") == "critical" for item in snapshot.get("alerts", []))
+    if has_critical or error_rate >= 0.05 or latency >= 1000 or burn >= 4:
+        return {"action": "rollback", "reason": "critical rollout health regression"}
+    if error_rate >= 0.01 or latency >= 400 or burn >= 1.5:
+        return {"action": "pause", "reason": "degraded metrics require investigation"}
+    return {"action": "continue", "reason": "canary metrics are healthy"}
+""",
+            artifact_language="python",
+            report_language="en",
+        )
+    finally:
+        settings.SANDBOX_SERVICE_URL = original_url
+
+    assert score == 10.0
+    assert {check["check_key"] for check in checks} == {
+        "runner_continues_healthy_rollout",
+        "runner_pauses_degraded_rollout",
+        "runner_rolls_back_critical_failure",
+        "runner_explains_rollout_decision",
+    }
+
+
 def test_run_sql_live_validation_in_sandbox_maps_payload(monkeypatch: pytest.MonkeyPatch):
     original_url = settings.SANDBOX_SERVICE_URL
     settings.SANDBOX_SERVICE_URL = "http://sandbox-service:8080"
