@@ -100,6 +100,27 @@ Current supported SQL live scenarios:
 
 FastAPI/Python still owns scoring, report schema, localized check titles, and final summary shaping. The Go service runs constrained runtime checks in a separate container. If `SANDBOX_SERVICE_URL` is unavailable, the assessor falls back to the previous local subprocess/SQLite validators.
 
+### `services/llm`
+
+Go sidecar for platform-managed LLM provider calls.
+
+Current endpoint:
+
+```text
+POST /v1/complete
+```
+
+Supported providers:
+
+- `groq`
+- `openai`
+- `anthropic`
+- `openrouter`
+
+FastAPI/Python still owns platform settings, prompt selection, interviewer/assessor business logic, structured-output parsing, retry policy, public errors, and report/interview contracts. The Go service only normalizes outbound provider HTTP calls and provider error categories. If `LLM_SERVICE_URL` is unavailable at request time, Python logs a warning and falls back to the direct provider adapter.
+
+OpenRouter requests set `provider.allow_fallbacks=false` to preserve the product rule that the app does not implement cross-provider fallback.
+
 ## Runtime Configuration
 
 Important env vars:
@@ -107,6 +128,7 @@ Important env vars:
 - `MEDIA_SERVICE_URL`: when set in backend, `/tts`, `/stt`, and recording upload proxy to `services/media`.
 - `RESUME_SERVICE_URL`: when set in backend, candidate resume upload file processing proxies to `services/resume`.
 - `SANDBOX_SERVICE_URL`: when set in backend, coding-task runner and SQL live validation checks proxy to `services/sandbox`.
+- `LLM_SERVICE_URL`: when set in backend, LLM provider HTTP calls proxy to `services/llm`; direct Python adapters remain as an availability fallback.
 - `REPORT_WORKER_MODE`: `embedded` keeps old `asyncio.create_task`; `external` lets the Go worker poll.
 - `INTERNAL_WORKER_TOKEN`: required for the internal report-worker endpoint.
 - `REPORT_WORKER_INTERVAL_SECONDS`: Go worker idle polling interval.
@@ -117,11 +139,13 @@ Docker Compose currently sets:
 - backend `MEDIA_SERVICE_URL=http://media-service:8080`
 - backend `RESUME_SERVICE_URL=http://resume-service:8080`
 - backend `SANDBOX_SERVICE_URL=http://sandbox-service:8080`
+- backend `LLM_SERVICE_URL=http://llm-service:8080`
 - backend `REPORT_WORKER_MODE=${REPORT_WORKER_MODE:-embedded}`
 - backend/report-worker `INTERNAL_WORKER_TOKEN=${INTERNAL_WORKER_TOKEN:-dev-internal-worker-token}`
 - backend waits for healthy `media-service`
 - backend waits for healthy `resume-service`
 - backend waits for healthy `sandbox-service`
+- backend waits for healthy `llm-service`
 - report-worker waits for healthy backend
 - report-worker is behind the Compose profile `workers` and is not started by default
 
@@ -146,7 +170,7 @@ The local DB may contain old `completed` or `report_processing` interviews with 
 Default local startup is safe and uses embedded Python scheduling:
 
 ```bash
-docker compose up -d backend media-service resume-service sandbox-service frontend
+docker compose up -d backend media-service resume-service sandbox-service llm-service frontend
 ```
 
 To explicitly test the Go report worker, opt in with the `workers` profile and external worker mode:
@@ -175,15 +199,16 @@ Run these after touching Go services or Python proxy code:
 docker run --rm -v "$PWD/services/media:/src" -w /src golang:1.23-alpine go test ./...
 docker run --rm -v "$PWD/services/resume:/src" -w /src golang:1.23-alpine go test ./...
 docker run --rm -v "$PWD/services/sandbox:/src" -w /src golang:1.23-alpine go test ./...
+docker run --rm -v "$PWD/services/llm:/src" -w /src golang:1.23-alpine go test ./...
 docker run --rm -v "$PWD/services/report-worker:/src" -w /src golang:1.23-alpine go test ./...
 docker compose config --quiet
-docker compose exec -T backend python -m pytest tests/test_resume_service_proxy.py tests/test_sandbox_runner_proxy.py tests/test_report_worker_internal.py tests/test_media_service_proxy.py tests/test_tts.py -v
+docker compose exec -T backend python -m pytest tests/test_resume_service_proxy.py tests/test_sandbox_runner_proxy.py tests/test_report_worker_internal.py tests/test_media_service_proxy.py tests/test_tts.py tests/test_llm_runtime.py -v
 ```
 
 Build checks:
 
 ```bash
-docker compose build media-service resume-service sandbox-service report-worker
+docker compose build media-service resume-service sandbox-service llm-service report-worker
 docker compose --profile workers build report-worker
 ```
 
@@ -193,6 +218,7 @@ Smoke checks:
 curl -fsS http://localhost:8081/health
 curl -fsS http://localhost:8082/health
 curl -fsS http://localhost:8083/health
+curl -fsS http://localhost:8084/health
 curl -fsS http://localhost:8001/health
 docker compose exec -T report-worker wget -qO- http://127.0.0.1:8080/health
 curl -fsS -X POST \

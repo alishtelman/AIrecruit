@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     MEDIA_SERVICE_URL: str = ""
     RESUME_SERVICE_URL: str = ""
     SANDBOX_SERVICE_URL: str = ""
+    LLM_SERVICE_URL: str = ""
     REPORT_SYNC_GENERATION_TIMEOUT_SECONDS: float = 8.0
     REPORT_ASSESSMENT_TIMEOUT_SECONDS: float = 25.0
     REPORT_MAX_AUTO_RETRIES: int = 3

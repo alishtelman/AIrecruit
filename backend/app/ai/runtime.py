@@ -131,6 +131,28 @@ def _extract_json(text: str) -> dict[str, Any]:
     return parsed
 
 
+def _safe_response_json(response: httpx.Response) -> dict[str, Any]:
+    try:
+        payload = response.json()
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _normalize_error_category(value: Any) -> LLMErrorCategory:
+    normalized = str(value or "").strip()
+    if normalized in {
+        "configuration_error",
+        "auth_error",
+        "timeout_error",
+        "rate_limit_error",
+        "provider_error",
+        "invalid_structured_output",
+    }:
+        return normalized  # type: ignore[return-value]
+    return "provider_error"
+
+
 class LLMRuntime:
     async def complete_text(
         self,
@@ -208,6 +230,14 @@ class LLMRuntime:
         temperature: float,
     ) -> LLMResult:
         self._validate_runtime(runtime_settings)
+        proxied = await self._llm_service_complete(
+            runtime_settings=runtime_settings,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        if proxied is not None:
+            return proxied
         if runtime_settings.provider == "groq":
             return await self._groq_chat(runtime_settings, messages, max_tokens=max_tokens, temperature=temperature)
         if runtime_settings.provider == "openai":
@@ -228,6 +258,15 @@ class LLMRuntime:
         tool: dict[str, Any],
     ) -> LLMResult:
         self._validate_runtime(runtime_settings)
+        proxied = await self._llm_service_complete(
+            runtime_settings=runtime_settings,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tool=tool,
+        )
+        if proxied is not None:
+            return proxied
         if runtime_settings.provider == "groq":
             return await self._groq_chat(
                 runtime_settings,
@@ -273,6 +312,52 @@ class LLMRuntime:
                 temperature=temperature,
             )
         raise LLMRuntimeError("configuration_error", f"Unsupported LLM provider '{runtime_settings.provider}'")
+
+    async def _llm_service_complete(
+        self,
+        *,
+        runtime_settings: LLMRuntimeSettings,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        temperature: float,
+        tool: dict[str, Any] | None = None,
+    ) -> LLMResult | None:
+        base_url = str(settings.LLM_SERVICE_URL or "").strip().rstrip("/")
+        if not base_url:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=runtime_settings.timeout_seconds + 1.0) as client:
+                response = await client.post(
+                    f"{base_url}/v1/complete",
+                    json={
+                        "provider": runtime_settings.provider,
+                        "model": runtime_settings.model,
+                        "messages": messages,
+                        "prompt_override": runtime_settings.prompt_override,
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                        "timeout_seconds": runtime_settings.timeout_seconds,
+                        **({"tool": tool} if tool else {}),
+                    },
+                )
+        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            logger.warning("LLM service unavailable, falling back to direct provider call: %s", exc)
+            return None
+
+        payload = _safe_response_json(response)
+        if response.status_code >= 400:
+            raise LLMRuntimeError(
+                _normalize_error_category(payload.get("category")),
+                str(payload.get("detail") or payload.get("message") or f"LLM service failed with status {response.status_code}"),
+                retryable=bool(payload.get("retryable")),
+            )
+
+        return LLMResult(
+            text=str(payload.get("text") or "").strip(),
+            model=str(payload.get("model") or runtime_settings.model),
+            provider=str(payload.get("provider") or runtime_settings.provider),
+            raw=payload.get("raw"),
+        )
 
     async def _groq_chat(
         self,
