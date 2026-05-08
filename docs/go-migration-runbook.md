@@ -265,8 +265,13 @@ Current state:
 - `_load_marketplace_snapshot` uses a SQL window function to select the latest marketplace report per candidate.
 - Basic filters are pushed into SQL: name/email query, role, recommendation, min score, salary range, hire outcome, shortlist membership, and sort order.
 - Skills filtering stays in Python because skills may come from either `CandidateSkill` rows or fallback `AssessmentReport.skill_tags`; pushing this to SQL without a parity decision could change results.
+- `tests/test_company_search_shortlists.py::test_company_search_uses_latest_marketplace_report_for_sql_filters`
+  locks down latest-report semantics before any Go read model.
+- Alembic revision `x3y4z5a6b7c8` adds marketplace-search indexes for latest-report lookup,
+  interview filters, candidate visibility, candidate skills, and shortlist membership.
 
-If continuing this area, add explicit tests for latest-report semantics before pushing skill filtering into SQL or adding indexes.
+If continuing this area, build the Go read model against the locked latest-report semantics and keep
+skill filtering behavior identical until there is a separate parity decision.
 
 ## Local Development Notes
 
@@ -373,7 +378,7 @@ BT (Codex Resume Smoke) Tj ET
 1. Finish Phase 1 by expanding `services/sandbox` with remaining deterministic Python-compatible runners only when each scenario has a clear function contract and parity tests.
 2. Harden `services/llm` into a Phase 2 internal API: provider status endpoint, structured-output adapter tests, and retry/timeout execution in Go.
 3. Harden `services/report-worker`: backlog visibility, dry-run/safety guard, and external worker mode validation before making it default.
-4. Add marketplace/search SQL parity tests and indexes before considering a Go-owned read model.
+4. Start a Go-owned marketplace/search read model behind FastAPI only after verifying SQL parity on current fixtures.
 5. Only migrate AI interviewer/assessor/report shaping after golden transcript-to-report parity exists.
 
 ## Do Not Do
