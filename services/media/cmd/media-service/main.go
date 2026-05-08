@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,11 @@ const (
 	maxSTTBytes            = 25 * 1024 * 1024
 	defaultRecordingDir    = "/app/storage/recordings"
 )
+
+var allowedRecordingTypes = map[string]string{
+	"video/mp4":  ".mp4",
+	"video/webm": ".webm",
+}
 
 type config struct {
 	GroqAPIKey          string
@@ -68,6 +74,32 @@ type ttsResult struct {
 	model     string
 }
 
+type providerStatus struct {
+	Provider       string `json:"provider"`
+	Configured     bool   `json:"configured"`
+	RequiredAPIKey string `json:"required_api_key"`
+	Model          string `json:"model,omitempty"`
+}
+
+type statusResponse struct {
+	Service                     string           `json:"service"`
+	TTSProvider                 string           `json:"tts_provider"`
+	TTSFallbackProvider         string           `json:"tts_fallback_provider"`
+	TTSProviderChain            []string         `json:"tts_provider_chain"`
+	TTSProviders                []providerStatus `json:"tts_providers"`
+	STTProvider                 string           `json:"stt_provider"`
+	STTConfigured               bool             `json:"stt_configured"`
+	STTRequiredAPIKey           string           `json:"stt_required_api_key"`
+	STTModel                    string           `json:"stt_model"`
+	MaxTTSChars                 int              `json:"max_tts_chars"`
+	MaxSTTBytes                 int              `json:"max_stt_bytes"`
+	MaxRecordingBytes           int64            `json:"max_recording_bytes"`
+	MaxRecordingSizeMB          int64            `json:"max_recording_size_mb"`
+	RecordingStorageConfigured  bool             `json:"recording_storage_configured"`
+	RecordingStorageWritable    bool             `json:"recording_storage_writable"`
+	RecordingAllowedContentType []string         `json:"recording_allowed_content_types"`
+}
+
 func main() {
 	cfg := config{
 		GroqAPIKey:          os.Getenv("GROQ_API_KEY"),
@@ -87,9 +119,8 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "media-service"})
-	})
+	mux.HandleFunc("GET /health", srv.handleHealth)
+	mux.HandleFunc("GET /v1/status", srv.handleStatus)
 	mux.HandleFunc("POST /v1/tts", srv.handleTTS)
 	mux.HandleFunc("POST /v1/stt", srv.handleSTT)
 	mux.HandleFunc("POST /v1/recordings/{recording_id}", srv.handleRecordingUpload)
@@ -98,6 +129,18 @@ func main() {
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		panic(err)
 	}
+}
+
+func (s *server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":                     "ok",
+		"service":                    "media-service",
+		"recording_storage_writable": s.recordingStorageWritable(),
+	})
+}
+
+func (s *server) handleStatus(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.status())
 }
 
 func (s *server) handleTTS(w http.ResponseWriter, r *http.Request) {
@@ -168,12 +211,8 @@ func (s *server) handleRecordingUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allowedTypes := map[string]string{
-		"video/webm": ".webm",
-		"video/mp4":  ".mp4",
-	}
 	contentType := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]))
-	extension, ok := allowedTypes[contentType]
+	extension, ok := allowedRecordingTypes[contentType]
 	if !ok {
 		writeError(w, http.StatusUnsupportedMediaType, "Unsupported recording format. Allowed: video/webm, video/mp4.")
 		return
@@ -226,6 +265,63 @@ func (s *server) handleRecordingUpload(w http.ResponseWriter, r *http.Request) {
 		"bytes":      written,
 		"media_type": contentType,
 	})
+}
+
+func (s *server) status() statusResponse {
+	return statusResponse{
+		Service:                     "media-service",
+		TTSProvider:                 normalizeProviderName(s.cfg.TTSProvider),
+		TTSFallbackProvider:         normalizeProviderName(s.cfg.TTSFallbackProvider),
+		TTSProviderChain:            providerChain(s.cfg.TTSProvider, s.cfg.TTSFallbackProvider),
+		TTSProviders:                s.ttsProviderStatuses(),
+		STTProvider:                 "groq",
+		STTConfigured:               strings.TrimSpace(s.cfg.GroqAPIKey) != "",
+		STTRequiredAPIKey:           "GROQ_API_KEY",
+		STTModel:                    groqSTTModel,
+		MaxTTSChars:                 maxTTSChars,
+		MaxSTTBytes:                 maxSTTBytes,
+		MaxRecordingBytes:           s.cfg.MaxRecordingBytes,
+		MaxRecordingSizeMB:          s.cfg.MaxRecordingBytes / 1024 / 1024,
+		RecordingStorageConfigured:  strings.TrimSpace(s.cfg.RecordingDir) != "",
+		RecordingStorageWritable:    s.recordingStorageWritable(),
+		RecordingAllowedContentType: allowedRecordingContentTypes(),
+	}
+}
+
+func (s *server) ttsProviderStatuses() []providerStatus {
+	return []providerStatus{
+		{
+			Provider:       "elevenlabs",
+			Configured:     strings.TrimSpace(s.cfg.ElevenLabsAPIKey) != "",
+			RequiredAPIKey: "ELEVENLABS_API_KEY",
+			Model:          s.cfg.ElevenLabsModel,
+		},
+		{
+			Provider:       "groq",
+			Configured:     strings.TrimSpace(s.cfg.GroqAPIKey) != "",
+			RequiredAPIKey: "GROQ_API_KEY",
+			Model:          groqTTSModel,
+		},
+	}
+}
+
+func (s *server) recordingStorageWritable() bool {
+	if strings.TrimSpace(s.cfg.RecordingDir) == "" {
+		return false
+	}
+	if err := os.MkdirAll(s.cfg.RecordingDir, 0o755); err != nil {
+		return false
+	}
+	tmp, err := os.CreateTemp(s.cfg.RecordingDir, ".media-service-health-*")
+	if err != nil {
+		return false
+	}
+	name := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(name)
+		return false
+	}
+	return os.Remove(name) == nil
 }
 
 func (s *server) synthesize(ctx context.Context, text string, language string) (ttsResult, error) {
@@ -451,7 +547,7 @@ func providerChain(primary string, fallback string) []string {
 	seen := map[string]bool{}
 	var chain []string
 	for _, value := range []string{primary, fallback} {
-		name := strings.ToLower(strings.TrimSpace(value))
+		name := normalizeProviderName(value)
 		if name == "" || seen[name] {
 			continue
 		}
@@ -459,6 +555,19 @@ func providerChain(primary string, fallback string) []string {
 		chain = append(chain, name)
 	}
 	return chain
+}
+
+func normalizeProviderName(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func allowedRecordingContentTypes() []string {
+	values := make([]string, 0, len(allowedRecordingTypes))
+	for contentType := range allowedRecordingTypes {
+		values = append(values, contentType)
+	}
+	sort.Strings(values)
+	return values
 }
 
 func chunkText(text string, maxChars int) []string {

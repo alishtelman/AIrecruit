@@ -103,6 +103,7 @@ Exit criteria:
 
 Go sidecar for:
 
+- `GET /v1/status`
 - `POST /v1/tts`
 - `POST /v1/stt`
 - `POST /v1/recordings/{recording_id}`
@@ -113,7 +114,11 @@ FastAPI still exposes the public routes:
 - `POST /api/v1/stt`
 - `POST /api/v1/interviews/{interview_id}/recording`
 
-FastAPI keeps authentication, ownership checks, and DB updates. The Go service handles provider calls and binary/streaming file work.
+FastAPI keeps authentication, ownership checks, and DB updates. The Go service handles provider calls
+and binary/streaming file work. `GET /v1/status` returns safe operational diagnostics only: TTS/STT
+provider configured flags, provider/model names, upload/recording limits, recording MIME types, and
+recording-storage configured/writable flags. It does not expose API keys, recording storage paths, or
+candidate data.
 
 ### `services/resume`
 
@@ -318,6 +323,7 @@ Smoke checks:
 
 ```bash
 curl -fsS http://localhost:8081/health
+curl -fsS http://localhost:8081/v1/status
 curl -fsS http://localhost:8082/health
 curl -fsS http://localhost:8083/health
 curl -fsS http://localhost:8084/health
