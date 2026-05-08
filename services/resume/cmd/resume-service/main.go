@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -32,6 +33,16 @@ type uploadResponse struct {
 	RawText  string `json:"raw_text"`
 }
 
+type statusResponse struct {
+	Service             string   `json:"service"`
+	StorageConfigured   bool     `json:"storage_configured"`
+	StorageWritable     bool     `json:"storage_writable"`
+	MaxResumeSizeBytes  int64    `json:"max_resume_size_bytes"`
+	MaxResumeSizeMB     int64    `json:"max_resume_size_mb"`
+	RawTextMaxChars     int      `json:"raw_text_max_chars"`
+	AllowedContentTypes []string `json:"allowed_content_types"`
+}
+
 type server struct {
 	storageDir string
 	maxBytes   int64
@@ -44,15 +55,26 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "resume-service"})
-	})
+	mux.HandleFunc("GET /health", srv.handleHealth)
+	mux.HandleFunc("GET /v1/status", srv.handleStatus)
 	mux.HandleFunc("POST /v1/resumes", srv.handleUpload)
 
 	addr := envOrDefault("RESUME_SERVICE_ADDR", ":8080")
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		panic(err)
 	}
+}
+
+func (s *server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":           "ok",
+		"service":          "resume-service",
+		"storage_writable": s.storageWritable(),
+	})
+}
+
+func (s *server) handleStatus(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.status())
 }
 
 func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
@@ -110,6 +132,46 @@ func (s *server) processUpload(file multipart.File, header *multipart.FileHeader
 	}
 
 	return uploadResponse{Path: path, FileSize: int64(len(content)), RawText: rawText}, nil
+}
+
+func (s *server) status() statusResponse {
+	return statusResponse{
+		Service:             "resume-service",
+		StorageConfigured:   strings.TrimSpace(s.storageDir) != "",
+		StorageWritable:     s.storageWritable(),
+		MaxResumeSizeBytes:  s.maxBytes,
+		MaxResumeSizeMB:     s.maxBytes / 1024 / 1024,
+		RawTextMaxChars:     rawTextMaxChars,
+		AllowedContentTypes: allowedContentTypeList(),
+	}
+}
+
+func (s *server) storageWritable() bool {
+	if strings.TrimSpace(s.storageDir) == "" {
+		return false
+	}
+	if err := os.MkdirAll(s.storageDir, 0o755); err != nil {
+		return false
+	}
+	tmp, err := os.CreateTemp(s.storageDir, ".resume-service-health-*")
+	if err != nil {
+		return false
+	}
+	name := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(name)
+		return false
+	}
+	return os.Remove(name) == nil
+}
+
+func allowedContentTypeList() []string {
+	values := make([]string, 0, len(allowedContentTypes))
+	for contentType := range allowedContentTypes {
+		values = append(values, contentType)
+	}
+	sort.Strings(values)
+	return values
 }
 
 func readLimited(reader io.Reader, maxBytes int64) ([]byte, error) {

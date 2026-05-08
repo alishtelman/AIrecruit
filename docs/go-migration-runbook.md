@@ -120,12 +120,18 @@ FastAPI keeps authentication, ownership checks, and DB updates. The Go service h
 Go sidecar for:
 
 - `POST /v1/resumes`
+- `GET /v1/status`
 
 FastAPI still exposes the public route:
 
 - `POST /api/v1/candidate/resume/upload`
 
-FastAPI keeps candidate authentication, previous-resume deactivation, and DB writes. The Go service validates file MIME/size, stores the file in shared resume storage, and extracts best-effort raw text. If `RESUME_SERVICE_URL` is unavailable, `resume_service.py` falls back to the previous Python PDF/DOCX parser and local file write.
+FastAPI keeps candidate authentication, previous-resume deactivation, and DB writes. The Go service
+validates file MIME/size, stores the file in shared resume storage, and extracts best-effort raw text.
+`GET /v1/status` returns safe operational diagnostics only: storage configured/writable flags, size
+limits, raw-text limit, and allowed MIME types. It does not expose storage paths or candidate data. If
+`RESUME_SERVICE_URL` is unavailable, `resume_service.py` falls back to the previous Python PDF/DOCX
+parser and local file write.
 
 ### `services/report-worker`
 
@@ -341,6 +347,7 @@ docker compose exec -T media-service rm -f /app/storage/recordings/codex-smoke-t
 Resume upload sidecar smoke test:
 
 ```bash
+curl -fsS http://localhost:8083/v1/status
 printf '%s' '%PDF-1.4
 BT (Codex Resume Smoke) Tj ET
 %%EOF' | curl -fsS -X POST \
