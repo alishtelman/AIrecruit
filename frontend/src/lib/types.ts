@@ -83,7 +83,7 @@ export interface PlatformSettings {
   proctoring_policy_mode: "observe_only" | "strict_flagging" | string;
   interviewer_model_preference: string | null;
   assessor_model_preference: string | null;
-  llm_provider: "groq" | "openai" | "anthropic" | string;
+  llm_provider: "groq" | "openai" | "anthropic" | "openrouter" | string;
   interviewer_model: string;
   assessor_model: string;
   interviewer_prompt_override: string | null;

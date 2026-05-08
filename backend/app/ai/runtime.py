@@ -85,6 +85,8 @@ def _api_key_for_provider(provider: str) -> str:
         return settings.OPENAI_API_KEY
     if provider == "anthropic":
         return settings.ANTHROPIC_API_KEY
+    if provider == "openrouter":
+        return settings.OPENROUTER_API_KEY
     return ""
 
 
@@ -93,6 +95,7 @@ def _required_key_name(provider: str) -> str:
         "groq": "GROQ_API_KEY",
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
     }.get(provider, "API key")
 
 
@@ -211,6 +214,8 @@ class LLMRuntime:
             return await self._openai_response(runtime_settings, messages, max_tokens=max_tokens, temperature=temperature)
         if runtime_settings.provider == "anthropic":
             return await self._anthropic_message(runtime_settings, messages, max_tokens=max_tokens, temperature=temperature)
+        if runtime_settings.provider == "openrouter":
+            return await self._openrouter_chat(runtime_settings, messages, max_tokens=max_tokens, temperature=temperature)
         raise LLMRuntimeError("configuration_error", f"Unsupported LLM provider '{runtime_settings.provider}'")
 
     async def _complete_structured_once(
@@ -255,6 +260,13 @@ class LLMRuntime:
             )
         if runtime_settings.provider == "anthropic":
             return await self._anthropic_message(
+                runtime_settings,
+                structured_messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        if runtime_settings.provider == "openrouter":
+            return await self._openrouter_chat(
                 runtime_settings,
                 structured_messages,
                 max_tokens=max_tokens,
@@ -364,6 +376,36 @@ class LLMRuntime:
             extract_text=_extract_anthropic_text,
         )
 
+    async def _openrouter_chat(
+        self,
+        runtime_settings: LLMRuntimeSettings,
+        messages: list[dict[str, Any]],
+        *,
+        max_tokens: int,
+        temperature: float,
+    ) -> LLMResult:
+        system, chat_messages = _normalize_messages(messages, runtime_settings.prompt_override)
+        if system:
+            chat_messages.insert(0, {"role": "system", "content": system})
+        headers = {"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"}
+        if settings.APP_URL:
+            headers["HTTP-Referer"] = settings.APP_URL
+        headers["X-Title"] = "AIRecruit"
+        return await self._http_json_request(
+            runtime_settings,
+            provider="openrouter",
+            url="https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            payload={
+                "model": runtime_settings.model,
+                "messages": [{"role": msg["role"], "content": msg["content"]} for msg in chat_messages],
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "provider": {"allow_fallbacks": False},
+            },
+            extract_text=_extract_chat_completion_text,
+        )
+
     async def _http_json_request(
         self,
         runtime_settings: LLMRuntimeSettings,
@@ -412,6 +454,17 @@ def _extract_anthropic_text(data: dict[str, Any]) -> str:
         if isinstance(content, dict) and content.get("type") == "text":
             chunks.append(str(content.get("text") or ""))
     return "\n".join(chunks).strip()
+
+
+def _extract_chat_completion_text(data: dict[str, Any]) -> str:
+    choices = data.get("choices") or []
+    if not choices or not isinstance(choices[0], dict):
+        return ""
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+    if isinstance(content, list):
+        return "\n".join(str(part.get("text") or "") for part in content if isinstance(part, dict)).strip()
+    return str(content or "").strip()
 
 
 runtime = LLMRuntime()

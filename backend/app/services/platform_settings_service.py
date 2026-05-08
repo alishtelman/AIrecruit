@@ -19,7 +19,12 @@ from app.ai.model_preferences import (
 from app.models.platform_settings import PlatformSettings
 
 _ALLOWED_PROCTORING_POLICY_MODES = {"observe_only", "strict_flagging"}
-_PROVIDERS_REQUIRING_KEYS = {"groq": "GROQ_API_KEY", "openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+_PROVIDERS_REQUIRING_KEYS = {
+    "groq": "GROQ_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+}
 
 
 def _normalize_model_preference(value: str | None) -> str | None:
@@ -55,6 +60,8 @@ def _api_key_available(provider: str) -> bool:
         return bool(settings.OPENAI_API_KEY)
     if provider == "anthropic":
         return bool(settings.ANTHROPIC_API_KEY)
+    if provider == "openrouter":
+        return bool(settings.OPENROUTER_API_KEY)
     return False
 
 
