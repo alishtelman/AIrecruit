@@ -167,6 +167,7 @@ Go sidecar for interview sandbox execution and validation.
 Current endpoints:
 
 ```text
+GET /v1/status
 POST /v1/coding/python
 POST /v1/sql/validate
 ```
@@ -184,7 +185,12 @@ Current supported SQL live scenarios:
 - `signup_funnel_rollup`
 - `incident_error_budget_audit`
 
-FastAPI/Python still owns scoring, report schema, localized check titles, and final summary shaping. The Go service runs constrained runtime checks in a separate container. If `SANDBOX_SERVICE_URL` is unavailable, the assessor falls back to the previous local subprocess/SQLite validators.
+FastAPI/Python still owns scoring, report schema, localized check titles, and final summary shaping.
+The Go service runs constrained runtime checks in a separate container. `GET /v1/status` returns safe
+operational diagnostics only: Python runtime availability, supported languages, supported coding/SQL
+scenario ids, and timeout limits. It does not expose submitted code, SQL queries, filesystem paths, or
+candidate data. If `SANDBOX_SERVICE_URL` is unavailable, the assessor falls back to the previous local
+subprocess/SQLite validators.
 
 ### `services/llm`
 
@@ -325,6 +331,7 @@ Smoke checks:
 curl -fsS http://localhost:8081/health
 curl -fsS http://localhost:8081/v1/status
 curl -fsS http://localhost:8082/health
+curl -fsS http://localhost:8082/v1/status
 curl -fsS http://localhost:8083/health
 curl -fsS http://localhost:8084/health
 curl -fsS http://localhost:8001/health

@@ -9,11 +9,26 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
 
 const defaultTimeoutSeconds = 2
+const maxTimeoutSeconds = 10
+
+var supportedCodingScenarios = []string{
+	"deployment_rollout_guard",
+	"feature_freshness_monitor",
+	"flaky_test_classifier",
+	"rate_limiter_window_counter",
+}
+
+var supportedSQLScenarios = []string{
+	"customer_revenue_rollup",
+	"incident_error_budget_audit",
+	"signup_funnel_rollup",
+}
 
 type runRequest struct {
 	ScenarioID     string  `json:"scenario_id"`
@@ -53,6 +68,16 @@ type sqlValidationResponse struct {
 	ValidationChecks []sqlValidationCheck `json:"validation_checks"`
 }
 
+type statusResponse struct {
+	Service                  string   `json:"service"`
+	PythonAvailable          bool     `json:"python_available"`
+	SupportedLanguages       []string `json:"supported_languages"`
+	SupportedCodingScenarios []string `json:"supported_coding_scenarios"`
+	SupportedSQLScenarios    []string `json:"supported_sql_scenarios"`
+	DefaultTimeoutSeconds    int      `json:"default_timeout_seconds"`
+	MaxTimeoutSeconds        int      `json:"max_timeout_seconds"`
+}
+
 type server struct {
 	pythonBin string
 	run       func(context.Context, runRequest) (runResponse, error)
@@ -65,9 +90,8 @@ func main() {
 	srv.validate = srv.validateSQL
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "sandbox-service"})
-	})
+	mux.HandleFunc("GET /health", srv.handleHealth)
+	mux.HandleFunc("GET /v1/status", srv.handleStatus)
 	mux.HandleFunc("POST /v1/coding/python", srv.handleRunPython)
 	mux.HandleFunc("POST /v1/sql/validate", srv.handleValidateSQL)
 
@@ -75,6 +99,20 @@ func main() {
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		panic(err)
 	}
+}
+
+func (s *server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":                 "ok",
+		"service":                "sandbox-service",
+		"python_available":       s.pythonAvailable(),
+		"coding_scenarios_count": len(supportedCodingScenarios),
+		"sql_scenarios_count":    len(supportedSQLScenarios),
+	})
+}
+
+func (s *server) handleStatus(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.status())
 }
 
 func (s *server) handleValidateSQL(w http.ResponseWriter, r *http.Request) {
@@ -129,6 +167,26 @@ func (s *server) handleRunPython(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *server) status() statusResponse {
+	return statusResponse{
+		Service:                  "sandbox-service",
+		PythonAvailable:          s.pythonAvailable(),
+		SupportedLanguages:       []string{"python"},
+		SupportedCodingScenarios: scenarioList(supportedCodingScenarios),
+		SupportedSQLScenarios:    scenarioList(supportedSQLScenarios),
+		DefaultTimeoutSeconds:    defaultTimeoutSeconds,
+		MaxTimeoutSeconds:        maxTimeoutSeconds,
+	}
+}
+
+func (s *server) pythonAvailable() bool {
+	if strings.TrimSpace(s.pythonBin) == "" {
+		return false
+	}
+	_, err := exec.LookPath(s.pythonBin)
+	return err == nil
 }
 
 func (s *server) runPython(ctx context.Context, payload runRequest) (runResponse, error) {
@@ -206,29 +264,34 @@ func (s *server) validateSQL(ctx context.Context, payload sqlValidationRequest) 
 }
 
 func isSupportedSQLScenario(value string) bool {
-	switch value {
-	case "customer_revenue_rollup", "signup_funnel_rollup", "incident_error_budget_audit":
-		return true
-	default:
-		return false
-	}
+	return containsScenario(supportedSQLScenarios, value)
 }
 
 func isSupportedCodingScenario(value string) bool {
-	switch value {
-	case "rate_limiter_window_counter", "feature_freshness_monitor", "flaky_test_classifier", "deployment_rollout_guard":
-		return true
-	default:
-		return false
+	return containsScenario(supportedCodingScenarios, value)
+}
+
+func containsScenario(scenarios []string, value string) bool {
+	for _, scenario := range scenarios {
+		if value == scenario {
+			return true
+		}
 	}
+	return false
+}
+
+func scenarioList(scenarios []string) []string {
+	values := append([]string(nil), scenarios...)
+	sort.Strings(values)
+	return values
 }
 
 func timeoutDuration(value float64) time.Duration {
 	if value <= 0 {
 		value = defaultTimeoutSeconds
 	}
-	if value > 10 {
-		value = 10
+	if value > maxTimeoutSeconds {
+		value = maxTimeoutSeconds
 	}
 	return time.Duration(value * float64(time.Second))
 }

@@ -106,6 +106,56 @@ func TestHandleValidateSQLRejectsUnsupportedScenario(t *testing.T) {
 	}
 }
 
+func TestHandleStatusReturnsSafeDiagnostics(t *testing.T) {
+	srv := &server{pythonBin: "/secret/python"}
+	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	rec := httptest.NewRecorder()
+
+	srv.handleStatus(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "/secret/python") {
+		t.Fatalf("status leaked python path: %s", body)
+	}
+	var payload statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Service != "sandbox-service" || payload.PythonAvailable {
+		t.Fatalf("unexpected runtime status: %#v", payload)
+	}
+	if payload.DefaultTimeoutSeconds != defaultTimeoutSeconds || payload.MaxTimeoutSeconds != maxTimeoutSeconds {
+		t.Fatalf("unexpected timeout limits: %#v", payload)
+	}
+	if len(payload.SupportedCodingScenarios) != 4 || payload.SupportedCodingScenarios[0] != "deployment_rollout_guard" {
+		t.Fatalf("unexpected coding scenarios: %#v", payload.SupportedCodingScenarios)
+	}
+	if len(payload.SupportedSQLScenarios) != 3 || payload.SupportedSQLScenarios[0] != "customer_revenue_rollup" {
+		t.Fatalf("unexpected sql scenarios: %#v", payload.SupportedSQLScenarios)
+	}
+}
+
+func TestHandleHealthReportsRuntimeAndScenarioCounts(t *testing.T) {
+	srv := &server{pythonBin: "python3"}
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+
+	srv.handleHealth(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"coding_scenarios_count":4`) {
+		t.Fatalf("expected coding scenario count: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"sql_scenarios_count":3`) {
+		t.Fatalf("expected sql scenario count: %s", rec.Body.String())
+	}
+}
+
 func TestRunPythonExecutesRateLimiterChecks(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 is not available")
