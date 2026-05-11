@@ -219,6 +219,153 @@ func TestFilterBySkillsWithCandidateSkillsFallback(t *testing.T) {
 	}
 }
 
+func TestBuildMarketplaceQueryIncludesSalaryFilter(t *testing.T) {
+	salaryMin := 60_000
+	salaryMax := 110_000
+
+	// salary_min only
+	onlyMin := searchRequest{
+		CompanyID: "00000000-0000-0000-0000-000000000001",
+		SalaryMin: &salaryMin,
+		Sort:      "score_desc",
+	}
+	q, args := buildMarketplaceQuery(onlyMin)
+	if !strings.Contains(q, "COALESCE(c.salary_max, c.salary_min) >=") {
+		t.Fatalf("expected salary_min >= clause, got: %s", q)
+	}
+	if strings.Contains(q, "COALESCE(c.salary_min, c.salary_max) <=") {
+		t.Fatalf("unexpected salary_max <= clause in salary_min-only query: %s", q)
+	}
+	// args: company_id + salary_min + LIMIT
+	if len(args) != 3 {
+		encoded, _ := json.Marshal(args)
+		t.Fatalf("expected 3 args for salary_min-only query, got %s", encoded)
+	}
+	if args[1] != salaryMin {
+		t.Fatalf("expected salary_min arg %d, got %v", salaryMin, args[1])
+	}
+
+	// salary_max only
+	onlyMax := searchRequest{
+		CompanyID: "00000000-0000-0000-0000-000000000001",
+		SalaryMax: &salaryMax,
+		Sort:      "score_desc",
+	}
+	q, args = buildMarketplaceQuery(onlyMax)
+	if !strings.Contains(q, "COALESCE(c.salary_min, c.salary_max) <=") {
+		t.Fatalf("expected salary_max <= clause, got: %s", q)
+	}
+	if strings.Contains(q, "COALESCE(c.salary_max, c.salary_min) >=") {
+		t.Fatalf("unexpected salary_min >= clause in salary_max-only query: %s", q)
+	}
+	// args: company_id + salary_max + LIMIT
+	if len(args) != 3 {
+		encoded, _ := json.Marshal(args)
+		t.Fatalf("expected 3 args for salary_max-only query, got %s", encoded)
+	}
+	if args[1] != salaryMax {
+		t.Fatalf("expected salary_max arg %d, got %v", salaryMax, args[1])
+	}
+
+	// both salary_min and salary_max
+	both := searchRequest{
+		CompanyID: "00000000-0000-0000-0000-000000000001",
+		SalaryMin: &salaryMin,
+		SalaryMax: &salaryMax,
+		Sort:      "score_desc",
+	}
+	q, args = buildMarketplaceQuery(both)
+	if !strings.Contains(q, "COALESCE(c.salary_max, c.salary_min) >=") {
+		t.Fatalf("expected salary_min >= clause in combined query: %s", q)
+	}
+	if !strings.Contains(q, "COALESCE(c.salary_min, c.salary_max) <=") {
+		t.Fatalf("expected salary_max <= clause in combined query: %s", q)
+	}
+	// args: company_id + salary_min + salary_max + LIMIT
+	if len(args) != 4 {
+		encoded, _ := json.Marshal(args)
+		t.Fatalf("expected 4 args for combined salary query, got %s", encoded)
+	}
+	if args[len(args)-1] != maxMarketplaceRows {
+		t.Fatalf("expected last arg to be LIMIT %d, got %v", maxMarketplaceRows, args[len(args)-1])
+	}
+}
+
+func TestBuildMarketplaceQueryIncludesHireOutcomeFilter(t *testing.T) {
+	req := searchRequest{
+		CompanyID:   "00000000-0000-0000-0000-000000000001",
+		HireOutcome: "hired",
+		Sort:        "score_desc",
+	}
+	query, args := buildMarketplaceQuery(req)
+
+	if !strings.Contains(query, "ho.outcome =") {
+		t.Fatalf("expected ho.outcome filter in query: %s", query)
+	}
+	// The hire_outcomes table must be joined for this filter to work.
+	if !strings.Contains(query, "hire_outcomes ho") {
+		t.Fatalf("expected hire_outcomes join in query: %s", query)
+	}
+	// args: company_id + hire_outcome + LIMIT
+	if len(args) != 3 {
+		encoded, _ := json.Marshal(args)
+		t.Fatalf("expected 3 args for hire_outcome query, got %s", encoded)
+	}
+	if args[1] != "hired" {
+		t.Fatalf("expected hire_outcome arg 'hired', got %v", args[1])
+	}
+	if args[len(args)-1] != maxMarketplaceRows {
+		t.Fatalf("expected last arg to be LIMIT %d, got %v", maxMarketplaceRows, args[len(args)-1])
+	}
+}
+
+func TestOrderByClauseCoversAllSortOrders(t *testing.T) {
+	cases := []struct {
+		sort    string
+		wantSQL string
+	}{
+		{"score_desc", "COALESCE(ar.overall_score, -1) DESC"},
+		{"score_asc", "ar.overall_score IS NULL"},
+		{"latest", "i.completed_at DESC, ar.created_at DESC"},
+		{"salary_asc", "COALESCE(c.salary_min, c.salary_max) ASC"},
+		{"salary_desc", "COALESCE(c.salary_max, c.salary_min, -1) DESC"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.sort, func(t *testing.T) {
+			got := orderByClause(tc.sort)
+			if !strings.Contains(got, tc.wantSQL) {
+				t.Fatalf("orderByClause(%q) = %q, want substring %q", tc.sort, got, tc.wantSQL)
+			}
+		})
+	}
+}
+
+func TestBuildMarketplaceQuerySalaryAndHireOutcomeCombined(t *testing.T) {
+	salaryMin := 80_000
+	req := searchRequest{
+		CompanyID:   "00000000-0000-0000-0000-000000000001",
+		SalaryMin:   &salaryMin,
+		HireOutcome: "rejected",
+		Sort:        "score_desc",
+	}
+	query, args := buildMarketplaceQuery(req)
+
+	if !strings.Contains(query, "ho.outcome =") {
+		t.Fatalf("expected ho.outcome filter: %s", query)
+	}
+	if !strings.Contains(query, "COALESCE(c.salary_max, c.salary_min) >=") {
+		t.Fatalf("expected salary_min filter: %s", query)
+	}
+	// args: company_id + hire_outcome + salary_min + LIMIT
+	if len(args) != 4 {
+		encoded, _ := json.Marshal(args)
+		t.Fatalf("expected 4 args, got %s", encoded)
+	}
+	if args[len(args)-1] != maxMarketplaceRows {
+		t.Fatalf("expected LIMIT arg=%d, got %v", maxMarketplaceRows, args[len(args)-1])
+	}
+}
+
 func TestNormalizeDatabaseURLConvertsAsyncpgScheme(t *testing.T) {
 	got := normalizeDatabaseURL("postgresql+asyncpg://user:pass@postgres:5432/db")
 	if got != "postgres://user:pass@postgres:5432/db" {
