@@ -11,8 +11,69 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
+
+type endpointSnapshot struct {
+	RequestsTotal   int64  `json:"requests_total"`
+	SuccessTotal    int64  `json:"success_total"`
+	ErrorTotal      int64  `json:"error_total"`
+	LastLatencyMs   int64  `json:"last_latency_ms,omitempty"`
+	LastSuccessAt   string `json:"last_success_at,omitempty"`
+	LastErrorAt     string `json:"last_error_at,omitempty"`
+	LastErrorDetail string `json:"last_error_detail,omitempty"`
+}
+
+type endpointMetrics struct {
+	mu              sync.Mutex
+	requestsTotal   int64
+	successTotal    int64
+	errorTotal      int64
+	lastSuccessAt   time.Time
+	lastErrorAt     time.Time
+	lastLatencyMs   int64
+	lastErrorDetail string
+}
+
+func (m *endpointMetrics) record(latency time.Duration, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.requestsTotal++
+	m.lastLatencyMs = latency.Milliseconds()
+	now := time.Now().UTC()
+	if err == nil {
+		m.successTotal++
+		m.lastSuccessAt = now
+	} else {
+		m.errorTotal++
+		m.lastErrorAt = now
+		detail := err.Error()
+		if len(detail) > 200 {
+			detail = detail[:200]
+		}
+		m.lastErrorDetail = detail
+	}
+}
+
+func (m *endpointMetrics) snapshot() endpointSnapshot {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	snap := endpointSnapshot{
+		RequestsTotal:   m.requestsTotal,
+		SuccessTotal:    m.successTotal,
+		ErrorTotal:      m.errorTotal,
+		LastLatencyMs:   m.lastLatencyMs,
+		LastErrorDetail: m.lastErrorDetail,
+	}
+	if !m.lastSuccessAt.IsZero() {
+		snap.LastSuccessAt = m.lastSuccessAt.Format(time.RFC3339)
+	}
+	if !m.lastErrorAt.IsZero() {
+		snap.LastErrorAt = m.lastErrorAt.Format(time.RFC3339)
+	}
+	return snap
+}
 
 const defaultTimeoutSeconds = 2
 const maxTimeoutSeconds = 10
@@ -69,19 +130,23 @@ type sqlValidationResponse struct {
 }
 
 type statusResponse struct {
-	Service                  string   `json:"service"`
-	PythonAvailable          bool     `json:"python_available"`
-	SupportedLanguages       []string `json:"supported_languages"`
-	SupportedCodingScenarios []string `json:"supported_coding_scenarios"`
-	SupportedSQLScenarios    []string `json:"supported_sql_scenarios"`
-	DefaultTimeoutSeconds    int      `json:"default_timeout_seconds"`
-	MaxTimeoutSeconds        int      `json:"max_timeout_seconds"`
+	Service                  string           `json:"service"`
+	PythonAvailable          bool             `json:"python_available"`
+	SupportedLanguages       []string         `json:"supported_languages"`
+	SupportedCodingScenarios []string         `json:"supported_coding_scenarios"`
+	SupportedSQLScenarios    []string         `json:"supported_sql_scenarios"`
+	DefaultTimeoutSeconds    int              `json:"default_timeout_seconds"`
+	MaxTimeoutSeconds        int              `json:"max_timeout_seconds"`
+	PythonRunner             endpointSnapshot `json:"python_runner"`
+	SQLValidator             endpointSnapshot `json:"sql_validator"`
 }
 
 type server struct {
 	pythonBin string
 	run       func(context.Context, runRequest) (runResponse, error)
 	validate  func(context.Context, sqlValidationRequest) (sqlValidationResponse, error)
+	python    endpointMetrics
+	sql       endpointMetrics
 }
 
 func main() {
@@ -132,7 +197,9 @@ func (s *server) handleValidateSQL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	result, err := s.validate(r.Context(), payload)
+	s.sql.record(time.Since(start), err)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
@@ -161,7 +228,9 @@ func (s *server) handleRunPython(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	result, err := s.run(r.Context(), payload)
+	s.python.record(time.Since(start), err)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
@@ -178,6 +247,8 @@ func (s *server) status() statusResponse {
 		SupportedSQLScenarios:    scenarioList(supportedSQLScenarios),
 		DefaultTimeoutSeconds:    defaultTimeoutSeconds,
 		MaxTimeoutSeconds:        maxTimeoutSeconds,
+		PythonRunner:             s.python.snapshot(),
+		SQLValidator:             s.sql.snapshot(),
 	}
 }
 

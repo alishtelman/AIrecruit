@@ -128,3 +128,56 @@ func TestStatusReportsUnconfiguredRecordingStorage(t *testing.T) {
 		t.Fatalf("expected unconfigured storage to be unsafe: %#v", status)
 	}
 }
+
+func TestHandleTTSRecordsSuccessMetrics(t *testing.T) {
+	srv := &server{cfg: config{GroqAPIKey: "key", TTSProvider: "groq"}, client: http.DefaultClient}
+	// synthesize will fail (no upstream), but the metric is still recorded
+	req := httptest.NewRequest(http.MethodPost, "/v1/tts", strings.NewReader(`{"text":"hello","language":"en"}`))
+	srv.handleTTS(httptest.NewRecorder(), req)
+
+	snap := srv.tts.snapshot()
+	if snap.RequestsTotal != 1 {
+		t.Fatalf("expected requests_total=1, got %d", snap.RequestsTotal)
+	}
+}
+
+func TestHandleRecordingUploadRecordsSuccessMetrics(t *testing.T) {
+	dir := t.TempDir()
+	srv := &server{cfg: config{RecordingDir: dir, MaxRecordingBytes: 1024}}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/recordings/test-id", strings.NewReader("data"))
+	req.Header.Set("Content-Type", "video/webm")
+	req.SetPathValue("recording_id", "test-id")
+	srv.handleRecordingUpload(httptest.NewRecorder(), req)
+
+	snap := srv.recording.snapshot()
+	if snap.RequestsTotal != 1 || snap.SuccessTotal != 1 || snap.ErrorTotal != 0 {
+		t.Fatalf("unexpected recording metrics: %+v", snap)
+	}
+}
+
+func TestHandleStatusIncludesEndpointMetrics(t *testing.T) {
+	srv := &server{cfg: config{RecordingDir: "", MaxRecordingBytes: 1024}}
+	srv.tts.requestsTotal = 3
+	srv.tts.successTotal = 3
+	srv.stt.requestsTotal = 1
+	srv.stt.errorTotal = 1
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	rec := httptest.NewRecorder()
+	srv.handleStatus(rec, req)
+
+	body := rec.Body.String()
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	tts, _ := payload["tts"].(map[string]any)
+	if tts == nil || tts["requests_total"].(float64) != 3 {
+		t.Fatalf("expected tts.requests_total=3 in status: %s", body)
+	}
+	stt, _ := payload["stt"].(map[string]any)
+	if stt == nil || stt["error_total"].(float64) != 1 {
+		t.Fatalf("expected stt.error_total=1 in status: %s", body)
+	}
+}

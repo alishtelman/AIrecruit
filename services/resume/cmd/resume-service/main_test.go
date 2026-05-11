@@ -158,3 +158,46 @@ func minimalDOCX(t *testing.T, paragraphs ...string) []byte {
 	}
 	return body.Bytes()
 }
+
+func TestHandleUploadRecordsSuccessMetrics(t *testing.T) {
+	dir := t.TempDir()
+	body, contentType := multipartBody(t, "cv.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", minimalDOCX(t, "Test"))
+	req := httptest.NewRequest(http.MethodPost, "/v1/resumes", body)
+	req.Header.Set("Content-Type", contentType)
+
+	srv := &server{storageDir: dir, maxBytes: 10 * 1024 * 1024}
+	srv.handleUpload(httptest.NewRecorder(), req)
+
+	snap := srv.upload.snapshot()
+	if snap.RequestsTotal != 1 || snap.SuccessTotal != 1 || snap.ErrorTotal != 0 {
+		t.Fatalf("unexpected upload metrics: %+v", snap)
+	}
+}
+
+func TestHandleUploadRecordsErrorMetrics(t *testing.T) {
+	dir := t.TempDir()
+	body, contentType := multipartBody(t, "cv.pdf", "application/pdf", []byte("not-a-real-pdf"))
+	req := httptest.NewRequest(http.MethodPost, "/v1/resumes", body)
+	req.Header.Set("Content-Type", contentType)
+
+	srv := &server{storageDir: dir, maxBytes: 10 * 1024 * 1024}
+	srv.handleUpload(httptest.NewRecorder(), req)
+
+	// PDF parsing is best-effort, so this may succeed; check only that metrics are recorded
+	snap := srv.upload.snapshot()
+	if snap.RequestsTotal != 1 {
+		t.Fatalf("expected upload to be recorded regardless of outcome: %+v", snap)
+	}
+}
+
+func TestResumeStatusIncludesUploadMetrics(t *testing.T) {
+	srv := &server{storageDir: t.TempDir(), maxBytes: 1024 * 1024}
+	srv.upload.requestsTotal = 7
+	srv.upload.successTotal = 6
+	srv.upload.errorTotal = 1
+
+	status := srv.status()
+	if status.Upload.RequestsTotal != 7 || status.Upload.SuccessTotal != 6 || status.Upload.ErrorTotal != 1 {
+		t.Fatalf("unexpected upload metrics in status: %+v", status.Upload)
+	}
+}

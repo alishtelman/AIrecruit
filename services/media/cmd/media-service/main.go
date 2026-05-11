@@ -15,8 +15,69 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+type endpointSnapshot struct {
+	RequestsTotal   int64  `json:"requests_total"`
+	SuccessTotal    int64  `json:"success_total"`
+	ErrorTotal      int64  `json:"error_total"`
+	LastLatencyMs   int64  `json:"last_latency_ms,omitempty"`
+	LastSuccessAt   string `json:"last_success_at,omitempty"`
+	LastErrorAt     string `json:"last_error_at,omitempty"`
+	LastErrorDetail string `json:"last_error_detail,omitempty"`
+}
+
+type endpointMetrics struct {
+	mu              sync.Mutex
+	requestsTotal   int64
+	successTotal    int64
+	errorTotal      int64
+	lastSuccessAt   time.Time
+	lastErrorAt     time.Time
+	lastLatencyMs   int64
+	lastErrorDetail string
+}
+
+func (m *endpointMetrics) record(latency time.Duration, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.requestsTotal++
+	m.lastLatencyMs = latency.Milliseconds()
+	now := time.Now().UTC()
+	if err == nil {
+		m.successTotal++
+		m.lastSuccessAt = now
+	} else {
+		m.errorTotal++
+		m.lastErrorAt = now
+		detail := err.Error()
+		if len(detail) > 200 {
+			detail = detail[:200]
+		}
+		m.lastErrorDetail = detail
+	}
+}
+
+func (m *endpointMetrics) snapshot() endpointSnapshot {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	snap := endpointSnapshot{
+		RequestsTotal:   m.requestsTotal,
+		SuccessTotal:    m.successTotal,
+		ErrorTotal:      m.errorTotal,
+		LastLatencyMs:   m.lastLatencyMs,
+		LastErrorDetail: m.lastErrorDetail,
+	}
+	if !m.lastSuccessAt.IsZero() {
+		snap.LastSuccessAt = m.lastSuccessAt.Format(time.RFC3339)
+	}
+	if !m.lastErrorAt.IsZero() {
+		snap.LastErrorAt = m.lastErrorAt.Format(time.RFC3339)
+	}
+	return snap
+}
 
 const (
 	defaultListenAddr      = ":8080"
@@ -49,8 +110,11 @@ type config struct {
 }
 
 type server struct {
-	cfg    config
-	client *http.Client
+	cfg       config
+	client    *http.Client
+	tts       endpointMetrics
+	stt       endpointMetrics
+	recording endpointMetrics
 }
 
 type apiError struct {
@@ -98,6 +162,9 @@ type statusResponse struct {
 	RecordingStorageConfigured  bool             `json:"recording_storage_configured"`
 	RecordingStorageWritable    bool             `json:"recording_storage_writable"`
 	RecordingAllowedContentType []string         `json:"recording_allowed_content_types"`
+	TTS                         endpointSnapshot `json:"tts"`
+	STT                         endpointSnapshot `json:"stt"`
+	Recording                   endpointSnapshot `json:"recording_upload"`
 }
 
 func main() {
@@ -150,7 +217,9 @@ func (s *server) handleTTS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	result, err := s.synthesize(r.Context(), payload.Text, payload.Language)
+	s.tts.record(time.Since(start), err)
 	if err != nil {
 		writeAPIError(w, err)
 		return
@@ -196,7 +265,9 @@ func (s *server) handleSTT(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	text, err := s.transcribeWithGroq(r.Context(), audio, header)
+	s.stt.record(time.Since(start), err)
 	if err != nil {
 		writeAPIError(w, err)
 		return
@@ -218,7 +289,12 @@ func (s *server) handleRecordingUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	recStart := time.Now()
+	var recErr error
+	defer func() { s.recording.record(time.Since(recStart), recErr) }()
+
 	if err := os.MkdirAll(s.cfg.RecordingDir, 0o755); err != nil {
+		recErr = err
 		writeError(w, http.StatusInternalServerError, "Failed to prepare recording storage")
 		return
 	}
@@ -227,6 +303,7 @@ func (s *server) handleRecordingUpload(w http.ResponseWriter, r *http.Request) {
 	temp := dest + ".tmp"
 	out, err := os.Create(temp)
 	if err != nil {
+		recErr = err
 		writeError(w, http.StatusInternalServerError, "Failed to create recording file")
 		return
 	}
@@ -236,6 +313,7 @@ func (s *server) handleRecordingUpload(w http.ResponseWriter, r *http.Request) {
 	written, err := io.Copy(out, reader)
 	if err != nil {
 		_ = os.Remove(temp)
+		recErr = err
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("Recording exceeds maximum allowed size of %d MB.", s.cfg.MaxRecordingBytes/1024/1024))
@@ -246,16 +324,19 @@ func (s *server) handleRecordingUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	if written > s.cfg.MaxRecordingBytes {
 		_ = os.Remove(temp)
+		recErr = fmt.Errorf("recording too large: %d bytes", written)
 		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("Recording exceeds maximum allowed size of %d MB.", s.cfg.MaxRecordingBytes/1024/1024))
 		return
 	}
 	if err := out.Close(); err != nil {
 		_ = os.Remove(temp)
+		recErr = err
 		writeError(w, http.StatusInternalServerError, "Failed to finalize recording file")
 		return
 	}
 	if err := os.Rename(temp, dest); err != nil {
 		_ = os.Remove(temp)
+		recErr = err
 		writeError(w, http.StatusInternalServerError, "Failed to store recording file")
 		return
 	}
@@ -285,6 +366,9 @@ func (s *server) status() statusResponse {
 		RecordingStorageConfigured:  strings.TrimSpace(s.cfg.RecordingDir) != "",
 		RecordingStorageWritable:    s.recordingStorageWritable(),
 		RecordingAllowedContentType: allowedRecordingContentTypes(),
+		TTS:                         s.tts.snapshot(),
+		STT:                         s.stt.snapshot(),
+		Recording:                   s.recording.snapshot(),
 	}
 }
 

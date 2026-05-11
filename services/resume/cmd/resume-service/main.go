@@ -17,7 +17,69 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 )
+
+type endpointSnapshot struct {
+	RequestsTotal   int64  `json:"requests_total"`
+	SuccessTotal    int64  `json:"success_total"`
+	ErrorTotal      int64  `json:"error_total"`
+	LastLatencyMs   int64  `json:"last_latency_ms,omitempty"`
+	LastSuccessAt   string `json:"last_success_at,omitempty"`
+	LastErrorAt     string `json:"last_error_at,omitempty"`
+	LastErrorDetail string `json:"last_error_detail,omitempty"`
+}
+
+type endpointMetrics struct {
+	mu              sync.Mutex
+	requestsTotal   int64
+	successTotal    int64
+	errorTotal      int64
+	lastSuccessAt   time.Time
+	lastErrorAt     time.Time
+	lastLatencyMs   int64
+	lastErrorDetail string
+}
+
+func (m *endpointMetrics) record(latency time.Duration, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.requestsTotal++
+	m.lastLatencyMs = latency.Milliseconds()
+	now := time.Now().UTC()
+	if err == nil {
+		m.successTotal++
+		m.lastSuccessAt = now
+	} else {
+		m.errorTotal++
+		m.lastErrorAt = now
+		detail := err.Error()
+		if len(detail) > 200 {
+			detail = detail[:200]
+		}
+		m.lastErrorDetail = detail
+	}
+}
+
+func (m *endpointMetrics) snapshot() endpointSnapshot {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	snap := endpointSnapshot{
+		RequestsTotal:   m.requestsTotal,
+		SuccessTotal:    m.successTotal,
+		ErrorTotal:      m.errorTotal,
+		LastLatencyMs:   m.lastLatencyMs,
+		LastErrorDetail: m.lastErrorDetail,
+	}
+	if !m.lastSuccessAt.IsZero() {
+		snap.LastSuccessAt = m.lastSuccessAt.Format(time.RFC3339)
+	}
+	if !m.lastErrorAt.IsZero() {
+		snap.LastErrorAt = m.lastErrorAt.Format(time.RFC3339)
+	}
+	return snap
+}
 
 const defaultMaxResumeSizeMB = 10
 const rawTextMaxChars = 100_000
@@ -34,18 +96,20 @@ type uploadResponse struct {
 }
 
 type statusResponse struct {
-	Service             string   `json:"service"`
-	StorageConfigured   bool     `json:"storage_configured"`
-	StorageWritable     bool     `json:"storage_writable"`
-	MaxResumeSizeBytes  int64    `json:"max_resume_size_bytes"`
-	MaxResumeSizeMB     int64    `json:"max_resume_size_mb"`
-	RawTextMaxChars     int      `json:"raw_text_max_chars"`
-	AllowedContentTypes []string `json:"allowed_content_types"`
+	Service             string           `json:"service"`
+	StorageConfigured   bool             `json:"storage_configured"`
+	StorageWritable     bool             `json:"storage_writable"`
+	MaxResumeSizeBytes  int64            `json:"max_resume_size_bytes"`
+	MaxResumeSizeMB     int64            `json:"max_resume_size_mb"`
+	RawTextMaxChars     int              `json:"raw_text_max_chars"`
+	AllowedContentTypes []string         `json:"allowed_content_types"`
+	Upload              endpointSnapshot `json:"upload"`
 }
 
 type server struct {
 	storageDir string
 	maxBytes   int64
+	upload     endpointMetrics
 }
 
 func main() {
@@ -90,7 +154,9 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	start := time.Now()
 	result, err := s.processUpload(file, header)
+	s.upload.record(time.Since(start), err)
 	if err != nil {
 		var httpErr httpError
 		if errors.As(err, &httpErr) {
@@ -143,6 +209,7 @@ func (s *server) status() statusResponse {
 		MaxResumeSizeMB:     s.maxBytes / 1024 / 1024,
 		RawTextMaxChars:     rawTextMaxChars,
 		AllowedContentTypes: allowedContentTypeList(),
+		Upload:              s.upload.snapshot(),
 	}
 }
 

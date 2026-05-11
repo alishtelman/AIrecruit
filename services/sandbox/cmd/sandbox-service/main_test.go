@@ -345,3 +345,58 @@ ORDER BY completed_revenue DESC`
 		t.Fatalf("unexpected checks: %#v", result.ValidationChecks)
 	}
 }
+
+func TestHandleRunPythonRecordsMetrics(t *testing.T) {
+	srv := &server{
+		run: func(ctx context.Context, req runRequest) (runResponse, error) {
+			score := 10.0
+			return runResponse{RunnerScore: &score, RunnerChecks: []runnerCheck{}}, nil
+		},
+	}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/coding/python",
+		strings.NewReader(`{"scenario_id":"rate_limiter_window_counter","language":"python","code":"x=1"}`),
+	)
+	srv.handleRunPython(httptest.NewRecorder(), req)
+
+	snap := srv.python.snapshot()
+	if snap.RequestsTotal != 1 || snap.SuccessTotal != 1 || snap.ErrorTotal != 0 {
+		t.Fatalf("unexpected python metrics: %+v", snap)
+	}
+}
+
+func TestHandleValidateSQLRecordsMetrics(t *testing.T) {
+	srv := &server{
+		validate: func(ctx context.Context, req sqlValidationRequest) (sqlValidationResponse, error) {
+			score := 10.0
+			return sqlValidationResponse{ValidationScore: &score, ValidationChecks: []sqlValidationCheck{}}, nil
+		},
+	}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/sql/validate",
+		strings.NewReader(`{"scenario_id":"customer_revenue_rollup","query":"SELECT 1"}`),
+	)
+	srv.handleValidateSQL(httptest.NewRecorder(), req)
+
+	snap := srv.sql.snapshot()
+	if snap.RequestsTotal != 1 || snap.SuccessTotal != 1 {
+		t.Fatalf("unexpected sql metrics: %+v", snap)
+	}
+}
+
+func TestSandboxStatusIncludesEndpointMetrics(t *testing.T) {
+	srv := &server{pythonBin: "python3"}
+	srv.python.requestsTotal = 5
+	srv.python.successTotal = 4
+	srv.sql.requestsTotal = 2
+
+	status := srv.status()
+	if status.PythonRunner.RequestsTotal != 5 || status.PythonRunner.SuccessTotal != 4 {
+		t.Fatalf("unexpected python_runner metrics in status: %+v", status.PythonRunner)
+	}
+	if status.SQLValidator.RequestsTotal != 2 {
+		t.Fatalf("unexpected sql_validator metrics in status: %+v", status.SQLValidator)
+	}
+}
