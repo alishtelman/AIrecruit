@@ -316,6 +316,229 @@ async def test_company_search_uses_latest_marketplace_report_for_sql_filters(
     assert [item.candidate_id for item in latest_skill_filtered] == [candidate_id]
 
 
+async def _seed_multi_candidate_marketplace(
+    db: AsyncSession,
+) -> tuple[uuid.UUID, list[uuid.UUID]]:
+    """Seed a company + three marketplace candidates for sort/filter parity tests.
+
+    Returns (company_id, [c1_id, c2_id, c3_id]).
+
+    Candidate layout
+    ────────────────
+    c1: salary 80k–100k USD, score 9.0, completed yesterday,   hired
+    c2: salary 50k–70k  USD, score 5.0, completed 2 days ago,  rejected
+    c3: salary 120k–150k USD, score 2.0, completed 3 days ago, no outcome
+    """
+    marker = uuid.uuid4().hex
+    now = datetime.utcnow()
+
+    company_user = User(
+        id=uuid.uuid4(),
+        email=f"co_multi_{marker}@example.com",
+        hashed_password="unused",
+        role="company_admin",
+    )
+    company = Company(
+        id=uuid.uuid4(),
+        owner_user_id=company_user.id,
+        name=f"Multi Parity {marker}",
+    )
+    db.add_all([company_user, company])
+    await db.flush()
+
+    candidate_ids: list[uuid.UUID] = []
+    specs = [
+        # (salary_min, salary_max, score, days_ago, outcome)
+        (80_000, 100_000, 9.0, 1, "hired"),
+        (50_000, 70_000, 5.0, 2, "rejected"),
+        (120_000, 150_000, 2.0, 3, None),
+    ]
+    for salary_min, salary_max, score, days_ago, outcome in specs:
+        cuser = User(
+            id=uuid.uuid4(),
+            email=f"cand_{days_ago}_{marker}@example.com",
+            hashed_password="unused",
+            role="candidate",
+        )
+        candidate = Candidate(
+            id=uuid.uuid4(),
+            user_id=cuser.id,
+            full_name=f"Multi Candidate {days_ago} {marker}",
+            profile_visibility=PROFILE_VISIBILITY_MARKETPLACE,
+            salary_min=salary_min,
+            salary_max=salary_max,
+            salary_currency="USD",
+        )
+        db.add_all([cuser, candidate])
+        await db.flush()
+
+        interview = Interview(
+            id=uuid.uuid4(),
+            candidate_id=candidate.id,
+            status="report_generated",
+            target_role="backend_engineer",
+            completed_at=now - timedelta(days=days_ago),
+        )
+        db.add(interview)
+        await db.flush()
+
+        report = AssessmentReport(
+            id=uuid.uuid4(),
+            interview_id=interview.id,
+            candidate_id=candidate.id,
+            overall_score=score,
+            hard_skills_score=score,
+            soft_skills_score=score,
+            communication_score=score,
+            strengths=[],
+            weaknesses=[],
+            recommendations=[],
+            hiring_recommendation="yes" if score >= 5.0 else "no",
+            interview_summary=f"Score {score} candidate",
+            skill_tags=[],
+            red_flags=[],
+            full_report_json={},
+            model_version="test",
+            created_at=now - timedelta(days=days_ago),
+        )
+        db.add(report)
+        await db.flush()
+
+        if outcome:
+            db.add(
+                HireOutcome(
+                    id=uuid.uuid4(),
+                    company_id=company.id,
+                    candidate_id=candidate.id,
+                    outcome=outcome,
+                )
+            )
+            await db.flush()
+
+        candidate_ids.append(candidate.id)
+
+    return company.id, candidate_ids
+
+
+@pytest.mark.asyncio
+async def test_company_search_salary_range_filter_parity(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Salary range filter (Python path) must exclude out-of-range candidates."""
+    monkeypatch.setattr("app.services.company_service.settings.MARKETPLACE_SERVICE_URL", "")
+    company_id, (c1_id, c2_id, c3_id) = await _seed_multi_candidate_marketplace(db_session)
+
+    # salary_max=90k should include c1 (80–100k overlaps ≤90k) and c2 (50–70k ≤90k)
+    # but exclude c3 (120–150k, low end 120 > 90k)
+    items = await list_verified_candidates(db_session, company_id=company_id, salary_max=90_000)
+    found_ids = {item.candidate_id for item in items}
+    assert c1_id in found_ids, "c1 (80k–100k) should match salary_max=90k"
+    assert c2_id in found_ids, "c2 (50k–70k) should match salary_max=90k"
+    assert c3_id not in found_ids, "c3 (120k–150k) should not match salary_max=90k"
+
+    # salary_min=110k should include only c3 (120–150k high end ≥110k)
+    items = await list_verified_candidates(db_session, company_id=company_id, salary_min=110_000)
+    found_ids = {item.candidate_id for item in items}
+    assert c3_id in found_ids, "c3 (120k–150k) should match salary_min=110k"
+    assert c1_id not in found_ids, "c1 (max 100k) should not match salary_min=110k"
+    assert c2_id not in found_ids, "c2 (max 70k) should not match salary_min=110k"
+
+    # salary_min=60k + salary_max=110k — c1 (80–100k) and c2 (50–70k, high end 70 ≥60) match
+    items = await list_verified_candidates(
+        db_session, company_id=company_id, salary_min=60_000, salary_max=110_000
+    )
+    found_ids = {item.candidate_id for item in items}
+    assert c1_id in found_ids, "c1 should match 60k–110k window"
+    assert c2_id in found_ids, "c2 should match 60k–110k window"
+    assert c3_id not in found_ids, "c3 low end 120k exceeds salary_max=110k"
+
+
+@pytest.mark.asyncio
+async def test_company_search_hire_outcome_filter_parity(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """hire_outcome filter (Python path) must return only candidates with that outcome."""
+    monkeypatch.setattr("app.services.company_service.settings.MARKETPLACE_SERVICE_URL", "")
+    company_id, (c1_id, c2_id, c3_id) = await _seed_multi_candidate_marketplace(db_session)
+
+    hired = await list_verified_candidates(
+        db_session, company_id=company_id, hire_outcome="hired"
+    )
+    hired_ids = {item.candidate_id for item in hired}
+    assert c1_id in hired_ids, "c1 has outcome=hired"
+    assert c2_id not in hired_ids, "c2 has outcome=rejected"
+    assert c3_id not in hired_ids, "c3 has no outcome"
+
+    rejected = await list_verified_candidates(
+        db_session, company_id=company_id, hire_outcome="rejected"
+    )
+    rejected_ids = {item.candidate_id for item in rejected}
+    assert c2_id in rejected_ids, "c2 has outcome=rejected"
+    assert c1_id not in rejected_ids
+    assert c3_id not in rejected_ids
+
+
+@pytest.mark.asyncio
+async def test_company_search_sort_orders_parity(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """All five sort orders (Python path) must produce the correct ranking.
+
+    Seeded candidates by spec:
+      c1: score=9.0, completed yesterday,   salary 80k–100k
+      c2: score=5.0, completed 2 days ago,  salary 50k–70k
+      c3: score=2.0, completed 3 days ago,  salary 120k–150k
+    """
+    monkeypatch.setattr("app.services.company_service.settings.MARKETPLACE_SERVICE_URL", "")
+    company_id, (c1_id, c2_id, c3_id) = await _seed_multi_candidate_marketplace(db_session)
+
+    def ids_for(items) -> list[uuid.UUID]:
+        return [item.candidate_id for item in items if item.candidate_id in {c1_id, c2_id, c3_id}]
+
+    # score_desc: c1 (9.0) → c2 (5.0) → c3 (2.0)
+    score_desc = ids_for(
+        await list_verified_candidates(db_session, company_id=company_id, sort="score_desc")
+    )
+    assert score_desc.index(c1_id) < score_desc.index(c2_id) < score_desc.index(c3_id), (
+        f"score_desc order wrong: {score_desc}"
+    )
+
+    # score_asc: c3 (2.0) → c2 (5.0) → c1 (9.0)
+    score_asc = ids_for(
+        await list_verified_candidates(db_session, company_id=company_id, sort="score_asc")
+    )
+    assert score_asc.index(c3_id) < score_asc.index(c2_id) < score_asc.index(c1_id), (
+        f"score_asc order wrong: {score_asc}"
+    )
+
+    # latest: c1 (yesterday) → c2 (2 days ago) → c3 (3 days ago)
+    latest = ids_for(
+        await list_verified_candidates(db_session, company_id=company_id, sort="latest")
+    )
+    assert latest.index(c1_id) < latest.index(c2_id) < latest.index(c3_id), (
+        f"latest order wrong: {latest}"
+    )
+
+    # salary_asc: c2 (50k min) → c1 (80k min) → c3 (120k min)
+    salary_asc = ids_for(
+        await list_verified_candidates(db_session, company_id=company_id, sort="salary_asc")
+    )
+    assert salary_asc.index(c2_id) < salary_asc.index(c1_id) < salary_asc.index(c3_id), (
+        f"salary_asc order wrong: {salary_asc}"
+    )
+
+    # salary_desc: c3 (max 150k) → c1 (max 100k) → c2 (max 70k)
+    salary_desc = ids_for(
+        await list_verified_candidates(db_session, company_id=company_id, sort="salary_desc")
+    )
+    assert salary_desc.index(c3_id) < salary_desc.index(c1_id) < salary_desc.index(c2_id), (
+        f"salary_desc order wrong: {salary_desc}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_company_analytics_include_shortlists_funnel_and_salary(
     client: AsyncClient,
