@@ -302,8 +302,23 @@ Current state:
   behind `MARKETPLACE_SERVICE_URL`: latest report `skill_tags` are used first, and `candidate_skills`
   fill the response only when the latest report has no tags.
 
-If continuing this area, expand parity tests across salary, shortlist, hire outcome, sort orders, and
-candidate access behavior before removing the Python fallback.
+**Phase 3 parity tests added (2026-05-11):**
+
+- `test_company_search_salary_range_filter_parity` — verifies `salary_min`/`salary_max` coalesce-based
+  overlap semantics against three candidates with distinct salary bands.
+- `test_company_search_hire_outcome_filter_parity` — verifies `hire_outcome` filter
+  (hired / rejected / absent) against seeded `HireOutcome` rows.
+- `test_company_search_sort_orders_parity` — verifies all five sort orders (`score_desc`, `score_asc`,
+  `latest`, `salary_asc`, `salary_desc`) produce the correct relative ordering for known data.
+
+All three tests use `monkeypatch` to force the Python path, establishing ground truth before Go becomes
+the primary path. The marketplace Go service (`services/marketplace`) already handles skills SQL-push
+and the row limit (`maxMarketplaceRows = 500`). Remaining Phase 3 steps:
+
+1. Verify the Go `buildMarketplaceQuery` produces equivalent results for salary/hire_outcome on the
+   same seed data (SQL parity test against Go service directly).
+2. Remove the Python fallback once parity is confirmed and the Go service has been load-tested.
+3. Document migration ownership: Go owns the read query; Alembic/Python still owns the schema.
 
 ## Local Development Notes
 
@@ -410,11 +425,19 @@ BT (Codex Resume Smoke) Tj ET
 
 ## Recommended Next Slices
 
-1. Finish Phase 1 by expanding `services/sandbox` with remaining deterministic Python-compatible runners only when each scenario has a clear function contract and parity tests.
-2. Harden `services/llm` into a Phase 2 internal API: provider status endpoint, structured-output adapter tests, and retry/timeout execution in Go.
-3. Harden `services/report-worker`: backlog visibility, dry-run/safety guard, and external worker mode validation before making it default.
-4. Expand marketplace/search parity and move remaining company marketplace read endpoints behind Go.
-5. Only migrate AI interviewer/assessor/report shaping after golden transcript-to-report parity exists.
+1. **Phase 3 — Marketplace Go parity SQL tests**: write direct Go tests (or a test harness against the
+   Go service) to verify `salary_min`/`salary_max` and `hire_outcome` SQL filtering matches the Python
+   ground truth established by the new parity tests.
+2. **Phase 3 — Remove Python fallback for marketplace search**: once parity is confirmed, flip
+   `MARKETPLACE_SERVICE_URL` to non-optional and delete `_load_marketplace_snapshot` in
+   `company_service.py`. Gate behind a feature flag or deploy step.
+3. **Phase 3 — Report queue read model**: confirm Go worker owns queue state (backlog counter, oldest
+   pending tracking). Idempotency and backoff are done; next step is Go-owned `/v1/status` as the
+   source of truth for admin queue views.
+4. **Phase 2 — Expand sandbox**: add remaining deterministic Python-compatible runners only when each
+   has a clear function contract and parity tests.
+5. **Phase 4 — AI/Assessment Core**: only after golden transcript-to-report parity fixtures exist for
+   representative roles, modules, and provider outputs.
 
 ## Do Not Do
 
