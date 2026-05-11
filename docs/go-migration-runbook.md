@@ -460,12 +460,32 @@ BT (Codex Resume Smoke) Tj ET
   http://localhost:8083/v1/resumes
 ```
 
+## Migration Status (as of 2026-05-11)
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| Phase 1 | Sidecars behind FastAPI (media, resume, sandbox, llm, marketplace, report-worker) | ✅ complete |
+| Phase 2 | Go-owned internal contracts, observability, hardening | ✅ complete |
+| Phase 3 | Data-bound Go services (marketplace read model, report queue) | ✅ complete |
+| Phase 4 | AI/assessment core (interviewer, assessor, report shaping) | ⬜ blocked on golden transcript fixtures |
+| Phase 5 | FastAPI gateway removal | ⬜ blocked on Phase 4 |
+
+**Phase 2 sandbox note:** All Python-runnable coding scenarios (rate_limiter_window_counter,
+feature_freshness_monitor, flaky_test_classifier, deployment_rollout_guard) and all SQL live
+validation scenarios (customer_revenue_rollup, signup_funnel_rollup, incident_error_budget_audit)
+are fully ported to Go with parity tests. Non-Python scenarios (async_search_state_manager /
+TypeScript, offline_sync_queue / Kotlin, design_token_transformer / JavaScript, etc.) have no
+function contract that can be executed in a Python sandbox — they are assessed by the AI interviewer
+only and are not sandbox candidates.
+
 ## Recommended Next Slices
 
-1. **Phase 2 — Expand sandbox**: add remaining deterministic Python-compatible runners (each needs a
-   function contract and parity test before adding to the Go service).
-2. **Phase 4 — AI/Assessment Core**: only after golden transcript-to-report parity fixtures exist for
-   representative roles, modules, and provider outputs.
+1. **Phase 4 — Golden transcript fixtures**: create representative transcript→report fixture pairs
+   for backend_engineer, data_scientist, qa_engineer, and devops_engineer roles before any Go port
+   of the AI assessment chain. Each fixture should cover a main interview, at least one followup
+   question, and the final report payload.
+2. **Phase 4 — AI/Assessment Core**: only start after golden fixtures are in place and a parity
+   test harness can diff Go vs Python report sections deterministically.
 
 ## Do Not Do
 
