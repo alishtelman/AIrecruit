@@ -41,6 +41,7 @@ services:
       LLM_SERVICE_URL: http://llm-service:8080
       MARKETPLACE_SERVICE_URL: http://marketplace-service:8080
       REPORT_WORKER_MODE: ${REPORT_WORKER_MODE:-embedded}
+      REPORT_WORKER_HEALTH_URL: ${REPORT_WORKER_HEALTH_URL:-}
       INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN:-dev-internal-worker-token}
     volumes:
       - ./backend:/app

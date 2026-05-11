@@ -3985,7 +3985,42 @@ def _report_worker_pending_where():
     )
 
 
+async def _fetch_report_worker_health() -> dict[str, Any] | None:
+    """Fetch the Go report-worker /health payload.
+
+    Returns None on any error so callers can silently degrade — the Go
+    operational state is a nice-to-have overlay on top of the authoritative
+    DB queue state.
+    """
+    base_url = str(settings.REPORT_WORKER_HEALTH_URL or "").strip().rstrip("/")
+    if not base_url:
+        return None
+    try:
+        async with httpx.AsyncClient(base_url=base_url, timeout=3.0) as client:
+            response = await client.get("/health")
+        if not response.is_success:
+            logger.warning("Report-worker health returned HTTP %s", response.status_code)
+            return None
+        data = response.json()
+        if not isinstance(data, dict):
+            logger.warning("Report-worker health returned invalid payload")
+            return None
+        return data
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("Report-worker health unavailable: %s", exc)
+        return None
+
+
 async def get_external_report_worker_status() -> dict[str, Any]:
+    """Return a merged view of the report-worker queue state.
+
+    The DB is always queried for authoritative queue metrics (pending_count,
+    next_interview_id, oldest_pending_updated_at).  When REPORT_WORKER_HEALTH_URL
+    is set the Go worker's /health payload is fetched and merged in so that
+    operational telemetry (backoff state, error counts, tick timing) is also
+    visible.  If the Go worker is unreachable the endpoint still returns a
+    complete DB-backed payload with a warning log.
+    """
     async with AsyncSessionLocal() as session:
         pending_count = await session.scalar(
             select(func.count())
@@ -4005,13 +4040,35 @@ async def get_external_report_worker_status() -> dict[str, Any]:
 
     next_interview_id = str(next_item[0]) if next_item else None
     oldest_pending_updated_at = next_item[1].isoformat() if next_item and next_item[1] else None
-    return {
+    db_status: dict[str, Any] = {
         "pending_count": int(pending_count or 0),
         "next_interview_id": next_interview_id,
         "oldest_pending_updated_at": oldest_pending_updated_at,
         "worker_mode": settings.REPORT_WORKER_MODE.strip().lower(),
         "max_auto_retries": _report_max_auto_retries(),
     }
+
+    go_health = await _fetch_report_worker_health()
+    if go_health:
+        # Merge Go operational fields; DB fields (pending_count etc.) take precedence.
+        _GO_OPERATIONAL_KEYS = {
+            "started_at",
+            "last_tick_at",
+            "last_success_at",
+            "last_processed_at",
+            "last_interview_id",
+            "last_candidate_interview_id",
+            "processed_total",
+            "error_total",
+            "last_error",
+            "consecutive_errors",
+            "backoff_until",
+            "dry_run",
+            "max_jobs_per_cycle",
+        }
+        db_status["go_worker"] = {k: go_health[k] for k in _GO_OPERATIONAL_KEYS if k in go_health}
+
+    return db_status
 
 
 async def run_next_external_report_generation_job(*, dry_run: bool = False) -> dict[str, Any]:

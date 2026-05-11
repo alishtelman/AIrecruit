@@ -158,7 +158,18 @@ Health endpoint:
 GET /health
 ```
 
-The health payload includes startup time, dry-run mode, max jobs per cycle, last tick time, last successful tick, last candidate interview id, last processed interview id, pending count, processed/error counters, and last error.
+The health payload includes startup time, dry-run mode, max jobs per cycle, last tick time, last
+successful tick, last candidate interview id, last processed interview id, pending count,
+processed/error counters, last error, consecutive errors, and backoff state.
+
+When `REPORT_WORKER_HEALTH_URL` is set in the backend, `GET /api/v1/internal/report-worker/status`
+fetches `/health` from the Go worker and merges the operational fields into the response under a
+`go_worker` key.  The DB-authoritative queue fields (`pending_count`, `next_interview_id`,
+`oldest_pending_updated_at`) always come from a fresh DB query and take precedence.  If the Go
+worker is unreachable the endpoint degrades gracefully to the pure DB status with a warning log.
+
+Docker Compose sets `REPORT_WORKER_HEALTH_URL=${REPORT_WORKER_HEALTH_URL:-}` so it is opt-in;
+set it to `http://report-worker:8080` when running with `--profile workers`.
 
 ### `services/sandbox`
 
@@ -256,6 +267,12 @@ Important env vars:
 - `LLM_SERVICE_URL`: when set in backend, LLM provider HTTP calls proxy to `services/llm`; direct Python adapters remain as an availability fallback.
 - `MARKETPLACE_SERVICE_URL`: when set in backend, company marketplace candidate search proxies to `services/marketplace`; Python query path remains as a fallback.
 - `REPORT_WORKER_MODE`: `embedded` keeps old `asyncio.create_task`; `external` lets the Go worker poll.
+- `REPORT_WORKER_HEALTH_URL`: when set in backend, `GET /api/v1/internal/report-worker/status` fetches
+  the Go worker's `/health` and merges operational fields (`started_at`, `last_tick_at`,
+  `consecutive_errors`, `backoff_until`, `processed_total`, `error_total`, etc.) into the response
+  under a `go_worker` key.  The DB queue state (`pending_count`, `next_interview_id`) always comes
+  from the authoritative DB query.  If the Go worker is unreachable the endpoint still returns a
+  complete DB-backed response with a warning log.
 - `INTERNAL_WORKER_TOKEN`: required for the internal report-worker endpoint.
 - `REPORT_WORKER_INTERVAL_SECONDS`: Go worker idle polling interval.
 - `REPORT_WORKER_REQUEST_TIMEOUT_SECONDS`: request timeout for a report-worker tick.
@@ -351,8 +368,10 @@ docker compose up -d backend media-service resume-service sandbox-service llm-se
 To explicitly test the Go report worker, start with dry-run mode so backlog visibility does not trigger Groq calls:
 
 ```bash
-REPORT_WORKER_MODE=external REPORT_WORKER_DRY_RUN=true docker compose --profile workers up -d backend report-worker
+REPORT_WORKER_MODE=external REPORT_WORKER_DRY_RUN=true REPORT_WORKER_HEALTH_URL=http://report-worker:8080 docker compose --profile workers up -d backend report-worker
+# Python-side status (includes merged go_worker block when REPORT_WORKER_HEALTH_URL is set):
 curl -fsS -H "X-Internal-Worker-Token: dev-internal-worker-token" http://localhost:8001/api/v1/internal/report-worker/status
+# Go worker native health (direct):
 docker compose exec -T report-worker wget -qO- http://127.0.0.1:8080/health
 ```
 
@@ -443,12 +462,9 @@ BT (Codex Resume Smoke) Tj ET
 
 ## Recommended Next Slices
 
-1. **Phase 3 — Report queue read model**: Go worker owns backlog visibility (`oldest_pending`,
-   consecutive error tracking, backoff state). Next: make Go `/health` the canonical admin queue
-   status source; document removal readiness for the embedded Python asyncio path.
-2. **Phase 2 — Expand sandbox**: add remaining deterministic Python-compatible runners (each needs a
+1. **Phase 2 — Expand sandbox**: add remaining deterministic Python-compatible runners (each needs a
    function contract and parity test before adding to the Go service).
-3. **Phase 4 — AI/Assessment Core**: only after golden transcript-to-report parity fixtures exist for
+2. **Phase 4 — AI/Assessment Core**: only after golden transcript-to-report parity fixtures exist for
    representative roles, modules, and provider outputs.
 
 ## Do Not Do
