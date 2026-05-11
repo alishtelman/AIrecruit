@@ -323,13 +323,20 @@ Current state:
 - `TestBuildMarketplaceQuerySalaryAndHireOutcomeCombined` — combined filter arg-count sanity check.
 
 Go SQL parity for the marketplace service is now complete. The Go `buildMarketplaceQuery` matches
-Python semantics for all supported filters and sort orders. **Remaining Phase 3 step:** remove the
-Python fallback after load-test confirmation. To do this:
+Python semantics for all supported filters and sort orders.
 
-1. Set `MARKETPLACE_SERVICE_URL` unconditionally in Compose and confirm behavior in staging.
-2. Delete `_load_marketplace_snapshot` and the fallback branch in `company_service.py`.
-3. Update `test_marketplace_service_proxy.py` to assert the Go path is always used.
-4. Keep schema ownership with Alembic/Python; Go is read-only on the marketplace tables.
+**Phase 3 fallback removal complete (2026-05-11):**
+
+- `_load_marketplace_snapshot_with_marketplace_service` removed; Go call is now inlined directly
+  in `list_verified_candidates` with hard-error semantics.
+- When `MARKETPLACE_SERVICE_URL` is set and the Go service fails (unreachable, non-2xx, invalid
+  payload), `list_verified_candidates` raises `HTTP 503` immediately — no silent Python fallback.
+- When `MARKETPLACE_SERVICE_URL` is not set (local dev without the sidecar), the Python path
+  (`_load_marketplace_snapshot` + `_apply_candidate_filters`) is still used so local development
+  remains functional without the Go sidecar.
+- `test_marketplace_service_proxy.py` updated: old silent-fallback test replaced by two 503 tests
+  (connect error, bad response) and one "Python path when URL not configured" test.
+- Schema ownership stays with Alembic/Python; Go is read-only on the marketplace tables.
 
 ## Local Development Notes
 
@@ -436,15 +443,12 @@ BT (Codex Resume Smoke) Tj ET
 
 ## Recommended Next Slices
 
-1. **Phase 3 — Remove Python fallback for marketplace search**: Go SQL parity is confirmed. Next:
-   load-test `services/marketplace` → flip `MARKETPLACE_SERVICE_URL` to unconditional in Compose →
-   delete `_load_marketplace_snapshot` in `company_service.py` → update proxy tests.
-2. **Phase 3 — Report queue read model**: Go worker owns backlog visibility (`oldest_pending`,
+1. **Phase 3 — Report queue read model**: Go worker owns backlog visibility (`oldest_pending`,
    consecutive error tracking, backoff state). Next: make Go `/health` the canonical admin queue
    status source; document removal readiness for the embedded Python asyncio path.
-3. **Phase 2 — Expand sandbox**: add remaining deterministic Python-compatible runners (each needs a
+2. **Phase 2 — Expand sandbox**: add remaining deterministic Python-compatible runners (each needs a
    function contract and parity test before adding to the Go service).
-4. **Phase 4 — AI/Assessment Core**: only after golden transcript-to-report parity fixtures exist for
+3. **Phase 4 — AI/Assessment Core**: only after golden transcript-to-report parity fixtures exist for
    representative roles, modules, and provider outputs.
 
 ## Do Not Do
