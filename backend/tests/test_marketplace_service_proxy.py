@@ -3,6 +3,7 @@ from datetime import datetime
 
 import httpx
 import pytest
+from fastapi import HTTPException
 
 from app.schemas.company import CandidateListItemResponse
 from app.services import company_service
@@ -65,7 +66,6 @@ async def test_list_verified_candidates_uses_marketplace_service(monkeypatch):
 
     monkeypatch.setattr("app.services.company_service.settings.MARKETPLACE_SERVICE_URL", "http://marketplace-service:8080")
     monkeypatch.setattr("app.services.company_service.httpx.AsyncClient", _FakeClient)
-    monkeypatch.setattr("app.services.company_service._load_marketplace_snapshot", _unexpected_python_snapshot)
 
     result = await company_service.list_verified_candidates(
         None,  # type: ignore[arg-type]
@@ -88,9 +88,9 @@ async def test_list_verified_candidates_uses_marketplace_service(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_list_verified_candidates_falls_back_when_marketplace_service_unavailable(monkeypatch):
-    candidate_id = uuid.uuid4()
-    report_id = uuid.uuid4()
+async def test_list_verified_candidates_raises_503_when_marketplace_service_unavailable(monkeypatch):
+    """When MARKETPLACE_SERVICE_URL is set but the Go service is unreachable,
+    list_verified_candidates must raise HTTP 503 — no silent Python fallback."""
 
     class _FakeClient:
         def __init__(self, *args, **kwargs):
@@ -105,11 +105,64 @@ async def test_list_verified_candidates_falls_back_when_marketplace_service_unav
         async def post(self, path, *, json):  # noqa: A002, ANN001
             raise httpx.ConnectError("unavailable")
 
-    async def _fake_python_snapshot(*args, **kwargs):  # noqa: ANN002, ANN003
-        return [CandidateListItemResponse.model_validate(_candidate_payload(candidate_id, report_id))]
+    monkeypatch.setattr("app.services.company_service.settings.MARKETPLACE_SERVICE_URL", "http://marketplace-service:8080")
+    monkeypatch.setattr("app.services.company_service.httpx.AsyncClient", _FakeClient)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await company_service.list_verified_candidates(
+            None,  # type: ignore[arg-type]
+            company_id=uuid.uuid4(),
+        )
+
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_list_verified_candidates_raises_503_on_bad_go_response(monkeypatch):
+    """When Go returns a non-2xx status the service raises 503, not a silent fallback."""
+
+    class _BadResponse:
+        is_success = False
+        status_code = 502
+
+        def json(self):  # pragma: no cover
+            return {}
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, path, *, json):  # noqa: A002, ANN001
+            return _BadResponse()
 
     monkeypatch.setattr("app.services.company_service.settings.MARKETPLACE_SERVICE_URL", "http://marketplace-service:8080")
     monkeypatch.setattr("app.services.company_service.httpx.AsyncClient", _FakeClient)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await company_service.list_verified_candidates(
+            None,  # type: ignore[arg-type]
+            company_id=uuid.uuid4(),
+        )
+
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_list_verified_candidates_uses_python_path_when_service_url_not_configured(monkeypatch):
+    """When MARKETPLACE_SERVICE_URL is empty, the Python query path is used (local dev mode)."""
+    candidate_id = uuid.uuid4()
+    report_id = uuid.uuid4()
+
+    async def _fake_python_snapshot(*args, **kwargs):  # noqa: ANN002, ANN003
+        return [CandidateListItemResponse.model_validate(_candidate_payload(candidate_id, report_id))]
+
+    monkeypatch.setattr("app.services.company_service.settings.MARKETPLACE_SERVICE_URL", "")
     monkeypatch.setattr("app.services.company_service._load_marketplace_snapshot", _fake_python_snapshot)
 
     result = await company_service.list_verified_candidates(

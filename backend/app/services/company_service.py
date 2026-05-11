@@ -393,53 +393,6 @@ def _apply_candidate_filters(
     return filtered
 
 
-async def _load_marketplace_snapshot_with_marketplace_service(
-    *,
-    company_id: uuid.UUID,
-    q: str | None = None,
-    role: str | None = None,
-    skills: list[str] | None = None,
-    min_score: float | None = None,
-    recommendation: str | None = None,
-    salary_min: int | None = None,
-    salary_max: int | None = None,
-    hire_outcome: str | None = None,
-    shortlist_id: uuid.UUID | None = None,
-    sort: str = "score_desc",
-) -> list[CandidateListItemResponse] | None:
-    base_url = str(settings.MARKETPLACE_SERVICE_URL or "").strip().rstrip("/")
-    if not base_url:
-        return None
-
-    payload = {
-        "company_id": str(company_id),
-        "q": q,
-        "role": role,
-        "skills": skills or [],
-        "min_score": min_score,
-        "recommendation": recommendation,
-        "salary_min": salary_min,
-        "salary_max": salary_max,
-        "hire_outcome": hire_outcome,
-        "shortlist_id": str(shortlist_id) if shortlist_id else None,
-        "sort": sort,
-    }
-    try:
-        async with httpx.AsyncClient(base_url=base_url, timeout=10.0) as client:
-            response = await client.post("/v1/company-candidates/search", json=payload)
-        if not response.is_success:
-            logger.warning("Marketplace service returned HTTP %s; using Python fallback", response.status_code)
-            return None
-        data = response.json()
-        if not isinstance(data, list):
-            logger.warning("Marketplace service returned invalid payload; using Python fallback")
-            return None
-        return [CandidateListItemResponse.model_validate(item) for item in data]
-    except (httpx.HTTPError, ValueError, ValidationError) as exc:
-        logger.warning("Marketplace service unavailable; using Python fallback: %s", exc)
-        return None
-
-
 async def list_verified_candidates(
     db: AsyncSession,
     company_id: uuid.UUID,
@@ -455,22 +408,63 @@ async def list_verified_candidates(
     shortlist_id: uuid.UUID | None = None,
     sort: str = "score_desc",
 ) -> list[CandidateListItemResponse]:
-    proxied = await _load_marketplace_snapshot_with_marketplace_service(
-        company_id=company_id,
-        q=q,
-        role=role,
-        skills=skills,
-        min_score=min_score,
-        recommendation=recommendation,
-        salary_min=salary_min,
-        salary_max=salary_max,
-        hire_outcome=hire_outcome,
-        shortlist_id=shortlist_id,
-        sort=sort,
-    )
-    if proxied is not None:
-        return proxied
+    """Return verified marketplace candidates.
 
+    When MARKETPLACE_SERVICE_URL is configured the Go marketplace service is the
+    authoritative source.  If the Go service is reachable but returns an error
+    response or an invalid payload the call raises immediately — there is no
+    silent fallback.  This surfaces Go-service health problems instead of
+    masking them behind stale Python results.
+
+    When MARKETPLACE_SERVICE_URL is not configured (e.g. local development
+    without the sidecar) the function falls back to the Python query path so
+    that the rest of the platform remains usable.
+    """
+    from fastapi import HTTPException, status as http_status  # local import to keep service layer thin
+
+    base_url = str(settings.MARKETPLACE_SERVICE_URL or "").strip().rstrip("/")
+    if base_url:
+        payload = {
+            "company_id": str(company_id),
+            "q": q,
+            "role": role,
+            "skills": skills or [],
+            "min_score": min_score,
+            "recommendation": recommendation,
+            "salary_min": salary_min,
+            "salary_max": salary_max,
+            "hire_outcome": hire_outcome,
+            "shortlist_id": str(shortlist_id) if shortlist_id else None,
+            "sort": sort,
+        }
+        try:
+            async with httpx.AsyncClient(base_url=base_url, timeout=10.0) as client:
+                response = await client.post("/v1/company-candidates/search", json=payload)
+            if not response.is_success:
+                logger.error(
+                    "Marketplace service returned HTTP %s — no fallback available",
+                    response.status_code,
+                )
+                raise HTTPException(
+                    status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Marketplace service unavailable",
+                )
+            data = response.json()
+            if not isinstance(data, list):
+                logger.error("Marketplace service returned invalid payload — no fallback available")
+                raise HTTPException(
+                    status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Marketplace service returned an invalid response",
+                )
+            return [CandidateListItemResponse.model_validate(item) for item in data]
+        except (httpx.HTTPError, ValueError, ValidationError) as exc:
+            logger.error("Marketplace service unavailable — no fallback: %s", exc)
+            raise HTTPException(
+                status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Marketplace service unavailable",
+            ) from exc
+
+    # MARKETPLACE_SERVICE_URL not configured — Python path for local development.
     items = await _load_marketplace_snapshot(
         db,
         company_id,
