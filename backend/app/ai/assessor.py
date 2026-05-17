@@ -14,6 +14,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import httpx
 import tempfile
 import textwrap
 from dataclasses import dataclass, field
@@ -5931,6 +5932,51 @@ class LLMAssessor:
         model_override: str | None = None,
         runtime_settings: dict | None = None,
     ) -> AssessmentResult:
+        # Try running assessment on Go service first
+        assessment_service_url = os.getenv("ASSESSMENT_SERVICE_URL", "http://assessment-service:8080")
+        try:
+            logger.info("Attempting assessment via Go assessment-service...")
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                resp = await client.post(
+                    f"{assessment_service_url}/v1/assess",
+                    json={
+                        "target_role": target_role,
+                        "message_history": message_history,
+                        "language": language,
+                        "model_override": model_override,
+                        "runtime_settings": runtime_settings or {},
+                    }
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    logger.info("Go assessment-service returned successful evaluation!")
+                    
+                    # Construct AssessmentResult from Go data
+                    go_res = AssessmentResult(
+                        overall_score=data["overall_score"],
+                        hard_skills_score=data["hard_skills_score"],
+                        soft_skills_score=data["soft_skills_score"],
+                        communication_score=data["communication_score"],
+                        strengths=data.get("strengths") or [],
+                        weaknesses=data.get("weaknesses") or [],
+                        recommendations=data.get("recommendations") or [],
+                        hiring_recommendation=data["hiring_recommendation"],
+                        interview_summary=data.get("interview_summary"),
+                        model_version=data.get("model_version", "deepseek/deepseek-chat"),
+                        competency_scores=data.get("competency_scores") or [],
+                        per_question_analysis=data.get("per_question_analysis") or [],
+                        skill_tags=data.get("skill_tags") or [],
+                        red_flags=data.get("red_flags") or [],
+                        response_consistency=data.get("response_consistency"),
+                        problem_solving_score=data.get("problem_solving_score"),
+                        full_report_json=data
+                    )
+                    return go_res
+                else:
+                    logger.warning(f"Go assessment-service returned status {resp.status_code}, falling back to Python assessor")
+        except Exception as e:
+            logger.exception(f"Go assessment-service failed: {e}. Falling back to Python assessor.")
+
         report_language = _normalized_report_language(language)
         role_label = _role_label(target_role, report_language)
         competencies = get_competencies(target_role)

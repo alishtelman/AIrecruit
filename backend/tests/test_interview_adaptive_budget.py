@@ -23,9 +23,8 @@ from app.services.interview_service import (
     _read_report_diagnostics,
     _find_next_unasked_technical_topic_index,
     _role_core_coverage_requirements,
-    _role_diversified_reframe_question,
+    
     _resolve_next_topic_index,
-    _sanitize_chat_question,
     _topic_signature_key,
     _topic_guard_decision,
     classify_candidate_intent_v2,
@@ -222,36 +221,6 @@ def test_noise_or_nonsense_answer_detects_repetitive_input():
         "Я использовал PostgreSQL в production и оптимизировал индексы под реальную нагрузку."
     )
 
-
-def test_sanitize_chat_question_keeps_single_short_question():
-    sanitized = _sanitize_chat_question(
-        "Я понимаю ваш ответ. Это важно. Расскажите, как вы проектировали API и обрабатывали ошибки, "
-        "и как строили авторизацию, кэширование и деплой в одном сервисе?",
-        language="ru",
-    )
-
-    assert sanitized is not None
-    assert sanitized.endswith("?")
-    assert len(sanitized.split()) <= 28
-
-
-def test_sanitize_chat_question_rewrites_ambiguous_short_pronoun_prompt():
-    sanitized = _sanitize_chat_question("как вы их решали?", language="ru")
-
-    assert sanitized is not None
-    assert sanitized.endswith("?")
-    assert "ваша роль" in sanitized.lower()
-    assert "ваши шаги" in sanitized.lower()
-
-
-def test_sanitize_chat_question_rewrites_single_word_ambiguous_prompt():
-    sanitized = _sanitize_chat_question("кого?", language="ru")
-
-    assert sanitized is not None
-    assert sanitized.endswith("?")
-    assert "измеримый результат" in sanitized.lower()
-
-
 def test_clarification_request_detection_handles_short_reask_variants():
     assert _is_clarification_request("не понял")
     assert _is_clarification_request("что именно имеете в виду?")
@@ -265,18 +234,6 @@ def test_move_on_request_detection_handles_already_answered_signal():
     assert _is_move_on_request("Я уже писал выше, давайте следующий вопрос")
     assert _is_move_on_request("I already answered this, next question")
     assert not _is_move_on_request("Давайте разберем это подробнее по шагам")
-
-
-def test_role_diversified_reframe_question_returns_qa_specific_case():
-    question = _role_diversified_reframe_question(
-        role="qa_engineer",
-        competency="API & Performance Testing",
-        language="ru",
-    )
-
-    normalized = question.lower()
-    assert "api" in normalized
-    assert "endpoint" in normalized or "сценари" in normalized
 
 
 def test_append_candidate_memory_keeps_honest_short_gap():

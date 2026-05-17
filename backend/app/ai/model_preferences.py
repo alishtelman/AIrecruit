@@ -5,11 +5,27 @@ from app.core.config import settings
 DEFAULT_LLM_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat-v3-0324:free"
 
+DEFAULT_LLM_MAX_RETRIES = 3
+DEFAULT_LLM_TIMEOUT_SECONDS = 30.0
+
+DEFAULT_LLM_PROVIDER = "groq"
 DEFAULT_LLM_MODELS_BY_PROVIDER = {
     "groq": DEFAULT_LLM_MODEL,
     "openai": "gpt-4.1-mini",
     "anthropic": "claude-sonnet-4-20250514",
     "openrouter": "openrouter/free",
+}
+
+ALLOWED_LLM_MODELS_BY_PROVIDER = {
+    "groq": (
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "mixtral-8x7b-32768",
+        "gemma2-9b-it",
+    ),
+    "openai": ("gpt-4.1-mini", "gpt-4.1"),
+    "anthropic": ("claude-sonnet-4-20250514", "claude-haiku-4-20250514"),
+    "openrouter": (),
 }
 
 ALLOWED_LLM_MODELS = set(ALLOWED_LLM_MODELS_BY_PROVIDER["groq"])

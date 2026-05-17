@@ -126,13 +126,7 @@ _RESUME_DEEP_DIVE_MAX_SCORED_TURNS = 4
 
 
 def _is_interview_engine_v2_enabled(*, role: str | None = None) -> bool:
-    if settings.interview_engine_version != "v2":
-        return False
-    v2_roles = settings.interview_engine_v2_roles
-    if not v2_roles:
-        return True
-    normalized_role = str(role or "").strip().lower()
-    return normalized_role in v2_roles
+    return True
 
 
 def _default_interview_state_v2(
@@ -4440,85 +4434,6 @@ def _apply_v2_question_guardrails(
     return adjusted
 
 
-def _role_diversified_reframe_question(
-    *,
-    role: str,
-    competency: str,
-    language: str,
-) -> str:
-    competency_key = competency.lower()
-    if role == "qa_engineer":
-        if "test strategy" in competency_key:
-            return (
-                "Разберём конкретный QA-кейс: новая фича оплаты. Какие 3 проверки вы берёте в smoke и почему?"
-                if language != "en"
-                else "Let's use a concrete QA case: new checkout feature. Which 3 checks go to smoke first, and why?"
-            )
-        if "test automation" in competency_key:
-            return (
-                "Возьмём один автотест из практики: что именно автоматизировали, какой риск закрыли и как проверили стабильность?"
-                if language != "en"
-                else "Take one real automation test: what exactly did you automate, what risk did it close, and how did you validate stability?"
-            )
-        if "api & performance" in competency_key:
-            return (
-                "Один API-кейс: какой endpoint тестировали, какие негативные сценарии и какой критерий успеха использовали?"
-                if language != "en"
-                else "One API case: which endpoint did you test, what negative scenarios did you include, and what success criterion did you use?"
-            )
-        if "root cause" in competency_key:
-            return (
-                "Один дефект из продакшна: шаги воспроизведения, где нашли первопричину и чем подтвердили фикс?"
-                if language != "en"
-                else "One production defect: reproduction steps, where root cause was found, and how the fix was validated?"
-            )
-    if role == "backend_engineer":
-        return (
-            "Окей, давайте на конкретном backend-кейсе: API вернул 500 под нагрузкой. Какие 2 первых проверки сделаете и почему?"
-            if language != "en"
-            else "Okay, take a concrete backend case: API returns 500 under load. What are your first 2 checks and why?"
-        )
-    if role == "frontend_engineer":
-        return (
-            "Окей, конкретный frontend-кейс: после релиза часть пользователей видит пустой экран. Что проверите первым?"
-            if language != "en"
-            else "Okay, concrete frontend case: after release some users see a blank screen. What do you check first?"
-        )
-    if role == "devops_engineer":
-        return (
-            "Окей, конкретный DevOps-кейс: pod ушёл в CrashLoopBackOff. Какие сигналы и где проверите сначала?"
-            if language != "en"
-            else "Okay, concrete DevOps case: a pod enters CrashLoopBackOff. Which signals and where do you check first?"
-        )
-    if role == "data_scientist":
-        return (
-            "Окей, конкретный DS-кейс: модель просела на проде. Какие 2 гипотезы проверите первыми?"
-            if language != "en"
-            else "Okay, concrete DS case: model quality dropped in production. Which 2 hypotheses do you test first?"
-        )
-    if role == "product_manager":
-        return (
-            "Окей, конкретный PM-кейс: после релиза просела ключевая метрика. Что проверите первым и почему?"
-            if language != "en"
-            else "Okay, concrete PM case: key metric dropped after release. What do you check first and why?"
-        )
-    if role in {"designer", "ux_ui_designer"}:
-        return (
-            "Окей, конкретный UX/UI-кейс: пользователи не завершают onboarding. Какие 2 проверки сделаете в первую очередь?"
-            if language != "en"
-            else "Okay, concrete UX/UI case: users do not complete onboarding. What are your first 2 checks?"
-        )
-    if role == "mobile_engineer":
-        return (
-            "Окей, конкретный mobile-кейс: crash только на части Android-устройств. Что проверите первым?"
-            if language != "en"
-            else "Okay, concrete mobile case: crash happens only on some Android devices. What do you check first?"
-        )
-    return (
-        "Окей, давайте на одном конкретном рабочем примере: что произошло и что вы сделали первым шагом?"
-        if language != "en"
-        else "Okay, let's use one concrete work example: what happened and what was your first action?"
-    )
 
 
 _TOPIC_SIGNAL_WEIGHTS = {
@@ -4819,278 +4734,6 @@ def _select_next_topic_index_decision(
     return min(max(current_topic_index + 1, 0), len(topic_plan) - 1)
 
 
-def _select_next_question_decision(
-    *,
-    interview_state: dict[str, Any],
-    last_answer_evaluation: dict[str, Any],
-    covered_topics: list[str],
-    weak_topics: list[str],
-    role_question_banks: list[dict],
-    scenario_chains: list[dict],
-    topic_plan: list[dict],
-    current_topic_index: int,
-    asked_topics: list[str],
-    asked_question_texts: list[str],
-    role: str,
-    language: str,
-    current_question: str | None,
-) -> dict[str, Any]:
-    current_topic = topic_plan[current_topic_index] if 0 <= current_topic_index < len(topic_plan) else {}
-    current_question_text = " ".join((current_question or "").strip().split())
-    role_blocks_count = len(role_question_banks or [])
-    quality = str(last_answer_evaluation.get("quality") or "no_signal")
-    followup_type = str(last_answer_evaluation.get("followup_type") or "clarify")
-    interviewer_failure = bool(last_answer_evaluation.get("interviewer_failure"))
-    has_technical_detail = bool(last_answer_evaluation.get("has_technical_detail"))
-    has_example = bool(last_answer_evaluation.get("has_example"))
-    difficulty = int(interview_state.get("adaptive_difficulty_tier", 3) or 3)
-    desired_followups = max(0, int(interview_state.get("topic_turns", 0) or 0))
-    active_qa_scenario_id = str(interview_state.get("active_qa_scenario_id") or "").strip() or None
-    active_qa_scenario_step = max(0, _safe_int(interview_state.get("active_qa_scenario_step"), 0))
-    completed_qa_scenarios = [
-        str(item).strip()
-        for item in interview_state.get("qa_completed_scenarios", [])
-        if str(item).strip()
-    ]
-
-    if role == "qa_engineer" and _is_qa_technical_phase(current_topic):
-        chains = list(scenario_chains or [])
-        active_chain = _qa_chain_by_id(chains, active_qa_scenario_id)
-        if active_chain is None:
-            active_chain = _qa_pick_next_chain(chains, completed_qa_scenarios)
-            active_qa_scenario_step = 0
-        if active_chain:
-            chain_case_id = str(active_chain.get("case_id") or "").strip()
-            chain_questions = _qa_chain_questions(active_chain)
-            chain_title = str(active_chain.get("title") or "").strip()
-            chain_competency = str(active_chain.get("competency") or _topic_primary_competency(current_topic)).strip()
-            chain_difficulty = _safe_int(active_chain.get("difficulty_tier"), difficulty or 3)
-            chain_difficulty = min(5, max(1, chain_difficulty))
-            step_index = min(active_qa_scenario_step, max(len(chain_questions) - 1, 0))
-            current_step_question = chain_questions[step_index] if chain_questions else ""
-            completed_case_id = None
-
-            if interviewer_failure:
-                fallback = _runtime_followup_question_text(
-                    language=language,
-                    followup_type="simplify",
-                    role=role,
-                    topic=current_topic,
-                )
-                simplify_text = _qa_chain_followup_text(
-                    chain=active_chain,
-                    followup_type="simplify",
-                    fallback_text=fallback,
-                )
-                contextual = f"Кейс: {chain_title}. {simplify_text}".strip()
-                return {
-                    "question_text": contextual,
-                    "reason": "qa_chain_interviewer_failure_rephrase",
-                    "target_competency": chain_competency,
-                    "difficulty": max(1, chain_difficulty - 1),
-                    "question_type": "clarification",
-                    "will_advance": False,
-                    "selected_topic_index": current_topic_index,
-                    "scenario_case_id": chain_case_id,
-                    "scenario_step_index": step_index,
-                }
-
-            if quality == "weak":
-                fallback = _runtime_followup_question_text(
-                    language=language,
-                    followup_type=followup_type,
-                    role=role,
-                    topic=current_topic,
-                )
-                followup_text = _qa_chain_followup_text(
-                    chain=active_chain,
-                    followup_type="clarify",
-                    fallback_text=fallback,
-                )
-                contextual = f"Кейс: {chain_title}. {followup_text}".strip()
-                return {
-                    "question_text": contextual,
-                    "reason": "qa_chain_weak_answer_followup",
-                    "target_competency": chain_competency,
-                    "difficulty": max(1, chain_difficulty - 1),
-                    "question_type": "followup",
-                    "will_advance": False,
-                    "selected_topic_index": current_topic_index,
-                    "scenario_case_id": chain_case_id,
-                    "scenario_step_index": step_index,
-                }
-
-            if quality == "medium":
-                fallback = _runtime_followup_question_text(
-                    language=language,
-                    followup_type="deep_dive" if has_example and has_technical_detail else "clarify",
-                    role=role,
-                    topic=current_topic,
-                )
-                followup_text = _qa_chain_followup_text(
-                    chain=active_chain,
-                    followup_type="deep_dive",
-                    fallback_text=fallback,
-                )
-                contextual = f"Кейс: {chain_title}. {followup_text}".strip()
-                return {
-                    "question_text": contextual,
-                    "reason": "qa_chain_medium_answer_refine",
-                    "target_competency": chain_competency,
-                    "difficulty": chain_difficulty,
-                    "question_type": "edge_cases",
-                    "will_advance": False,
-                    "selected_topic_index": current_topic_index,
-                    "scenario_case_id": chain_case_id,
-                    "scenario_step_index": step_index,
-                }
-
-            next_step_index = step_index + 1
-            if next_step_index >= len(chain_questions):
-                completed_case_id = chain_case_id
-                updated_completed = list(completed_qa_scenarios)
-                if chain_case_id and chain_case_id not in updated_completed:
-                    updated_completed.append(chain_case_id)
-                next_chain = _qa_pick_next_chain(chains, updated_completed)
-                if next_chain and str(next_chain.get("case_id") or "").strip() != chain_case_id:
-                    next_chain_id = str(next_chain.get("case_id") or "").strip()
-                    next_chain_questions = _qa_chain_questions(next_chain)
-                    if next_chain_questions:
-                        next_text = next_chain_questions[0]
-                        if _is_repeated_question_text(next_text, asked_question_texts):
-                            next_text = f"Новый кейс: {str(next_chain.get('title') or '').strip()}. {next_text}"
-                        return {
-                            "question_text": next_text,
-                            "reason": "qa_chain_switch_to_next_case",
-                            "target_competency": str(next_chain.get("competency") or ""),
-                            "difficulty": _safe_int(next_chain.get("difficulty_tier"), chain_difficulty),
-                            "question_type": "main",
-                            "will_advance": True,
-                            "selected_topic_index": current_topic_index,
-                            "scenario_case_id": next_chain_id,
-                            "scenario_step_index": 0,
-                            "completed_scenario_case_id": completed_case_id,
-                        }
-                return {
-                    "question_text": "",
-                    "reason": "qa_chain_case_completed_continue_flow",
-                    "target_competency": chain_competency,
-                    "difficulty": min(5, max(chain_difficulty, difficulty)),
-                    "question_type": "main",
-                    "will_advance": True,
-                    "selected_topic_index": _select_next_topic_index_decision(
-                        topic_plan=topic_plan,
-                        current_topic_index=current_topic_index,
-                        covered_topics=covered_topics,
-                        weak_topics=weak_topics,
-                        asked_topics=asked_topics,
-                        role=role,
-                        max_questions=int(interview_state.get("max_questions", len(topic_plan)) or len(topic_plan)),
-                    ),
-                    "scenario_case_id": chain_case_id,
-                    "scenario_step_index": step_index,
-                    "completed_scenario_case_id": completed_case_id,
-                }
-            else:
-                next_question_text = chain_questions[next_step_index]
-                if _is_repeated_question_text(next_question_text, asked_question_texts):
-                    next_question_text = f"Уточним по кейсу «{chain_title}»: {next_question_text}"
-                return {
-                    "question_text": next_question_text,
-                    "reason": "qa_chain_advance_step",
-                    "target_competency": chain_competency,
-                    "difficulty": min(5, max(chain_difficulty, difficulty)),
-                    "question_type": "main",
-                    "will_advance": True,
-                    "selected_topic_index": current_topic_index,
-                    "scenario_case_id": chain_case_id,
-                    "scenario_step_index": next_step_index,
-                    "completed_scenario_case_id": completed_case_id,
-                }
-
-    if interviewer_failure:
-        return {
-            "question_text": _runtime_followup_question_text(
-                language=language,
-                followup_type="simplify",
-                role=role,
-                topic=current_topic,
-            ),
-            "reason": "interviewer_failure_detected_rephrase",
-            "target_competency": _topic_primary_competency(current_topic),
-            "difficulty": max(1, difficulty - 1),
-            "question_type": "clarification",
-            "will_advance": False,
-            "selected_topic_index": current_topic_index,
-        }
-
-    if quality == "weak":
-        return {
-            "question_text": _runtime_followup_question_text(
-                language=language,
-                followup_type=followup_type,
-                role=role,
-                topic=current_topic,
-            ),
-            "reason": "weak_answer_followup_required",
-            "target_competency": _topic_primary_competency(current_topic),
-            "difficulty": max(1, difficulty - 1),
-            "question_type": "followup" if followup_type != "simplify" else "clarification",
-            "will_advance": False,
-            "selected_topic_index": current_topic_index,
-        }
-
-    if quality == "medium":
-        question_type = "edge_cases" if has_example and has_technical_detail else "followup"
-        return {
-            "question_text": _runtime_followup_question_text(
-                language=language,
-                followup_type="deep_dive" if question_type == "edge_cases" else "clarify",
-                role=role,
-                topic=current_topic,
-            ),
-            "reason": "medium_answer_needs_refinement",
-            "target_competency": _topic_primary_competency(current_topic),
-            "difficulty": difficulty,
-            "question_type": question_type,
-            "will_advance": False,
-            "selected_topic_index": current_topic_index,
-        }
-
-    if quality == "strong" and desired_followups < 1 and has_technical_detail and has_example:
-        return {
-            "question_text": "",
-            "reason": "strong_answer_advance_topic",
-            "target_competency": _topic_primary_competency(current_topic),
-            "difficulty": min(5, difficulty + 1),
-            "question_type": "main",
-            "will_advance": True,
-            "selected_topic_index": _select_next_topic_index_decision(
-                topic_plan=topic_plan,
-                current_topic_index=current_topic_index,
-                covered_topics=covered_topics,
-                weak_topics=weak_topics,
-                asked_topics=asked_topics,
-                role=role,
-                max_questions=int(interview_state.get("max_questions", len(topic_plan)) or len(topic_plan)),
-            ),
-        }
-
-    # default: strong/no_signal edge -> targeted deep dive on same topic
-    return {
-        "question_text": _runtime_followup_question_text(
-            language=language,
-            followup_type="deep_dive",
-            role=role,
-            topic=current_topic,
-        ),
-        "reason": "default_deep_dive_same_topic" if role_blocks_count > 0 or current_question_text else "default_deep_dive_without_bank",
-        "target_competency": _topic_primary_competency(current_topic),
-        "difficulty": difficulty,
-        "question_type": "deep_technical",
-        "will_advance": False,
-        "selected_topic_index": current_topic_index,
-    }
 
 
 def _topic_signature(topic: dict | None) -> tuple[str, str]:
@@ -9015,3 +8658,85 @@ async def list_interviews(
             report_id=report.id if report else None,
         ))
     return items
+
+
+def _role_diversified_reframe_question(
+    *,
+    role: str,
+    competency: str,
+    language: str,
+) -> str:
+    competency_key = competency.lower()
+    if role == "qa_engineer":
+        if "test strategy" in competency_key:
+            return (
+                "Разберём конкретный QA-кейс: новая фича оплаты. Какие 3 проверки вы берёте в smoke и почему?"
+                if language != "en"
+                else "Let's use a concrete QA case: new checkout feature. Which 3 checks go to smoke first, and why?"
+            )
+        if "test automation" in competency_key:
+            return (
+                "Возьмём один автотест из практики: что именно автоматизировали, какой риск закрыли и как проверили стабильность?"
+                if language != "en"
+                else "Take one real automation test: what exactly did you automate, what risk did it close, and how did you validate stability?"
+            )
+        if "api & performance" in competency_key or "api testing" in competency_key:
+            return (
+                "Один API-кейс: какой endpoint тестировали, какие негативные сценарии и какой критерий успеха использовали?"
+                if language != "en"
+                else "One API case: which endpoint did you test, what negative scenarios did you include, and what success criterion did you use?"
+            )
+        if "root cause" in competency_key or "bug investigation" in competency_key:
+            return (
+                "Один дефект из продакшна: шаги воспроизведения, где нашли первопричину и чем подтвердили фикс?"
+                if language != "en"
+                else "One production defect: reproduction steps, where root cause was found, and how the fix was validated?"
+            )
+    if role == "backend_engineer":
+        return (
+            "Окей, давайте на конкретном backend-кейсе: API вернул 500 под нагрузкой. Какие 2 первых проверки сделаете и почему?"
+            if language != "en"
+            else "Okay, take a concrete backend case: API returns 500 under load. What are your first 2 checks and why?"
+        )
+    if role == "frontend_engineer":
+        return (
+            "Окей, конкретный frontend-кейс: после релиза часть пользователей видит пустой экран. Что проверите первым?"
+            if language != "en"
+            else "Okay, concrete frontend case: after release some users see a blank screen. What do you check first?"
+        )
+    if role == "devops_engineer":
+        return (
+            "Окей, конкретный DevOps-кейс: pod ушёл в CrashLoopBackOff. Какие сигналы и где проверите сначала?"
+            if language != "en"
+            else "Okay, concrete DevOps case: a pod enters CrashLoopBackOff. Which signals and where do you check first?"
+        )
+    if role == "data_scientist":
+        return (
+            "Окей, конкретный DS-кейс: модель просела на проде. Какие 2 гипотезы проверите первыми?"
+            if language != "en"
+            else "Okay, concrete DS case: model quality dropped in production. Which 2 hypotheses do you test first?"
+        )
+    if role == "product_manager":
+        return (
+            "Окей, конкретный PM-кейс: после релиза просела ключевая метрика. Что проверите первым и почему?"
+            if language != "en"
+            else "Okay, concrete PM case: key metric dropped after release. What do you check first and why?"
+        )
+    if role in {"designer", "ux_ui_designer"}:
+        return (
+            "Окей, конкретный UX/UI-кейс: пользователи не завершают onboarding. Какие 2 проверки сделаете в первую очередь?"
+            if language != "en"
+            else "Okay, concrete UX/UI case: users do not complete onboarding. What are your first 2 checks?"
+        )
+    if role == "mobile_engineer":
+        return (
+            "Окей, конкретный mobile-кейс: crash только на части Android-устройств. Что проверите первым?"
+            if language != "en"
+            else "Okay, concrete mobile case: crash happens only on some Android devices. What do you check first?"
+        )
+    return (
+        "Окей, давайте на одном конкретном рабочем примере: что произошло и что вы сделали первым шагом?"
+        if language != "en"
+        else "Okay, let's use one concrete work example: what happened and what was your first action?"
+    )
+
