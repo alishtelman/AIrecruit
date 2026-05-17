@@ -17,6 +17,7 @@ import (
 type server struct {
 	backendProxy *httputil.ReverseProxy
 	mediaProxy   *httputil.ReverseProxy
+	authProxy    *httputil.ReverseProxy
 }
 
 func main() {
@@ -25,15 +26,18 @@ func main() {
 	listenAddr := envOrDefault("API_GATEWAY_ADDR", ":8080")
 	backendURL := parseURL(envOrDefault("BACKEND_URL", "http://backend:8000"))
 	mediaURL := parseURL(envOrDefault("MEDIA_SERVICE_URL", "http://media-service:8080"))
+	authURL := parseURL(envOrDefault("AUTH_SERVICE_URL", "http://auth-service:8080"))
 
 	log.Printf("Routing Configured:")
 	log.Printf("  Listen Address: %s", listenAddr)
 	log.Printf("  Backend URL:    %s", backendURL)
 	log.Printf("  Media URL:      %s", mediaURL)
+	log.Printf("  Auth URL:       %s", authURL)
 
 	srv := &server{
 		backendProxy: httputil.NewSingleHostReverseProxy(backendURL),
 		mediaProxy:   httputil.NewSingleHostReverseProxy(mediaURL),
+		authProxy:    httputil.NewSingleHostReverseProxy(authURL),
 	}
 
 	mux := http.NewServeMux()
@@ -89,6 +93,13 @@ func (s *server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		r.URL.Path = "/v1/stt"
 		log.Printf("[PROXY] POST %s -> media-service %s", path, r.URL.Path)
 		s.mediaProxy.ServeHTTP(w, r)
+		return
+	}
+
+	// Proxy auth operations directly to Go auth-service
+	if strings.HasPrefix(path, "/api/v1/auth") {
+		log.Printf("[PROXY] %s %s -> auth-service %s", method, path, r.URL.Path)
+		s.authProxy.ServeHTTP(w, r)
 		return
 	}
 

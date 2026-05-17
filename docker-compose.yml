@@ -161,6 +161,23 @@ services:
       timeout: 3s
       retries: 6
 
+  auth-service:
+    build: ./services/auth
+    env_file:
+      - .env
+    ports:
+      - "8087:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: :8080
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+
   api-gateway:
     build: ./services/api-gateway
     ports:
@@ -172,11 +189,14 @@ services:
         condition: service_healthy
       resume-service:
         condition: service_healthy
+      auth-service:
+        condition: service_healthy
     environment:
       API_GATEWAY_ADDR: :8080
       BACKEND_URL: http://backend:8000
       MEDIA_SERVICE_URL: http://media-service:8080
       RESUME_SERVICE_URL: http://resume-service:8080
+      AUTH_SERVICE_URL: http://auth-service:8080
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
       interval: 5s

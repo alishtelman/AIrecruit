@@ -28,14 +28,24 @@ func TestGatewayRouting(t *testing.T) {
 	}))
 	defer mediaServer.Close()
 
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Mock-Source", "auth")
+		w.Header().Set("X-Mock-Path", r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("auth-response"))
+	}))
+	defer authServer.Close()
+
 	// 2. Parse mock URLs
 	backendURL, _ := url.Parse(backendServer.URL)
 	mediaURL, _ := url.Parse(mediaServer.URL)
+	authURL, _ := url.Parse(authServer.URL)
 
 	// 3. Initialize gateway server
 	srv := &server{
 		backendProxy: httputil.NewSingleHostReverseProxy(backendURL),
 		mediaProxy:   httputil.NewSingleHostReverseProxy(mediaURL),
+		authProxy:    httputil.NewSingleHostReverseProxy(authURL),
 	}
 
 	tests := []struct {
@@ -95,12 +105,12 @@ func TestGatewayRouting(t *testing.T) {
 			expectedBody:   "backend-response",
 		},
 		{
-			name:           "Auth Login Fallback",
+			name:           "Auth Login rewrites to auth-service",
 			method:         "POST",
 			path:           "/api/v1/auth/login",
-			expectedSource: "backend",
+			expectedSource: "auth",
 			expectedPath:   "/api/v1/auth/login",
-			expectedBody:   "backend-response",
+			expectedBody:   "auth-response",
 		},
 		{
 			name:           "Candidates GET Fallback",
