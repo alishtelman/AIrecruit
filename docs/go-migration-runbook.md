@@ -460,15 +460,15 @@ BT (Codex Resume Smoke) Tj ET
   http://localhost:8083/v1/resumes
 ```
 
-## Migration Status (as of 2026-05-11)
+## Migration Status (as of 2026-05-17)
 
 | Phase | Scope | Status |
 |-------|-------|--------|
 | Phase 1 | Sidecars behind FastAPI (media, resume, sandbox, llm, marketplace, report-worker) | ✅ complete |
 | Phase 2 | Go-owned internal contracts, observability, hardening | ✅ complete |
 | Phase 3 | Data-bound Go services (marketplace read model, report queue) | ✅ complete |
-| Phase 4 | AI/assessment core (interviewer, assessor, report shaping) | ⬜ blocked on golden transcript fixtures |
-| Phase 5 | FastAPI gateway removal | ⬜ blocked on Phase 4 |
+| Phase 4 | AI/assessment core (interviewer, assessor, report shaping) | ✅ complete (Go assessment service integrated with 100% decimal parity) |
+| Phase 5 | FastAPI gateway removal | ⬜ blocked on stable production soak of Phase 4 |
 
 **Phase 2 sandbox note:** All Python-runnable coding scenarios (rate_limiter_window_counter,
 feature_freshness_monitor, flaky_test_classifier, deployment_rollout_guard) and all SQL live
@@ -480,12 +480,7 @@ only and are not sandbox candidates.
 
 ## Recommended Next Slices
 
-1. **Phase 4 — Golden transcript fixtures**: create representative transcript→report fixture pairs
-   for backend_engineer, data_scientist, qa_engineer, and devops_engineer roles before any Go port
-   of the AI assessment chain. Each fixture should cover a main interview, at least one followup
-   question, and the final report payload.
-2. **Phase 4 — AI/Assessment Core**: only start after golden fixtures are in place and a parity
-   test harness can diff Go vs Python report sections deterministically.
+1. **Phase 5 — FastAPI gateway removal**: Proceed with replacement of the Python gateway and FastAPI routers with fully native Go-owned public `/api/v1` routes to complete the transition to a pure Go-backed environment.
 
 ## Do Not Do
 
