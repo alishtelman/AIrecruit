@@ -1,0 +1,18 @@
+[
+  {
+    "role": "assistant",
+    "content": "Hi! Can you walk me through your approach to designing a test automation framework from scratch?"
+  },
+  {
+    "role": "candidate",
+    "content": "Sure. I usually start by selecting the right tools based on the tech stack. For a modern web app, I'd choose Playwright with TypeScript. I use the Page Object Model design pattern to keep the code maintainable, and integrate the tests into GitHub Actions for CI/CD."
+  },
+  {
+    "role": "assistant",
+    "content": "How do you handle test data management and flaky tests?"
+  },
+  {
+    "role": "candidate",
+    "content": "For test data, I prefer generating it dynamically via API before the test starts and cleaning it up after. To handle flakiness, I avoid hardcoded sleeps and use dynamic waits provided by Playwright. If a test is consistently flaky, I quarantine it until the root cause is fixed."
+  }
+]

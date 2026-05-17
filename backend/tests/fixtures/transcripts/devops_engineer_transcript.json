@@ -1,0 +1,18 @@
+[
+  {
+    "role": "assistant",
+    "content": "Hello! Can you describe your experience with Infrastructure as Code?"
+  },
+  {
+    "role": "candidate",
+    "content": "I have extensive experience with Terraform. I manage our AWS infrastructure using modular Terraform code, keeping state files in an S3 bucket with DynamoDB for locking. Everything is version-controlled and deployed via CI pipelines."
+  },
+  {
+    "role": "assistant",
+    "content": "What strategies do you use for zero-downtime deployments?"
+  },
+  {
+    "role": "candidate",
+    "content": "We primarily use blue-green deployments in Kubernetes. We deploy the new version alongside the old one, run automated smoke tests against the new version, and then switch the traffic over at the ingress controller level. If anything goes wrong, rolling back is instant."
+  }
+]

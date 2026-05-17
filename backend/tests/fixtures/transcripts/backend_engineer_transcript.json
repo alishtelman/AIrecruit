@@ -1,0 +1,18 @@
+[
+  {
+    "role": "assistant",
+    "content": "Hello! I am your AI interviewer. Could you please introduce yourself and tell me about your recent experience?"
+  },
+  {
+    "role": "candidate",
+    "content": "Hi! I'm a backend engineer with 5 years of experience, mostly working with Python, FastAPI, and PostgreSQL. Recently I led a migration from monolith to microservices using Docker and Kubernetes."
+  },
+  {
+    "role": "assistant",
+    "content": "That sounds interesting. Can you explain how you handled database transactions across microservices?"
+  },
+  {
+    "role": "candidate",
+    "content": "We primarily used the saga pattern for distributed transactions. We had an orchestrator service that coordinated the steps, and if any step failed, it would trigger compensating transactions to rollback the previous steps. We used RabbitMQ for reliable message passing."
+  }
+]

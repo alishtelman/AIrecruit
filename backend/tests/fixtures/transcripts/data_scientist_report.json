@@ -1,0 +1,660 @@
+{
+  "overall_score": 4.5,
+  "hard_skills_score": 4.5,
+  "soft_skills_score": 4.0,
+  "communication_score": 4.5,
+  "strengths": [
+    "Strong understanding of ML modeling techniques, including handling imbalanced data and hyperparameter tuning.",
+    "Effective use of appropriate metrics (PR-AUC, F1-score, recall) for imbalanced datasets.",
+    "Clear and concise technical communication."
+  ],
+  "weaknesses": [
+    "Lack of evidence in data processing, feature engineering, and data infrastructure competencies.",
+    "No demonstration of collaboration or cross-functional work experience.",
+    "Limited evidence of domain knowledge application and analytical problem-solving."
+  ],
+  "recommendations": [
+    "Encourage the candidate to provide more details on data processing and feature engineering techniques in future interviews.",
+    "Ask about specific experiences in collaboration and cross-functional teamwork.",
+    "Explore the candidate's domain knowledge and problem-solving approaches in more depth."
+  ],
+  "hiring_recommendation": "maybe",
+  "interview_summary": "The Data Scientist interview covered 0 core topics Signal quality was limited. Overall score: 4.5/10.",
+  "model_version": "deepseek/deepseek-chat",
+  "full_report_json": {
+    "competency_scores": [
+      {
+        "category": "technical_core",
+        "competency": "ML Modeling & Algorithms",
+        "evidence": "Used XGBoost for classification, applied SMOTE for oversampling, tuned hyperparameters using Optuna.",
+        "reasoning": "The candidate demonstrated practical experience with model selection, handling imbalanced data, and hyperparameter tuning, which aligns with a score of 7.",
+        "score": 7,
+        "weight": 0.15
+      },
+      {
+        "category": "technical_core",
+        "competency": "MLOps & Production ML",
+        "evidence": "Built a churn prediction model and deployed it to production.",
+        "reasoning": "The candidate mentioned deploying a model to production but did not provide details on deployment specifics or monitoring, warranting a score of 6.",
+        "score": 6,
+        "weight": 0.1
+      },
+      {
+        "category": "technical_core",
+        "competency": "Statistics & Experimentation",
+        "evidence": "Focused on PR-AUC, F1-score, and recall for the positive class due to class imbalance and business cost.",
+        "reasoning": "The candidate showed a strong understanding of appropriate metrics for imbalanced datasets and business context, justifying a score of 8.",
+        "score": 8,
+        "weight": 0.12
+      },
+      {
+        "category": "technical_core",
+        "competency": "Data Processing & Feature Engineering",
+        "evidence": "No specific evidence provided.",
+        "reasoning": "The candidate did not address this competency in the transcript, resulting in a score of 4.",
+        "score": 4,
+        "weight": 0.12
+      },
+      {
+        "category": "technical_breadth",
+        "competency": "Data Infrastructure & Tools",
+        "evidence": "No specific evidence provided.",
+        "reasoning": "The candidate did not address this competency in the transcript, resulting in a score of 4.",
+        "score": 4,
+        "weight": 0.08
+      },
+      {
+        "category": "technical_breadth",
+        "competency": "Domain Knowledge Application",
+        "evidence": "No specific evidence provided.",
+        "reasoning": "The candidate did not address this competency in the transcript, resulting in a score of 4.",
+        "score": 4,
+        "weight": 0.08
+      },
+      {
+        "category": "problem_solving",
+        "competency": "Analytical Problem Solving",
+        "evidence": "No specific evidence provided.",
+        "reasoning": "The candidate did not address this competency in the transcript, resulting in a score of 4.",
+        "score": 4,
+        "weight": 0.1
+      },
+      {
+        "category": "communication",
+        "competency": "Technical Communication",
+        "evidence": "The candidate explained the choice of metrics clearly and concisely.",
+        "reasoning": "The candidate communicated technical choices effectively, warranting a score of 7.",
+        "score": 7,
+        "weight": 0.1
+      },
+      {
+        "category": "behavioral",
+        "competency": "Collaboration & Cross-functional Work",
+        "evidence": "No specific evidence provided.",
+        "reasoning": "The candidate did not address this competency in the transcript, resulting in a score of 4.",
+        "score": 4,
+        "weight": 0.08
+      },
+      {
+        "category": "behavioral",
+        "competency": "Ownership & Growth Mindset",
+        "evidence": "No specific evidence provided.",
+        "reasoning": "The candidate did not address this competency in the transcript, resulting in a score of 4.",
+        "score": 4,
+        "weight": 0.07
+      }
+    ],
+    "per_question_analysis": [
+      {
+        "question_number": 1,
+        "targeted_competencies": [
+          "ML Modeling & Algorithms",
+          "MLOps & Production ML"
+        ],
+        "answer_quality": 7,
+        "evidence": "Used XGBoost for classification, applied SMOTE for oversampling, tuned hyperparameters using Optuna.",
+        "skills_mentioned": [
+          {
+            "skill": "XGBoost",
+            "proficiency": "intermediate"
+          },
+          {
+            "skill": "SMOTE",
+            "proficiency": "intermediate"
+          },
+          {
+            "skill": "Optuna",
+            "proficiency": "intermediate"
+          }
+        ],
+        "red_flags": [],
+        "specificity": "high",
+        "depth": "strong",
+        "ai_likelihood": 0.1,
+        "block": null,
+        "tier": null,
+        "lead_question": null,
+        "allowed_probes": [],
+        "scored_metrics": [],
+        "why_asked": "This question is part of the structured interview plan.",
+        "what_was_scored": "Scoring focused on relevance, specificity, and depth of the answer."
+      },
+      {
+        "question_number": 2,
+        "targeted_competencies": [
+          "Statistics & Experimentation",
+          "ML Modeling & Algorithms"
+        ],
+        "answer_quality": 8,
+        "evidence": "Focused on PR-AUC, F1-score, and recall for the positive class due to class imbalance and business cost.",
+        "skills_mentioned": [
+          {
+            "skill": "PR-AUC",
+            "proficiency": "intermediate"
+          },
+          {
+            "skill": "F1-score",
+            "proficiency": "intermediate"
+          },
+          {
+            "skill": "Recall",
+            "proficiency": "intermediate"
+          }
+        ],
+        "red_flags": [],
+        "specificity": "high",
+        "depth": "strong",
+        "ai_likelihood": 0.1,
+        "block": null,
+        "tier": null,
+        "lead_question": null,
+        "allowed_probes": [],
+        "scored_metrics": [],
+        "why_asked": "This question is part of the structured interview plan.",
+        "what_was_scored": "Scoring focused on relevance, specificity, and depth of the answer."
+      }
+    ],
+    "skill_tags": [
+      {
+        "skill": "xgboost",
+        "proficiency": "intermediate",
+        "mentions_count": 1
+      },
+      {
+        "skill": "smote",
+        "proficiency": "intermediate",
+        "mentions_count": 1
+      },
+      {
+        "skill": "optuna",
+        "proficiency": "intermediate",
+        "mentions_count": 1
+      },
+      {
+        "skill": "pr-auc",
+        "proficiency": "intermediate",
+        "mentions_count": 1
+      },
+      {
+        "skill": "f1-score",
+        "proficiency": "intermediate",
+        "mentions_count": 1
+      },
+      {
+        "skill": "recall",
+        "proficiency": "intermediate",
+        "mentions_count": 1
+      }
+    ],
+    "red_flags": [],
+    "response_consistency": 8,
+    "aggregates": {
+      "overall_score": 4.5,
+      "hard_skills_score": 4.5,
+      "soft_skills_score": 4.0,
+      "communication_score": 4.5,
+      "problem_solving_score": 4.0
+    },
+    "overall_confidence": 0.73,
+    "confidence_verdict": "normal",
+    "competency_confidence": {
+      "ML Modeling & Algorithms": 0.84,
+      "MLOps & Production ML": 0.74,
+      "Statistics & Experimentation": 0.74,
+      "Data Processing & Feature Engineering": 0.45,
+      "Data Infrastructure & Tools": 0.45,
+      "Domain Knowledge Application": 0.45,
+      "Analytical Problem Solving": 0.45,
+      "Technical Communication": 0.45,
+      "Collaboration & Cross-functional Work": 0.45,
+      "Ownership & Growth Mindset": 0.45
+    },
+    "confidence_reasons": [
+      "High evidence coverage increased confidence.",
+      "Several answers contained high-confidence evidence.",
+      "High share of strong answers improved confidence.",
+      "Case depth improved confidence."
+    ],
+    "evidence_coverage": {
+      "questions_analyzed": 2,
+      "high_confidence_questions": 2,
+      "low_confidence_questions": 0,
+      "concrete_evidence_ratio": 1.0,
+      "validated_topics": 0,
+      "validated_topics_ratio": 0.0,
+      "strong_answers_count": 2,
+      "strong_answer_ratio": 1.0,
+      "case_depth_ratio": 0.8,
+      "avg_ai_likelihood": 0.1
+    },
+    "decision_policy_version": "v2-strict",
+    "aggregates_pre_penalty": {
+      "overall_score": 5.4,
+      "hard_skills_score": 5.7,
+      "soft_skills_score": 4.0,
+      "communication_score": 7.0,
+      "problem_solving_score": 4.0
+    },
+    "answer_quality_score": 7.5,
+    "depth_score": 7.5,
+    "consistency_score": 8,
+    "score_penalties": [
+      "critical_weakness (6 competencies ≤4): overall_capped_at_6",
+      "no_validated_topics: capped_at_4.5",
+      "limited_signal_quality: capped_at_6.0"
+    ],
+    "answer_metrics": {
+      "avg_word_count": 36.5,
+      "short_answer_ratio": 0.0,
+      "low_specificity_ratio": 0.0
+    },
+    "summary_model": {
+      "role": "Data Scientist",
+      "core_topics": 0,
+      "total_turns": 0,
+      "extra_turns": 0,
+      "covered_competencies": 3,
+      "coverage_label": "3 competencies",
+      "signal_quality": "limited",
+      "validated_topics": 0,
+      "partial_topics": 0,
+      "unverified_claim_topics": 0,
+      "honest_gaps": 0,
+      "generic_topics": 0,
+      "evasive_topics": 0,
+      "generic_or_evasive_topics": 0,
+      "strong_topics": 0,
+      "topic_outcomes": []
+    },
+    "interview_meta": {
+      "scenario": "Golden Fixture Baseline"
+    },
+    "calibrated_scoring": {
+      "metric_weight_model": {
+        "technical_depth": 0.22,
+        "practical_experience": 0.2,
+        "problem_solving": 0.18,
+        "communication": 0.14,
+        "ownership": 0.1,
+        "role_fit": 0.1,
+        "growth_potential": 0.06
+      },
+      "block_weight_model": {
+        "technical_foundation": 1.0
+      },
+      "block_metrics": [
+        {
+          "block": "technical_foundation",
+          "weight": 1.0,
+          "question_count": 2,
+          "score": 7.5,
+          "avg_answer_quality": 7.5,
+          "avg_depth_score": 8.0,
+          "avg_specificity_score": 9.0,
+          "metric_weights": {
+            "communication": 0.1892,
+            "practical_experience": 0.2703,
+            "problem_solving": 0.2432,
+            "technical_depth": 0.2973
+          },
+          "metric_scores": {
+            "communication": 7.66,
+            "practical_experience": 7.49,
+            "problem_solving": 7.12,
+            "technical_depth": 7.72
+          },
+          "why_asked": "This question checks baseline technical practice for the target role.",
+          "what_was_scored": "Scored metrics: communication, practical experience, problem solving, technical depth."
+        }
+      ],
+      "block_weighted_score": 7.5,
+      "penalties": [
+        "critical_weakness (6 competencies ≤4): overall_capped_at_6",
+        "no_validated_topics: capped_at_4.5",
+        "limited_signal_quality: capped_at_6.0"
+      ],
+      "pre_penalty_overall_score": 5.4,
+      "post_penalty_overall_score": 4.5,
+      "penalty_delta": -0.9,
+      "topic_signal_quality": "limited"
+    },
+    "hiring_recommendation": "maybe",
+    "recommendation_gate_reasons": [
+      "critical competency weakness blocks positive recommendation",
+      "limited signal quality caps recommendation at maybe"
+    ],
+    "strengths": [
+      "Strong understanding of ML modeling techniques, including handling imbalanced data and hyperparameter tuning.",
+      "Effective use of appropriate metrics (PR-AUC, F1-score, recall) for imbalanced datasets.",
+      "Clear and concise technical communication."
+    ],
+    "weaknesses": [
+      "Lack of evidence in data processing, feature engineering, and data infrastructure competencies.",
+      "No demonstration of collaboration or cross-functional work experience.",
+      "Limited evidence of domain knowledge application and analytical problem-solving."
+    ],
+    "recommendations": [
+      "Encourage the candidate to provide more details on data processing and feature engineering techniques in future interviews.",
+      "Ask about specific experiences in collaboration and cross-functional teamwork.",
+      "Explore the candidate's domain knowledge and problem-solving approaches in more depth."
+    ],
+    "explainability_report": {
+      "version": "2.0",
+      "overall_assessment": {
+        "summary": "Final result: Data Scientist scored 4.5/10 with recommendation Maybe. The result is based on validated interview evidence, not resume claims alone.",
+        "overall_score": 4.5,
+        "recommendation": "maybe",
+        "signal_quality": "limited",
+        "overall_confidence": 0.73,
+        "insufficient_signal": false,
+        "confidence_verdict": "normal",
+        "score_method": "evidence_weighted_with_penalties"
+      },
+      "evidence_based_strengths": [],
+      "evidence_based_gaps": [],
+      "growth_recommendations": [
+        {
+          "title": "Encourage the candidate to provide more details on data processing and feature engineering techniques in future interviews.",
+          "linked_gap": "",
+          "actions": [
+            "Prepare one short case in context → action → result format.",
+            "Add 1-2 technical details: decision trade-off and validation method."
+          ],
+          "success_criteria": "In the next interview you can explain a concrete case with clear decision logic and outcome."
+        },
+        {
+          "title": "Ask about specific experiences in collaboration and cross-functional teamwork.",
+          "linked_gap": "",
+          "actions": [
+            "Prepare one short case in context → action → result format.",
+            "Add 1-2 technical details: decision trade-off and validation method."
+          ],
+          "success_criteria": "In the next interview you can explain a concrete case with clear decision logic and outcome."
+        },
+        {
+          "title": "Explore the candidate's domain knowledge and problem-solving approaches in more depth.",
+          "linked_gap": "",
+          "actions": [
+            "Prepare one short case in context → action → result format.",
+            "Add 1-2 technical details: decision trade-off and validation method."
+          ],
+          "success_criteria": "In the next interview you can explain a concrete case with clear decision logic and outcome."
+        }
+      ],
+      "scoring_trace": {
+        "pre_penalty_overall_score": 5.4,
+        "post_penalty_overall_score": 4.5,
+        "penalty_explanations": [
+          "Critical weakness in key competencies limited the final recommendation.",
+          "no_validated_topics: capped_at_4.5",
+          "limited_signal_quality: capped_at_6.0"
+        ],
+        "top_block_signals": [
+          {
+            "block": "technical_foundation",
+            "score": 7.5,
+            "weight": 1.0,
+            "question_count": 2
+          }
+        ]
+      },
+      "summary_strengths": [
+        "Strong understanding of ML modeling techniques, including handling imbalanced data and hyperparameter tuning.",
+        "Effective use of appropriate metrics (PR-AUC, F1-score, recall) for imbalanced datasets.",
+        "Clear and concise technical communication."
+      ],
+      "summary_weaknesses": [
+        "Lack of evidence in data processing, feature engineering, and data infrastructure competencies.",
+        "No demonstration of collaboration or cross-functional work experience.",
+        "Limited evidence of domain knowledge application and analytical problem-solving."
+      ]
+    }
+  },
+  "competency_scores": [
+    {
+      "category": "technical_core",
+      "competency": "ML Modeling & Algorithms",
+      "evidence": "Used XGBoost for classification, applied SMOTE for oversampling, tuned hyperparameters using Optuna.",
+      "reasoning": "The candidate demonstrated practical experience with model selection, handling imbalanced data, and hyperparameter tuning, which aligns with a score of 7.",
+      "score": 7,
+      "weight": 0.15
+    },
+    {
+      "category": "technical_core",
+      "competency": "MLOps & Production ML",
+      "evidence": "Built a churn prediction model and deployed it to production.",
+      "reasoning": "The candidate mentioned deploying a model to production but did not provide details on deployment specifics or monitoring, warranting a score of 6.",
+      "score": 6,
+      "weight": 0.1
+    },
+    {
+      "category": "technical_core",
+      "competency": "Statistics & Experimentation",
+      "evidence": "Focused on PR-AUC, F1-score, and recall for the positive class due to class imbalance and business cost.",
+      "reasoning": "The candidate showed a strong understanding of appropriate metrics for imbalanced datasets and business context, justifying a score of 8.",
+      "score": 8,
+      "weight": 0.12
+    },
+    {
+      "category": "technical_core",
+      "competency": "Data Processing & Feature Engineering",
+      "evidence": "No specific evidence provided.",
+      "reasoning": "The candidate did not address this competency in the transcript, resulting in a score of 4.",
+      "score": 4,
+      "weight": 0.12
+    },
+    {
+      "category": "technical_breadth",
+      "competency": "Data Infrastructure & Tools",
+      "evidence": "No specific evidence provided.",
+      "reasoning": "The candidate did not address this competency in the transcript, resulting in a score of 4.",
+      "score": 4,
+      "weight": 0.08
+    },
+    {
+      "category": "technical_breadth",
+      "competency": "Domain Knowledge Application",
+      "evidence": "No specific evidence provided.",
+      "reasoning": "The candidate did not address this competency in the transcript, resulting in a score of 4.",
+      "score": 4,
+      "weight": 0.08
+    },
+    {
+      "category": "problem_solving",
+      "competency": "Analytical Problem Solving",
+      "evidence": "No specific evidence provided.",
+      "reasoning": "The candidate did not address this competency in the transcript, resulting in a score of 4.",
+      "score": 4,
+      "weight": 0.1
+    },
+    {
+      "category": "communication",
+      "competency": "Technical Communication",
+      "evidence": "The candidate explained the choice of metrics clearly and concisely.",
+      "reasoning": "The candidate communicated technical choices effectively, warranting a score of 7.",
+      "score": 7,
+      "weight": 0.1
+    },
+    {
+      "category": "behavioral",
+      "competency": "Collaboration & Cross-functional Work",
+      "evidence": "No specific evidence provided.",
+      "reasoning": "The candidate did not address this competency in the transcript, resulting in a score of 4.",
+      "score": 4,
+      "weight": 0.08
+    },
+    {
+      "category": "behavioral",
+      "competency": "Ownership & Growth Mindset",
+      "evidence": "No specific evidence provided.",
+      "reasoning": "The candidate did not address this competency in the transcript, resulting in a score of 4.",
+      "score": 4,
+      "weight": 0.07
+    }
+  ],
+  "per_question_analysis": [
+    {
+      "question_number": 1,
+      "targeted_competencies": [
+        "ML Modeling & Algorithms",
+        "MLOps & Production ML"
+      ],
+      "answer_quality": 7,
+      "evidence": "Used XGBoost for classification, applied SMOTE for oversampling, tuned hyperparameters using Optuna.",
+      "skills_mentioned": [
+        {
+          "skill": "XGBoost",
+          "proficiency": "intermediate"
+        },
+        {
+          "skill": "SMOTE",
+          "proficiency": "intermediate"
+        },
+        {
+          "skill": "Optuna",
+          "proficiency": "intermediate"
+        }
+      ],
+      "red_flags": [],
+      "specificity": "high",
+      "depth": "strong",
+      "ai_likelihood": 0.1,
+      "block": null,
+      "tier": null,
+      "lead_question": null,
+      "allowed_probes": [],
+      "scored_metrics": [],
+      "why_asked": "This question is part of the structured interview plan.",
+      "what_was_scored": "Scoring focused on relevance, specificity, and depth of the answer."
+    },
+    {
+      "question_number": 2,
+      "targeted_competencies": [
+        "Statistics & Experimentation",
+        "ML Modeling & Algorithms"
+      ],
+      "answer_quality": 8,
+      "evidence": "Focused on PR-AUC, F1-score, and recall for the positive class due to class imbalance and business cost.",
+      "skills_mentioned": [
+        {
+          "skill": "PR-AUC",
+          "proficiency": "intermediate"
+        },
+        {
+          "skill": "F1-score",
+          "proficiency": "intermediate"
+        },
+        {
+          "skill": "Recall",
+          "proficiency": "intermediate"
+        }
+      ],
+      "red_flags": [],
+      "specificity": "high",
+      "depth": "strong",
+      "ai_likelihood": 0.1,
+      "block": null,
+      "tier": null,
+      "lead_question": null,
+      "allowed_probes": [],
+      "scored_metrics": [],
+      "why_asked": "This question is part of the structured interview plan.",
+      "what_was_scored": "Scoring focused on relevance, specificity, and depth of the answer."
+    }
+  ],
+  "skill_tags": [
+    {
+      "skill": "xgboost",
+      "proficiency": "intermediate",
+      "mentions_count": 1
+    },
+    {
+      "skill": "smote",
+      "proficiency": "intermediate",
+      "mentions_count": 1
+    },
+    {
+      "skill": "optuna",
+      "proficiency": "intermediate",
+      "mentions_count": 1
+    },
+    {
+      "skill": "pr-auc",
+      "proficiency": "intermediate",
+      "mentions_count": 1
+    },
+    {
+      "skill": "f1-score",
+      "proficiency": "intermediate",
+      "mentions_count": 1
+    },
+    {
+      "skill": "recall",
+      "proficiency": "intermediate",
+      "mentions_count": 1
+    }
+  ],
+  "red_flags": [],
+  "response_consistency": 8,
+  "problem_solving_score": 4.0,
+  "cheat_risk_score": 0.0,
+  "cheat_flags": [],
+  "overall_confidence": 0.73,
+  "competency_confidence": {
+    "ML Modeling & Algorithms": 0.84,
+    "MLOps & Production ML": 0.74,
+    "Statistics & Experimentation": 0.74,
+    "Data Processing & Feature Engineering": 0.45,
+    "Data Infrastructure & Tools": 0.45,
+    "Domain Knowledge Application": 0.45,
+    "Analytical Problem Solving": 0.45,
+    "Technical Communication": 0.45,
+    "Collaboration & Cross-functional Work": 0.45,
+    "Ownership & Growth Mindset": 0.45
+  },
+  "confidence_reasons": [
+    "High evidence coverage increased confidence.",
+    "Several answers contained high-confidence evidence.",
+    "High share of strong answers improved confidence.",
+    "Case depth improved confidence."
+  ],
+  "evidence_coverage": {
+    "questions_analyzed": 2,
+    "high_confidence_questions": 2,
+    "low_confidence_questions": 0,
+    "concrete_evidence_ratio": 1.0,
+    "validated_topics": 0,
+    "validated_topics_ratio": 0.0,
+    "strong_answers_count": 2,
+    "strong_answer_ratio": 1.0,
+    "case_depth_ratio": 0.8,
+    "avg_ai_likelihood": 0.1
+  },
+  "decision_policy_version": "v2-strict",
+  "answer_quality_score": 7.5,
+  "depth_score": 7.5,
+  "consistency_score": 8.0,
+  "score_penalties": [
+    "critical_weakness (6 competencies ≤4): overall_capped_at_6"
+  ]
+}

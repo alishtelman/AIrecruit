@@ -1,0 +1,18 @@
+[
+  {
+    "role": "assistant",
+    "content": "Hello! Could you tell me about a recent machine learning model you deployed to production?"
+  },
+  {
+    "role": "candidate",
+    "content": "Yes, I recently built a churn prediction model. I used XGBoost for the classification. We had imbalanced data, so I applied SMOTE for oversampling and tuned hyperparameters using Optuna."
+  },
+  {
+    "role": "assistant",
+    "content": "How did you measure the performance of this model, considering the imbalanced dataset?"
+  },
+  {
+    "role": "candidate",
+    "content": "Accuracy wasn't useful due to the class imbalance, so I focused on the PR-AUC (Precision-Recall Area Under Curve). I also looked closely at the F1-score and the recall for the positive class since missing a churning customer was more expensive than a false positive."
+  }
+]
