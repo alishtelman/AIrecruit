@@ -41,6 +41,8 @@ frontend/.env.local
 # Local agent tooling
 .agents/
 .codex/
+.claude/
+.playwright-cli/
 AGENTS.md
 
 # Docker
