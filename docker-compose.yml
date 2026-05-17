@@ -32,6 +32,8 @@ services:
         condition: service_healthy
       marketplace-service:
         condition: service_healthy
+      assessment-service:
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -40,6 +42,7 @@ services:
       SANDBOX_SERVICE_URL: http://sandbox-service:8080
       LLM_SERVICE_URL: http://llm-service:8080
       MARKETPLACE_SERVICE_URL: http://marketplace-service:8080
+      ASSESSMENT_SERVICE_URL: http://assessment-service:8080
       REPORT_WORKER_MODE: ${REPORT_WORKER_MODE:-embedded}
       REPORT_WORKER_HEALTH_URL: ${REPORT_WORKER_HEALTH_URL:-}
       INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN:-dev-internal-worker-token}
@@ -116,6 +119,23 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+
+  assessment-service:
+    build: ./services/assessment
+    env_file:
+      - .env
+    ports:
+      - "8086:8080"
+    depends_on:
+      llm-service:
+        condition: service_healthy
+    environment:
+      LLM_SERVICE_URL: http://llm-service:8080
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
       interval: 5s
