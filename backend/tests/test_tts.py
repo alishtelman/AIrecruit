@@ -4,6 +4,7 @@ import wave
 from io import BytesIO
 
 import pytest
+import httpx
 
 from app.services.tts_service import (
     TTSConfigurationError,
@@ -14,8 +15,10 @@ from app.services.tts_service import (
     _chunk_text,
     _merge_wav_chunks,
     _provider_chain,
+    _synthesize_with_media_service,
     _synthesize_with_provider_chain,
 )
+from app.core.config import settings
 
 
 def _wav_chunk(frame_count: int, frame_byte: bytes = b"\x01\x02") -> bytes:
@@ -162,3 +165,69 @@ async def test_synthesize_returns_unsupported_language_when_only_available_provi
             ["elevenlabs", "groq"],
             {"elevenlabs": eleven, "groq": groq},
         )
+
+
+@pytest.mark.asyncio
+async def test_synthesize_with_media_service_maps_binary_response(monkeypatch: pytest.MonkeyPatch):
+    original_url = settings.MEDIA_SERVICE_URL
+    settings.MEDIA_SERVICE_URL = "http://media-service:8080"
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            return None
+
+        async def post(self, path: str, json: dict) -> httpx.Response:
+            assert path == "/v1/tts"
+            assert json == {"text": "hello", "language": "en"}
+            return httpx.Response(
+                200,
+                content=b"wav-bytes",
+                headers={
+                    "content-type": "audio/wav",
+                    "x-tts-provider": "groq",
+                    "x-tts-model": "orpheus",
+                },
+            )
+
+    monkeypatch.setattr("app.services.tts_service.httpx.AsyncClient", _FakeClient)
+    try:
+        result = await _synthesize_with_media_service("hello", "en")
+    finally:
+        settings.MEDIA_SERVICE_URL = original_url
+
+    assert result.audio_bytes == b"wav-bytes"
+    assert result.media_type == "audio/wav"
+    assert result.provider == "groq"
+    assert result.model == "orpheus"
+
+
+@pytest.mark.asyncio
+async def test_synthesize_with_media_service_maps_provider_error(monkeypatch: pytest.MonkeyPatch):
+    original_url = settings.MEDIA_SERVICE_URL
+    settings.MEDIA_SERVICE_URL = "http://media-service:8080"
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            return None
+
+        async def post(self, path: str, json: dict) -> httpx.Response:
+            return httpx.Response(502, json={"detail": "provider failed"})
+
+    monkeypatch.setattr("app.services.tts_service.httpx.AsyncClient", _FakeClient)
+    try:
+        with pytest.raises(TTSProviderError, match="provider failed"):
+            await _synthesize_with_media_service("hello", "en")
+    finally:
+        settings.MEDIA_SERVICE_URL = original_url

@@ -1,16 +1,21 @@
+import logging
 import uuid
 from collections import defaultdict
 from datetime import datetime
 from statistics import median
 
-from sqlalchemy import desc, select
+import httpx
+from pydantic import ValidationError
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.candidate import Candidate, PROFILE_VISIBILITY_MARKETPLACE
 from app.models.company_assessment import CompanyAssessment
 from app.models.hire_outcome import HireOutcome
 from app.models.interview import Interview
 from app.models.report import AssessmentReport
+from app.models.shortlist import CompanyShortlist, CompanyShortlistCandidate
 from app.models.skill import CandidateSkill
 from app.models.template import InterviewTemplate
 from app.models.user import User
@@ -55,6 +60,7 @@ _PROFICIENCY_RANK = {
     "advanced": 2,
     "expert": 3,
 }
+logger = logging.getLogger(__name__)
 
 
 def _normalize_skill_name(value: str) -> str:
@@ -159,29 +165,103 @@ async def _load_candidate_skills_map(
 async def _load_marketplace_snapshot(
     db: AsyncSession,
     company_id: uuid.UUID,
+    *,
+    q: str | None = None,
+    role: str | None = None,
+    min_score: float | None = None,
+    recommendation: str | None = None,
+    salary_min: int | None = None,
+    salary_max: int | None = None,
+    hire_outcome: str | None = None,
+    shortlist_id: uuid.UUID | None = None,
+    sort: str = "score_desc",
 ) -> list[CandidateListItemResponse]:
-    result = await db.execute(
-        select(AssessmentReport, Interview, Candidate, User)
+    latest_report_rank = (
+        select(
+            AssessmentReport.id.label("report_id"),
+            func.row_number().over(
+                partition_by=AssessmentReport.candidate_id,
+                order_by=(desc(AssessmentReport.created_at), desc(AssessmentReport.id)),
+            ).label("rank"),
+        )
         .join(Interview, AssessmentReport.interview_id == Interview.id)
         .join(Candidate, AssessmentReport.candidate_id == Candidate.id)
-        .join(User, Candidate.user_id == User.id)
         .where(
             Interview.company_assessment_id.is_(None),
             Candidate.profile_visibility == PROFILE_VISIBILITY_MARKETPLACE,
         )
-        .order_by(desc(AssessmentReport.created_at))
+        .subquery()
     )
+
+    query = (
+        select(AssessmentReport, Interview, Candidate, User)
+        .join(latest_report_rank, AssessmentReport.id == latest_report_rank.c.report_id)
+        .join(Interview, AssessmentReport.interview_id == Interview.id)
+        .join(Candidate, AssessmentReport.candidate_id == Candidate.id)
+        .join(User, Candidate.user_id == User.id)
+        .outerjoin(
+            HireOutcome,
+            (HireOutcome.company_id == company_id)
+            & (HireOutcome.candidate_id == Candidate.id),
+        )
+        .where(latest_report_rank.c.rank == 1)
+    )
+
+    if q:
+        needle = f"%{q.strip()}%"
+        query = query.where(or_(Candidate.full_name.ilike(needle), User.email.ilike(needle)))
+
+    if role:
+        query = query.where(Interview.target_role == role)
+
+    if recommendation:
+        query = query.where(AssessmentReport.hiring_recommendation == recommendation)
+
+    if min_score is not None:
+        query = query.where(AssessmentReport.overall_score.is_not(None), AssessmentReport.overall_score >= min_score)
+
+    if hire_outcome:
+        query = query.where(HireOutcome.outcome == hire_outcome)
+
+    if shortlist_id:
+        shortlist_candidate_exists = (
+            select(CompanyShortlistCandidate.id)
+            .join(CompanyShortlist, CompanyShortlistCandidate.shortlist_id == CompanyShortlist.id)
+            .where(
+                CompanyShortlistCandidate.candidate_id == Candidate.id,
+                CompanyShortlistCandidate.shortlist_id == shortlist_id,
+                CompanyShortlist.company_id == company_id,
+            )
+            .exists()
+        )
+        query = query.where(shortlist_candidate_exists)
+
+    if salary_min is not None or salary_max is not None:
+        salary_low = func.coalesce(Candidate.salary_min, Candidate.salary_max)
+        salary_high = func.coalesce(Candidate.salary_max, Candidate.salary_min)
+        query = query.where(salary_low.is_not(None), salary_high.is_not(None))
+        if salary_min is not None:
+            query = query.where(salary_high >= salary_min)
+        if salary_max is not None:
+            query = query.where(salary_low <= salary_max)
+
+    if sort == "latest":
+        query = query.order_by(desc(Interview.completed_at), desc(AssessmentReport.created_at))
+    elif sort == "score_asc":
+        query = query.order_by(AssessmentReport.overall_score.is_(None), AssessmentReport.overall_score.asc())
+    elif sort == "salary_asc":
+        query = query.order_by(
+            (Candidate.salary_min.is_(None) & Candidate.salary_max.is_(None)),
+            func.coalesce(Candidate.salary_min, Candidate.salary_max).asc(),
+        )
+    elif sort == "salary_desc":
+        query = query.order_by(func.coalesce(Candidate.salary_max, Candidate.salary_min, -1).desc())
+    else:
+        query = query.order_by(func.coalesce(AssessmentReport.overall_score, -1).desc())
+
+    result = await db.execute(query)
     rows = result.all()
-
-    latest_rows: list[tuple[AssessmentReport, Interview, Candidate, User]] = []
-    seen: set[uuid.UUID] = set()
-    for report, interview, candidate, user in rows:
-        if candidate.id in seen:
-            continue
-        seen.add(candidate.id)
-        latest_rows.append((report, interview, candidate, user))
-
-    candidate_ids = [candidate.id for _, _, candidate, _ in latest_rows]
+    candidate_ids = [candidate.id for _, _, candidate, _ in rows]
     outcome_map: dict[uuid.UUID, str] = {}
     if candidate_ids:
         outcomes = await db.scalars(
@@ -197,7 +277,7 @@ async def _load_marketplace_snapshot(
     skill_name_map, aggregated_skill_tags_map = await _load_candidate_skills_map(db, candidate_ids)
 
     items: list[CandidateListItemResponse] = []
-    for report, interview, candidate, user in latest_rows:
+    for report, interview, candidate, user in rows:
         report_skill_tags = report.skill_tags or aggregated_skill_tags_map.get(candidate.id) or []
         normalized_skill_names = skill_name_map.get(candidate.id)
         if normalized_skill_names is None:
@@ -328,18 +408,87 @@ async def list_verified_candidates(
     shortlist_id: uuid.UUID | None = None,
     sort: str = "score_desc",
 ) -> list[CandidateListItemResponse]:
-    items = await _load_marketplace_snapshot(db, company_id)
-    return _apply_candidate_filters(
-        items,
+    """Return verified marketplace candidates.
+
+    When MARKETPLACE_SERVICE_URL is configured the Go marketplace service is the
+    authoritative source.  If the Go service is reachable but returns an error
+    response or an invalid payload the call raises immediately — there is no
+    silent fallback.  This surfaces Go-service health problems instead of
+    masking them behind stale Python results.
+
+    When MARKETPLACE_SERVICE_URL is not configured (e.g. local development
+    without the sidecar) the function falls back to the Python query path so
+    that the rest of the platform remains usable.
+    """
+    from fastapi import HTTPException, status as http_status  # local import to keep service layer thin
+
+    base_url = str(settings.MARKETPLACE_SERVICE_URL or "").strip().rstrip("/")
+    if base_url:
+        payload = {
+            "company_id": str(company_id),
+            "q": q,
+            "role": role,
+            "skills": skills or [],
+            "min_score": min_score,
+            "recommendation": recommendation,
+            "salary_min": salary_min,
+            "salary_max": salary_max,
+            "hire_outcome": hire_outcome,
+            "shortlist_id": str(shortlist_id) if shortlist_id else None,
+            "sort": sort,
+        }
+        try:
+            async with httpx.AsyncClient(base_url=base_url, timeout=10.0) as client:
+                response = await client.post("/v1/company-candidates/search", json=payload)
+            if not response.is_success:
+                logger.error(
+                    "Marketplace service returned HTTP %s — no fallback available",
+                    response.status_code,
+                )
+                raise HTTPException(
+                    status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Marketplace service unavailable",
+                )
+            data = response.json()
+            if not isinstance(data, list):
+                logger.error("Marketplace service returned invalid payload — no fallback available")
+                raise HTTPException(
+                    status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Marketplace service returned an invalid response",
+                )
+            return [CandidateListItemResponse.model_validate(item) for item in data]
+        except (httpx.HTTPError, ValueError, ValidationError) as exc:
+            logger.error("Marketplace service unavailable — no fallback: %s", exc)
+            raise HTTPException(
+                status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Marketplace service unavailable",
+            ) from exc
+
+    # MARKETPLACE_SERVICE_URL not configured — Python path for local development.
+    items = await _load_marketplace_snapshot(
+        db,
+        company_id,
         q=q,
         role=role,
-        skills=skills,
         min_score=min_score,
         recommendation=recommendation,
         salary_min=salary_min,
         salary_max=salary_max,
         hire_outcome=hire_outcome,
         shortlist_id=shortlist_id,
+        sort=sort,
+    )
+    return _apply_candidate_filters(
+        items,
+        q=None,
+        role=None,
+        skills=skills,
+        min_score=None,
+        recommendation=None,
+        salary_min=None,
+        salary_max=None,
+        hire_outcome=None,
+        shortlist_id=None,
         sort=sort,
     )
 

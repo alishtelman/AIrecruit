@@ -8,6 +8,7 @@ Requires authentication.
 """
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
+import httpx
 from groq import AsyncGroq
 
 from app.api.v1.deps import get_current_user
@@ -41,6 +42,13 @@ async def transcribe(
             detail="Audio file too large (max 25 MB)",
         )
 
+    if settings.MEDIA_SERVICE_URL:
+        try:
+            return await _transcribe_with_media_service(file, audio_bytes)
+        except httpx.RequestError:
+            # Preserve local/dev behavior if the Go media sidecar is unavailable.
+            pass
+
     client = AsyncGroq(api_key=settings.GROQ_API_KEY)
     try:
         filename = file.filename or "audio.webm"
@@ -55,3 +63,33 @@ async def transcribe(
         ) from exc
 
     return {"text": transcription.text}
+
+
+async def _transcribe_with_media_service(file: UploadFile, audio_bytes: bytes) -> dict:
+    base_url = settings.MEDIA_SERVICE_URL.rstrip("/")
+    filename = file.filename or "audio.webm"
+    content_type = file.content_type or "audio/webm"
+    async with httpx.AsyncClient(base_url=base_url, timeout=60.0) as client:
+        response = await client.post(
+            "/v1/stt",
+            files={"file": (filename, audio_bytes, content_type)},
+        )
+
+    if response.is_success:
+        return response.json()
+
+    detail = _extract_error_detail(response)
+    raise HTTPException(status_code=response.status_code, detail=detail)
+
+
+def _extract_error_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        detail = payload.get("detail") or payload.get("message")
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+    body = response.text.strip()
+    return body or f"HTTP {response.status_code}"

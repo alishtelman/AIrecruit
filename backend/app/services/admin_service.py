@@ -190,6 +190,13 @@ async def update_admin_platform_settings(
     proctoring_policy_mode: str | None = None,
     interviewer_model_preference: str | None = None,
     assessor_model_preference: str | None = None,
+    llm_provider: str | None = None,
+    interviewer_model: str | None = None,
+    assessor_model: str | None = None,
+    interviewer_prompt_override: str | None = None,
+    assessor_prompt_override: str | None = None,
+    llm_timeout_seconds: int | None = None,
+    llm_max_retries: int | None = None,
 ) -> dict:
     payload = await update_platform_settings(
         db,
@@ -200,6 +207,13 @@ async def update_admin_platform_settings(
         proctoring_policy_mode=proctoring_policy_mode,
         interviewer_model_preference=interviewer_model_preference,
         assessor_model_preference=assessor_model_preference,
+        llm_provider=llm_provider,
+        interviewer_model=interviewer_model,
+        assessor_model=assessor_model,
+        interviewer_prompt_override=interviewer_prompt_override,
+        assessor_prompt_override=assessor_prompt_override,
+        llm_timeout_seconds=llm_timeout_seconds,
+        llm_max_retries=llm_max_retries,
     )
     return payload
 

@@ -157,7 +157,7 @@
     "aiSettings": {
       "loading": "Loading AI settings...",
       "title": "Global interview engine settings",
-      "description": "These settings become the default for candidate interviews and the baseline for company-specific overrides.",
+      "description": "These platform-only settings control interviewer and assessor runtime for all workspaces.",
       "save": "Save AI settings",
       "saved": "AI settings updated",
       "errors": {
@@ -750,7 +750,7 @@
     },
     "ai": {
       "title": "AI workspace controls",
-      "subtitle": "Review the active runtime stack and set workspace preferences for future interviews and reports.",
+      "subtitle": "AI runtime is managed by the platform admin. Company users can view only safe operational status.",
       "loading": "Loading AI settings...",
       "success": "AI workspace settings saved.",
       "saving": "Saving AI settings...",

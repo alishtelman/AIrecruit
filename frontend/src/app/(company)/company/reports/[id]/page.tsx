@@ -41,6 +41,30 @@ const TIMELINE_RISK_STYLES: Record<"low" | "medium" | "high", string> = {
   high: "bg-red-500/15 text-red-300 border-red-500/30",
 };
 
+function normalizedKey(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function dedupeText(items: string[]): string[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = normalizedKey(item);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeBy<T>(items: T[] | null | undefined, keyFn: (item: T) => unknown): T[] {
+  const seen = new Set<string>();
+  return (items ?? []).filter((item) => {
+    const key = normalizedKey(keyFn(item));
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export default function CompanyReportPage() {
   const locale = useLocale();
   const t = useTranslations("report");
@@ -56,6 +80,7 @@ export default function CompanyReportPage() {
   const [timeline, setTimeline] = useState<ProctoringTimeline | null>(null);
   const [error, setError] = useState("");
   const [expandedQ, setExpandedQ] = useState<number | null>(null);
+  const [timelineExpanded, setTimelineExpanded] = useState(false);
 
   useEffect(() => {
     if (!id || authLoading) return;
@@ -87,7 +112,21 @@ export default function CompanyReportPage() {
     );
   }
 
-  const rec = RECOMMENDATION_CONFIG[report.hiring_recommendation];
+  const displayReport = {
+    ...report,
+    strengths: dedupeText(report.strengths),
+    weaknesses: dedupeText(report.weaknesses),
+    recommendations: dedupeText(report.recommendations),
+    red_flags: dedupeBy(report.red_flags, (flag) => flag.flag || flag.evidence),
+    skill_tags: dedupeBy(report.skill_tags, (tag) => tag.skill),
+  };
+  const rec = RECOMMENDATION_CONFIG[displayReport.hiring_recommendation];
+  const keyRisks = [
+    ...(displayReport.red_flags ?? []).slice(0, 2).map((flag) => flag.flag),
+    ...(displayReport.cheat_flags ?? []).slice(0, 1),
+  ].filter((risk): risk is string => Boolean(risk));
+  const shouldCollapseTimeline = Boolean(timeline && timeline.risk_level === "low" && timeline.high_severity_count === 0);
+  const showTimelineDetails = !shouldCollapseTimeline || timelineExpanded;
 
   return (
     <div className="ai-shell min-h-screen px-4 py-10">
@@ -101,77 +140,83 @@ export default function CompanyReportPage() {
 
         <div className="ai-panel-strong mb-6 rounded-[2rem] p-7">
           <h1 className="mb-2 text-3xl font-semibold tracking-[-0.03em] text-white">{t("title")}</h1>
-          {report.interview_summary && <p className="max-w-3xl text-slate-400">{report.interview_summary}</p>}
+          {displayReport.interview_summary && <p className="max-w-3xl text-slate-400">{displayReport.interview_summary}</p>}
 
         <div className={`mt-5 inline-flex items-center gap-2 border rounded-full px-4 py-1.5 text-sm font-semibold ${rec.bg} ${rec.color}`}>
-          {t("recommendation")}: {dashboardT(`recommendations.${report.hiring_recommendation}`)}
+          {t("recommendation")}: {dashboardT(`recommendations.${displayReport.hiring_recommendation}`)}
         </div>
+        {keyRisks.length > 0 && (
+          <div className="mt-5 rounded-2xl border border-red-500/20 bg-red-500/10 p-4">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-red-300">Key risks</div>
+            <ul className="space-y-1 text-sm text-red-100">
+              {keyRisks.map((risk) => <li key={risk}>• {risk}</li>)}
+            </ul>
+          </div>
+        )}
         </div>
-
-        {report.module_session?.scenario_title && <ModuleSessionBanner session={report.module_session} />}
-
-        {report.summary_model && <InterviewSummaryPanel summaryModel={report.summary_model} />}
-        {report.system_design_summary && <SystemDesignSummaryPanel summary={report.system_design_summary} />}
-        {report.behavioral_interview_summary && <BehavioralInterviewSummaryPanel summary={report.behavioral_interview_summary} />}
-        {report.coding_task_summary && <CodingTaskSummaryPanel summary={report.coding_task_summary} />}
-        {report.sql_live_summary && <SqlLiveSummaryPanel summary={report.sql_live_summary} />}
-        {report.written_communication_summary && <WrittenCommunicationSummaryPanel summary={report.written_communication_summary} />}
 
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
-          <ScoreCard label={t("overallScore")} score={report.overall_score} highlight />
-          <ScoreCard label={t("hardSkills")} score={report.hard_skills_score} />
-          <ScoreCard label={t("softSkills")} score={report.soft_skills_score} />
-          <ScoreCard label={t("communication")} score={report.communication_score} />
-          <ScoreCard label={t("problemSolving")} score={report.problem_solving_score} />
-          {report.response_consistency != null && <ScoreCard label={t("consistency")} score={report.response_consistency} />}
+          <ScoreCard label={t("overallScore")} score={displayReport.overall_score} highlight />
+          <ScoreCard label={t("hardSkills")} score={displayReport.hard_skills_score} />
+          <ScoreCard label={t("softSkills")} score={displayReport.soft_skills_score} />
+          <ScoreCard label={t("communication")} score={displayReport.communication_score} />
+          <ScoreCard label={t("problemSolving")} score={displayReport.problem_solving_score} />
+          {displayReport.response_consistency != null && <ScoreCard label={t("consistency")} score={displayReport.response_consistency} />}
         </div>
+
+        <ConfidencePanel report={displayReport} locale={locale} />
+
+        {(displayReport.strengths.length > 0 || displayReport.weaknesses.length > 0 || displayReport.recommendations.length > 0) && (
+          <div className="grid gap-4 md:grid-cols-3">
+            {displayReport.strengths.length > 0 && (
+              <Section title={t("strengths")} color="green">
+                {displayReport.strengths.map((s) => <ListItem key={s} text={s} bullet="✓" color="text-green-400" />)}
+              </Section>
+            )}
+
+            {displayReport.weaknesses.length > 0 && (
+              <Section title={t("areasToImprove")} color="yellow">
+                {displayReport.weaknesses.map((w) => <ListItem key={w} text={w} bullet="△" color="text-yellow-400" />)}
+              </Section>
+            )}
 
         <ConfidencePanel report={report} locale={locale} />
         {report.explainability_report && (
           <ExplainabilityPanel explainability={report.explainability_report} />
         )}
 
-        {report.competency_scores && report.competency_scores.length > 0 && (
+        {displayReport.competency_scores && displayReport.competency_scores.length > 0 && (
           <Section title={t("competencyHeatmap")} color="blue">
-            <CompetencyHeatmap scores={report.competency_scores} />
+            <CompetencyHeatmap scores={displayReport.competency_scores} />
           </Section>
         )}
 
-        {report.skill_tags && report.skill_tags.length > 0 && (
-          <Section title={t("skillsIdentified")} color="cyan"><SkillMatrix tags={report.skill_tags} /></Section>
+        {displayReport.skill_tags && displayReport.skill_tags.length > 0 && (
+          <Section title={t("skillsIdentified")} color="cyan"><SkillMatrix tags={displayReport.skill_tags} /></Section>
         )}
 
-        {report.red_flags && report.red_flags.length > 0 && (
+        {displayReport.module_session?.scenario_title && <ModuleSessionBanner session={displayReport.module_session} />}
+
+        {displayReport.summary_model && <InterviewSummaryPanel summaryModel={displayReport.summary_model} />}
+        {displayReport.system_design_summary && <SystemDesignSummaryPanel summary={displayReport.system_design_summary} />}
+        {displayReport.behavioral_interview_summary && <BehavioralInterviewSummaryPanel summary={displayReport.behavioral_interview_summary} />}
+        {displayReport.coding_task_summary && <CodingTaskSummaryPanel summary={displayReport.coding_task_summary} />}
+        {displayReport.sql_live_summary && <SqlLiveSummaryPanel summary={displayReport.sql_live_summary} />}
+        {displayReport.written_communication_summary && <WrittenCommunicationSummaryPanel summary={displayReport.written_communication_summary} />}
+
+        {displayReport.red_flags && displayReport.red_flags.length > 0 && (
           <Section title={t("redFlags")} color="red">
             <div className="space-y-3">
-              {report.red_flags.map((rf, i) => <RedFlagRow key={i} flag={rf} />)}
+              {displayReport.red_flags.map((rf, i) => <RedFlagRow key={`${rf.flag}-${i}`} flag={rf} />)}
             </div>
           </Section>
         )}
 
-        {report.strengths.length > 0 && (
-          <Section title={t("strengths")} color="green">
-            {report.strengths.map((s, i) => <ListItem key={i} text={s} bullet="✓" color="text-green-400" />)}
-          </Section>
-        )}
-
-        {report.weaknesses.length > 0 && (
-          <Section title={t("areasToImprove")} color="yellow">
-            {report.weaknesses.map((w, i) => <ListItem key={i} text={w} bullet="△" color="text-yellow-400" />)}
-          </Section>
-        )}
-
-        {report.recommendations.length > 0 && (
-          <Section title={t("recommendations")} color="purple">
-            {report.recommendations.map((r, i) => <ListItem key={i} text={r} bullet="→" color="text-purple-400" />)}
-          </Section>
-        )}
-
-        {report.per_question_analysis && report.per_question_analysis.length > 0 && (
+        {displayReport.per_question_analysis && displayReport.per_question_analysis.length > 0 && (
           <div className="mt-6">
             <h2 className="text-white font-semibold mb-3">{t("perQuestionAnalysis")}</h2>
             <div className="space-y-2">
-              {report.per_question_analysis.map((qa, i) => (
+              {displayReport.per_question_analysis.map((qa, i) => (
                 <QuestionAccordion key={i} qa={qa} expanded={expandedQ === i} onToggle={() => setExpandedQ(expandedQ === i ? null : i)} />
               ))}
             </div>
@@ -179,21 +224,21 @@ export default function CompanyReportPage() {
         )}
 
         {/* Cheat risk */}
-        {report.cheat_risk_score != null && report.cheat_risk_score > 0 && (
+        {displayReport.cheat_risk_score != null && displayReport.cheat_risk_score > 0 && (
           <div className="bg-slate-800 border border-orange-500/40 rounded-xl p-5 mb-4 mt-4">
             <div className="flex items-center gap-3 mb-2">
               <span className="text-orange-400 font-semibold text-sm">{t("behavioralRisk")}</span>
               <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-                report.cheat_risk_score >= 0.7 ? "bg-red-500/20 text-red-400" :
-                report.cheat_risk_score >= 0.4 ? "bg-orange-500/20 text-orange-400" :
+                displayReport.cheat_risk_score >= 0.7 ? "bg-red-500/20 text-red-400" :
+                displayReport.cheat_risk_score >= 0.4 ? "bg-orange-500/20 text-orange-400" :
                 "bg-yellow-500/20 text-yellow-400"
               }`}>
-                {t("risk")}: {Math.round(report.cheat_risk_score * 100)}%
+                {t("risk")}: {Math.round(displayReport.cheat_risk_score * 100)}%
               </span>
             </div>
-            {report.cheat_flags && report.cheat_flags.length > 0 && (
+            {displayReport.cheat_flags && displayReport.cheat_flags.length > 0 && (
               <ul className="space-y-1">
-                {report.cheat_flags.map((f, i) => (
+                {displayReport.cheat_flags.map((f, i) => (
                   <li key={i} className="text-orange-300 text-xs flex gap-2">
                     <span className="text-orange-500 mt-0.5 shrink-0">•</span>{f}
                   </li>
@@ -241,7 +286,17 @@ export default function CompanyReportPage() {
                 )}
               </div>
 
-              {timeline.events.length === 0 ? (
+              {shouldCollapseTimeline && (
+                <button
+                  type="button"
+                  onClick={() => setTimelineExpanded(!timelineExpanded)}
+                  className="rounded-full border border-cyan-500/30 px-3 py-1 text-xs font-semibold text-cyan-200 transition-colors hover:bg-cyan-500/10"
+                >
+                  {timelineExpanded ? "Hide timeline details" : "Show low-risk timeline details"}
+                </button>
+              )}
+
+              {showTimelineDetails && (timeline.events.length === 0 ? (
                 <div className="rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-slate-400">
                   {t("proctoringNoEvents")}
                 </div>
@@ -251,13 +306,13 @@ export default function CompanyReportPage() {
                     <TimelineEventRow key={`${event.event_type}-${idx}`} event={event} />
                   ))}
                 </div>
-              )}
+              ))}
             </div>
           </Section>
         )}
 
         <div className="text-slate-600 text-xs mt-8">
-          {t("generatedBy", {model: report.model_version, date: new Date(report.created_at).toLocaleDateString()})}
+          {t("generatedBy", {model: displayReport.model_version, date: new Date(displayReport.created_at).toLocaleDateString()})}
         </div>
       </div>
     </div>

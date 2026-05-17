@@ -60,6 +60,10 @@ Verified on `origin/main` in [`docs/platform-admin.md`](docs/platform-admin.md):
 | Layer | Technology |
 |---|---|
 | Backend | Python 3.11, FastAPI, SQLAlchemy async, Alembic |
+| Media service | Go sidecar for STT/TTS provider calls |
+| Resume service | Go sidecar for resume upload validation, storage, and text extraction |
+| Sandbox service | Go sidecar for coding-task runner orchestration |
+| Report worker | Go worker for report-generation polling/orchestration |
 | Database | PostgreSQL 16 |
 | Frontend | Next.js 14.2, TypeScript, Tailwind CSS |
 | i18n | `next-intl` (`en`, `ru`) |
@@ -82,6 +86,18 @@ backend/app/
 
 backend/alembic/versions/
   ...                DB migrations
+
+services/media/
+  cmd/media-service/ Go STT/TTS provider sidecar
+
+services/resume/
+  cmd/resume-service/ Go resume upload/storage sidecar
+
+services/report-worker/
+  cmd/report-worker/ Go report generation worker loop
+
+services/sandbox/
+  cmd/sandbox-service/ Go coding-task sandbox runner
 
 frontend/src/
   app/               Next.js app routes
@@ -378,6 +394,9 @@ AI:
 - `ALLOW_MOCK_AI` (dev/test fallback behavior)
 - `TTS_PROVIDER` (`groq` or `elevenlabs`)
 - `TTS_FALLBACK_PROVIDER`
+- `MEDIA_SERVICE_URL` (optional Go media sidecar URL; compose sets this for backend)
+- `RESUME_SERVICE_URL` (optional Go resume sidecar URL; compose sets this for backend)
+- `SANDBOX_SERVICE_URL` (optional Go sandbox sidecar URL for coding-task and SQL live checks; compose sets this for backend)
 - `ELEVENLABS_API_KEY`
 - `ELEVENLABS_VOICE_ID`
 - `ELEVENLABS_TTS_MODEL`
@@ -392,6 +411,14 @@ Report pipeline:
 - `REPORT_RETRY_BASE_BACKOFF_SECONDS`
 - `REPORT_RETRY_MAX_BACKOFF_SECONDS`
 - `REPORT_LOCK_STALE_SECONDS`
+- `REPORT_WORKER_MODE` (`embedded` or `external`)
+- `INTERNAL_WORKER_TOKEN` (required when `REPORT_WORKER_MODE=external`)
+
+The Go report worker is opt-in for local development to avoid accidentally processing old report backlog:
+
+```bash
+REPORT_WORKER_MODE=external docker compose --profile workers up -d report-worker
+```
 
 Storage:
 

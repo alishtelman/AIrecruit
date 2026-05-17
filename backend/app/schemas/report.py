@@ -280,6 +280,48 @@ class BehavioralInterviewSummary(BaseModel):
     next_steps: list[str] = []
 
 
+def _normalize_dedupe_key(value: object) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _dedupe_text_items(items: object) -> list[str]:
+    if not isinstance(items, list):
+        return []
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        text = str(item or "").strip()
+        key = _normalize_dedupe_key(text)
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+    return result
+
+
+def _mapping_value(item: object, key: str) -> object:
+    if isinstance(item, dict):
+        return item.get(key)
+    return getattr(item, key, None)
+
+
+def _dedupe_mapping_items(items: object, keys: tuple[str, ...]) -> list:
+    if not isinstance(items, list):
+        return []
+    seen: set[str] = set()
+    result: list = []
+    for item in items:
+        key_source = next((_mapping_value(item, key) for key in keys if _mapping_value(item, key)), None)
+        if key_source is None:
+            key_source = item
+        key = _normalize_dedupe_key(key_source)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
 class AssessmentReportResponse(BaseModel):
     id: uuid.UUID
     interview_id: uuid.UUID
@@ -344,6 +386,11 @@ class AssessmentReportResponse(BaseModel):
 
         full_report_json = _get_value(data, "full_report_json")
         per_question_analysis = _get_value(data, "per_question_analysis")
+        _set_value(data, "strengths", _dedupe_text_items(_get_value(data, "strengths")))
+        _set_value(data, "weaknesses", _dedupe_text_items(_get_value(data, "weaknesses")))
+        _set_value(data, "recommendations", _dedupe_text_items(_get_value(data, "recommendations")))
+        _set_value(data, "red_flags", _dedupe_mapping_items(_get_value(data, "red_flags"), ("flag", "evidence")))
+        _set_value(data, "skill_tags", _dedupe_mapping_items(_get_value(data, "skill_tags"), ("skill", "name")))
 
         if isinstance(full_report_json, dict):
             proficiency_profile = full_report_json.get("proficiency_profile")

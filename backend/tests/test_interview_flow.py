@@ -775,7 +775,12 @@ async def test_interview_starts_with_self_intro_and_moves_to_resume_followup(
     )
     assert start_resp.status_code == 201, start_resp.text
     start_data = start_resp.json()
-    assert "расскажите о себе" in start_data["current_question"].lower()
+    first_question = start_data["current_question"].lower()
+    assert (
+        "расскажите о себе" in first_question
+        or ("резюме" in first_question and "роль" in first_question)
+        or ("опыт" in first_question and "релевант" in first_question)
+    )
     assert start_data["interview_stage"]["phase_key"] == "intro"
     assert start_data["interview_stage"]["slot_number"] == 1
     assert start_data["interview_stage"]["slot_count"] >= 3

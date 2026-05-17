@@ -284,9 +284,40 @@ async def _synthesize_with_provider_chain(
 async def synthesize_text_to_speech(text: str, language: str | None) -> TTSResult:
     normalized_text = normalize_tts_text(text)
     normalized_language = normalize_tts_language(language)
+    if settings.MEDIA_SERVICE_URL:
+        try:
+            return await _synthesize_with_media_service(normalized_text, normalized_language)
+        except httpx.RequestError:
+            # Keep local/dev behavior resilient if the Go media sidecar is not running.
+            pass
+
     return await _synthesize_with_provider_chain(
         normalized_text,
         normalized_language,
         _provider_chain(settings.TTS_PROVIDER, settings.TTS_FALLBACK_PROVIDER),
         _provider_map(),
     )
+
+
+async def _synthesize_with_media_service(text: str, language: str) -> TTSResult:
+    base_url = settings.MEDIA_SERVICE_URL.rstrip("/")
+    async with httpx.AsyncClient(base_url=base_url, timeout=60.0) as client:
+        response = await client.post(
+            "/v1/tts",
+            json={"text": text, "language": language},
+        )
+
+    if response.is_success:
+        return TTSResult(
+            audio_bytes=response.content,
+            media_type=response.headers.get("content-type", "audio/wav").split(";")[0] or "audio/wav",
+            provider=response.headers.get("x-tts-provider", "media-service"),
+            model=response.headers.get("x-tts-model", ""),
+        )
+
+    detail = _extract_error_detail(response)
+    if response.status_code == 422:
+        raise TTSUnsupportedLanguageError(detail)
+    if response.status_code == 503:
+        raise TTSUnavailableError(detail)
+    raise TTSProviderError(detail)

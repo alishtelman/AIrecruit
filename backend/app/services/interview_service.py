@@ -15,7 +15,8 @@ from datetime import datetime, timedelta, timezone
 import re
 from typing import Any
 
-from sqlalchemy import select
+import httpx
+from sqlalchemy import func, outerjoin, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.assessor import AssessmentResult, assessor
@@ -858,8 +859,8 @@ _CODING_TASK_SCENARIOS: dict[str, dict[str, str]] = {
         "stack_focus_en": "QA automation, pytest/playwright-style test strategy, and flaky-test diagnostics",
         "stack_focus_ru": "QA automation, pytest/playwright-style test strategy и flaky-test diagnostics",
         "preferred_language": "python",
-        "workspace_hint_en": "A free-form QA solution is acceptable. Show how you would model failures, assertions, fixtures, reporting, or CI diagnostics instead of only describing the idea at a high level.",
-        "workspace_hint_ru": "Подойдёт свободное QA-решение. Покажите, как вы моделируете failures, assertions, fixtures, reporting или CI diagnostics, а не только общую идею.",
+        "workspace_hint_en": "A free-form QA solution is acceptable. Show how you would model failures, assertions, fixtures, reporting, or CI diagnostics instead of only describing the idea at a high level. If you write executable Python, expose classify_flaky_tests(runs).",
+        "workspace_hint_ru": "Подойдёт свободное QA-решение. Покажите, как вы моделируете failures, assertions, fixtures, reporting или CI diagnostics, а не только общую идею. Если пишете исполняемый Python, вынесите classify_flaky_tests(runs).",
     },
     "devops_engineer": {
         "scenario_id": "deployment_rollout_guard",
@@ -870,8 +871,8 @@ _CODING_TASK_SCENARIOS: dict[str, dict[str, str]] = {
         "stack_focus_en": "Deployment automation, metrics-driven decisions, and ops safety controls",
         "stack_focus_ru": "Deployment automation, metrics-driven decisions и ops safety controls",
         "preferred_language": "python",
-        "workspace_hint_en": "A free-form DevOps solution is acceptable. Show rollback thresholds, health checks, event inputs, and how the logic would fit into automation or control-plane code.",
-        "workspace_hint_ru": "Подойдёт свободное DevOps-решение. Покажите rollback thresholds, health checks, входные события и то, как логика встроится в automation или control-plane code.",
+        "workspace_hint_en": "A free-form DevOps solution is acceptable. Show rollback thresholds, health checks, event inputs, and how the logic would fit into automation or control-plane code. If you write executable Python, expose evaluate_rollout_health(snapshot).",
+        "workspace_hint_ru": "Подойдёт свободное DevOps-решение. Покажите rollback thresholds, health checks, входные события и то, как логика встроится в automation или control-plane code. Если пишете исполняемый Python, вынесите evaluate_rollout_health(snapshot).",
     },
     "data_scientist": {
         "scenario_id": "feature_freshness_monitor",
@@ -882,8 +883,8 @@ _CODING_TASK_SCENARIOS: dict[str, dict[str, str]] = {
         "stack_focus_en": "Python data logic, feature validation, and scoring pipeline safeguards",
         "stack_focus_ru": "Python data logic, feature validation и safeguards для scoring pipeline",
         "preferred_language": "python",
-        "workspace_hint_en": "A free-form data solution is acceptable. Show thresholds, null/fallback handling, and how the logic would fit into a scoring or feature-serving pipeline.",
-        "workspace_hint_ru": "Подойдёт свободное data-решение. Покажите thresholds, обработку null/fallback и то, как логика встроится в scoring или feature-serving pipeline.",
+        "workspace_hint_en": "A free-form data solution is acceptable. Show thresholds, null/fallback handling, and how the logic would fit into a scoring or feature-serving pipeline. If you write executable Python, expose evaluate_feature_freshness(record, now_ts, max_age_seconds=3600).",
+        "workspace_hint_ru": "Подойдёт свободное data-решение. Покажите thresholds, обработку null/fallback и то, как логика встроится в scoring или feature-serving pipeline. Если пишете исполняемый Python, вынесите evaluate_feature_freshness(record, now_ts, max_age_seconds=3600).",
     },
     "product_manager": {
         "scenario_id": "experiment_guardrail_parser",
@@ -2682,6 +2683,10 @@ def _log_report_pipeline_event(
         **fields,
     }
     logger.info("report_pipeline %s", json.dumps(payload, sort_keys=True, default=str))
+
+
+def _external_report_worker_enabled() -> bool:
+    return settings.REPORT_WORKER_MODE.strip().lower() == "external"
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
@@ -5141,8 +5146,14 @@ def _apply_low_confidence_verdict_guard(result: AssessmentResult) -> AssessmentR
 async def _get_next_question_with_dev_fallback(
     ctx: InterviewContext,
     model_preference: str | None = None,
+    runtime_settings: dict[str, Any] | None = None,
 ) -> str:
     async def _call_with_optional_override(client: Any) -> str:
+        if runtime_settings is not None:
+            try:
+                return await client.get_next_question(ctx, runtime_settings=runtime_settings)
+            except TypeError:
+                return await client.get_next_question(ctx)
         if model_preference is None:
             return await client.get_next_question(ctx)
         try:
@@ -5203,6 +5214,7 @@ async def _assess_with_dev_fallback(
                 language=language,
                 interview_meta=interview_meta,
                 model_override=assessor_model_preference,
+                runtime_settings=workspace_ai_settings if isinstance(workspace_ai_settings, dict) else None,
             ),
             timeout=_assessment_timeout_seconds(),
         )
@@ -5538,10 +5550,9 @@ async def start_interview(
         module_stage_index=0,
         module_stage_count=len(module_context.get("stage_plan", [])) if module_context else 0,
     )
-    interviewer_model_preference = safe_workspace_ai_settings.get("interviewer_model_preference")
     first_question = await _get_next_question_with_dev_fallback(
         ctx,
-        model_preference=interviewer_model_preference,
+        runtime_settings=safe_workspace_ai_settings,
     )
     first_question = _sanitize_chat_question(first_question, language=language) or first_question
 
@@ -5607,8 +5618,15 @@ async def start_interview(
     if safe_workspace_ai_settings:
         initial_state["workspace_ai_settings"] = {
             "proctoring_policy_mode": safe_workspace_ai_settings.get("proctoring_policy_mode"),
+            "llm_provider": safe_workspace_ai_settings.get("llm_provider"),
+            "interviewer_model": safe_workspace_ai_settings.get("interviewer_model"),
+            "assessor_model": safe_workspace_ai_settings.get("assessor_model"),
             "interviewer_model_preference": safe_workspace_ai_settings.get("interviewer_model_preference"),
             "assessor_model_preference": safe_workspace_ai_settings.get("assessor_model_preference"),
+            "interviewer_prompt_override": safe_workspace_ai_settings.get("interviewer_prompt_override"),
+            "assessor_prompt_override": safe_workspace_ai_settings.get("assessor_prompt_override"),
+            "llm_timeout_seconds": safe_workspace_ai_settings.get("llm_timeout_seconds"),
+            "llm_max_retries": safe_workspace_ai_settings.get("llm_max_retries"),
         }
     if normalized_module_type:
         initial_state.update(
@@ -7445,8 +7463,15 @@ async def add_candidate_message(
         if isinstance(workspace_ai_settings, dict) and workspace_ai_settings:
             interview.interview_state["workspace_ai_settings"] = {
                 "proctoring_policy_mode": workspace_ai_settings.get("proctoring_policy_mode"),
+                "llm_provider": workspace_ai_settings.get("llm_provider"),
+                "interviewer_model": workspace_ai_settings.get("interviewer_model"),
+                "assessor_model": workspace_ai_settings.get("assessor_model"),
                 "interviewer_model_preference": workspace_ai_settings.get("interviewer_model_preference"),
                 "assessor_model_preference": workspace_ai_settings.get("assessor_model_preference"),
+                "interviewer_prompt_override": workspace_ai_settings.get("interviewer_prompt_override"),
+                "assessor_prompt_override": workspace_ai_settings.get("assessor_prompt_override"),
+                "llm_timeout_seconds": workspace_ai_settings.get("llm_timeout_seconds"),
+                "llm_max_retries": workspace_ai_settings.get("llm_max_retries"),
             }
         if coding_task_artifact and _is_workspace_artifact_module_type(module_type):
             interview.interview_state["coding_task_artifact"] = {
@@ -7889,13 +7914,15 @@ async def _ensure_report_generated(
     messages = await _get_messages(db, interview.id)
     _update_report_diagnostics(interview, phase="assessing", status="processing")
     await db.commit()
+    report_interview_meta = dict(interview.interview_state or {})
+    report_interview_meta["workspace_ai_settings"] = await build_effective_workspace_ai_settings(db)
     result: AssessmentResult = await _assess_with_dev_fallback(
         target_role=interview.target_role,
         message_history=_to_history(messages),
         message_timestamps=_to_timestamps(messages),
         behavioral_signals=interview.behavioral_signals,
         language=interview.language,
-        interview_meta=interview.interview_state or {},
+        interview_meta=report_interview_meta,
     )
     result = _apply_low_confidence_verdict_guard(result)
     if not isinstance(result.full_report_json, dict):
@@ -8077,6 +8104,13 @@ async def _ensure_report_generated(
 
 
 def _schedule_report_generation(interview_id: uuid.UUID) -> None:
+    if _external_report_worker_enabled():
+        _log_report_pipeline_event(
+            "report_schedule_external_worker",
+            interview_id=interview_id,
+        )
+        return
+
     if interview_id in _REPORT_GENERATION_TASKS:
         _increment_report_pipeline_metric("report_schedule_skipped_duplicate_total")
         _log_report_pipeline_event(
@@ -8093,6 +8127,126 @@ def _schedule_report_generation(interview_id: uuid.UUID) -> None:
         active_tasks=len(_REPORT_GENERATION_TASKS),
     )
     asyncio.create_task(_run_report_generation_job(interview_id))
+
+
+def _report_worker_pending_base():
+    return outerjoin(
+        Interview,
+        AssessmentReport,
+        AssessmentReport.interview_id == Interview.id,
+    )
+
+
+def _report_worker_pending_where():
+    return (
+        Interview.status.in_(("completed", "report_processing")),
+        AssessmentReport.id.is_(None),
+    )
+
+
+async def _fetch_report_worker_health() -> dict[str, Any] | None:
+    """Fetch the Go report-worker /health payload.
+
+    Returns None on any error so callers can silently degrade — the Go
+    operational state is a nice-to-have overlay on top of the authoritative
+    DB queue state.
+    """
+    base_url = str(settings.REPORT_WORKER_HEALTH_URL or "").strip().rstrip("/")
+    if not base_url:
+        return None
+    try:
+        async with httpx.AsyncClient(base_url=base_url, timeout=3.0) as client:
+            response = await client.get("/health")
+        if not response.is_success:
+            logger.warning("Report-worker health returned HTTP %s", response.status_code)
+            return None
+        data = response.json()
+        if not isinstance(data, dict):
+            logger.warning("Report-worker health returned invalid payload")
+            return None
+        return data
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("Report-worker health unavailable: %s", exc)
+        return None
+
+
+async def get_external_report_worker_status() -> dict[str, Any]:
+    """Return a merged view of the report-worker queue state.
+
+    The DB is always queried for authoritative queue metrics (pending_count,
+    next_interview_id, oldest_pending_updated_at).  When REPORT_WORKER_HEALTH_URL
+    is set the Go worker's /health payload is fetched and merged in so that
+    operational telemetry (backoff state, error counts, tick timing) is also
+    visible.  If the Go worker is unreachable the endpoint still returns a
+    complete DB-backed payload with a warning log.
+    """
+    async with AsyncSessionLocal() as session:
+        pending_count = await session.scalar(
+            select(func.count())
+            .select_from(_report_worker_pending_base())
+            .where(*_report_worker_pending_where())
+        )
+        next_row = await session.execute(
+            select(Interview.id, Interview.updated_at)
+            .select_from(_report_worker_pending_base())
+            .where(
+                *_report_worker_pending_where(),
+            )
+            .order_by(Interview.updated_at.asc())
+            .limit(1)
+        )
+        next_item = next_row.first()
+
+    next_interview_id = str(next_item[0]) if next_item else None
+    oldest_pending_updated_at = next_item[1].isoformat() if next_item and next_item[1] else None
+    db_status: dict[str, Any] = {
+        "pending_count": int(pending_count or 0),
+        "next_interview_id": next_interview_id,
+        "oldest_pending_updated_at": oldest_pending_updated_at,
+        "worker_mode": settings.REPORT_WORKER_MODE.strip().lower(),
+        "max_auto_retries": _report_max_auto_retries(),
+    }
+
+    go_health = await _fetch_report_worker_health()
+    if go_health:
+        # Merge Go operational fields; DB fields (pending_count etc.) take precedence.
+        _GO_OPERATIONAL_KEYS = {
+            "started_at",
+            "last_tick_at",
+            "last_success_at",
+            "last_processed_at",
+            "last_interview_id",
+            "last_candidate_interview_id",
+            "processed_total",
+            "error_total",
+            "last_error",
+            "consecutive_errors",
+            "backoff_until",
+            "dry_run",
+            "max_jobs_per_cycle",
+        }
+        db_status["go_worker"] = {k: go_health[k] for k in _GO_OPERATIONAL_KEYS if k in go_health}
+
+    return db_status
+
+
+async def run_next_external_report_generation_job(*, dry_run: bool = False) -> dict[str, Any]:
+    status_payload = await get_external_report_worker_status()
+    interview_id = status_payload.get("next_interview_id")
+
+    if interview_id is None:
+        return {"processed": False, "interview_id": None, "dry_run": dry_run, **status_payload}
+
+    if dry_run:
+        return {"processed": False, "interview_id": interview_id, "dry_run": True, **status_payload}
+
+    _increment_report_pipeline_metric("report_external_worker_tick_total")
+    _log_report_pipeline_event(
+        "report_external_worker_tick",
+        interview_id=interview_id,
+    )
+    await _run_report_generation_job(uuid.UUID(str(interview_id)))
+    return {"processed": True, "interview_id": str(interview_id), "dry_run": False, **status_payload}
 
 
 async def _run_report_generation_job(interview_id: uuid.UUID) -> None:
@@ -8584,7 +8738,6 @@ async def save_interview_recording(
 ) -> None:
     import os
     from fastapi import HTTPException, status
-    from app.core.config import settings
 
     interview = await _get_interview(db, interview_id, candidate_id)
 
@@ -8598,6 +8751,14 @@ async def save_interview_recording(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail="Unsupported recording format. Allowed: video/webm, video/mp4.",
         )
+
+    if settings.MEDIA_SERVICE_URL:
+        try:
+            interview.recording_path = await _save_recording_with_media_service(interview_id, file)
+            await db.commit()
+            return
+        except httpx.RequestError:
+            await file.seek(0)
 
     max_bytes = settings.MAX_RECORDING_SIZE_MB * 1024 * 1024
     dest = os.path.join(
@@ -8628,6 +8789,48 @@ async def save_interview_recording(
     await db.commit()
 
 
+async def _save_recording_with_media_service(interview_id: uuid.UUID, file) -> str:
+    from fastapi import HTTPException
+
+    async def iter_file():
+        while True:
+            chunk = await file.read(1024 * 64)
+            if not chunk:
+                break
+            yield chunk
+
+    base_url = settings.MEDIA_SERVICE_URL.rstrip("/")
+    async with httpx.AsyncClient(base_url=base_url, timeout=120.0) as client:
+        response = await client.post(
+            f"/v1/recordings/{interview_id}",
+            content=iter_file(),
+            headers={"Content-Type": file.content_type or "application/octet-stream"},
+        )
+
+    if response.is_success:
+        payload = response.json()
+        path = payload.get("path")
+        if isinstance(path, str) and path:
+            return path
+        raise HTTPException(status_code=502, detail="Media service returned invalid recording path")
+
+    detail = _extract_media_service_error_detail(response)
+    raise HTTPException(status_code=response.status_code, detail=detail)
+
+
+def _extract_media_service_error_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        detail = payload.get("detail") or payload.get("message")
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+    body = response.text.strip()
+    return body or f"HTTP {response.status_code}"
+
+
 async def save_behavioral_signals(
     db: AsyncSession,
     candidate_id: uuid.UUID,
@@ -8637,11 +8840,7 @@ async def save_behavioral_signals(
     """Persist behavioral signals captured during the interview."""
     interview = await _get_interview(db, interview_id, candidate_id)
     payload = dict(signals or {})
-    workspace_ai_settings = (
-        interview.interview_state.get("workspace_ai_settings")
-        if isinstance(interview.interview_state, dict)
-        else None
-    )
+    workspace_ai_settings = await build_effective_workspace_ai_settings(db)
     if payload.get("policy_mode") in (None, "") and isinstance(workspace_ai_settings, dict):
         payload["policy_mode"] = workspace_ai_settings.get("proctoring_policy_mode")
     interview.behavioral_signals = normalize_behavioral_signals(payload)

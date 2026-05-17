@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 class AdminOverviewMetricsResponse(BaseModel):
@@ -74,6 +74,20 @@ class PlatformSettingsResponse(BaseModel):
     proctoring_policy_mode: str
     interviewer_model_preference: str | None = None
     assessor_model_preference: str | None = None
+    llm_provider: str
+    interviewer_model: str
+    assessor_model: str
+    interviewer_prompt_override: str | None = None
+    assessor_prompt_override: str | None = None
+    llm_timeout_seconds: int
+    llm_max_retries: int
+    llm_model_options: dict[str, list[str]] = Field(default_factory=dict)
+    llm_api_key_available: bool = False
+    llm_required_api_key: str | None = None
+    llm_configuration_warning: str | None = None
+    mock_ai_enabled: bool = False
+    tts_provider: str | None = None
+    tts_fallback_provider: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -89,6 +103,13 @@ class PlatformAISettingsUpdateRequest(BaseModel):
     proctoring_policy_mode: str | None = None
     interviewer_model_preference: str | None = None
     assessor_model_preference: str | None = None
+    llm_provider: str | None = None
+    interviewer_model: str | None = None
+    assessor_model: str | None = None
+    interviewer_prompt_override: str | None = None
+    assessor_prompt_override: str | None = None
+    llm_timeout_seconds: int | None = None
+    llm_max_retries: int | None = None
 
 
 class AdminActivationUpdateRequest(BaseModel):
