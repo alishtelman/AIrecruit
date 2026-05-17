@@ -17,8 +17,6 @@ services:
 
   backend:
     build: ./backend
-    ports:
-      - "8001:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -163,12 +161,34 @@ services:
       timeout: 3s
       retries: 6
 
+  api-gateway:
+    build: ./services/api-gateway
+    ports:
+      - "8001:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+      media-service:
+        condition: service_healthy
+      resume-service:
+        condition: service_healthy
+    environment:
+      API_GATEWAY_ADDR: :8080
+      BACKEND_URL: http://backend:8000
+      MEDIA_SERVICE_URL: http://media-service:8080
+      RESUME_SERVICE_URL: http://resume-service:8080
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+
   frontend:
     build: ./frontend
     ports:
       - "3000:3000"
     depends_on:
-      - backend
+      - api-gateway
     env_file:
       - .env
     environment:

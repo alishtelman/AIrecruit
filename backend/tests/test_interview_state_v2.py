@@ -111,24 +111,9 @@ def test_v2_flag_can_be_enabled_without_breaking_default(monkeypatch: pytest.Mon
     assert interview_service.settings.interview_engine_version == "v2"
 
 
-def test_v2_role_gating_enables_only_whitelisted_roles(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(interview_service.settings, "INTERVIEW_ENGINE_VERSION", "v2")
-    monkeypatch.setattr(interview_service.settings, "INTERVIEW_ENGINE_V2_ROLES", "qa_engineer")
-    assert _is_interview_engine_v2_enabled(role="qa_engineer") is True
-    assert _is_interview_engine_v2_enabled(role="backend_engineer") is False
-
-
-def test_v2_role_gating_with_empty_list_keeps_global_v2(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(interview_service.settings, "INTERVIEW_ENGINE_VERSION", "v2")
-    monkeypatch.setattr(interview_service.settings, "INTERVIEW_ENGINE_V2_ROLES", "")
+def test_v2_role_gating_always_enabled(monkeypatch: pytest.MonkeyPatch):
     assert _is_interview_engine_v2_enabled(role="qa_engineer") is True
     assert _is_interview_engine_v2_enabled(role="backend_engineer") is True
-
-
-def test_v2_role_gating_disabled_when_version_is_v1(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(interview_service.settings, "INTERVIEW_ENGINE_VERSION", "v1")
-    monkeypatch.setattr(interview_service.settings, "INTERVIEW_ENGINE_V2_ROLES", "qa_engineer")
-    assert _is_interview_engine_v2_enabled(role="qa_engineer") is False
 
 
 def test_resume_gate_requires_evidence_before_opening():
