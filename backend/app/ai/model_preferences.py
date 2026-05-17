@@ -1,36 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from app.core.config import settings
 
-DEFAULT_LLM_PROVIDER = "groq"
 DEFAULT_LLM_MODEL = "llama-3.3-70b-versatile"
-DEFAULT_LLM_TIMEOUT_SECONDS = 30
-DEFAULT_LLM_MAX_RETRIES = 1
-
-ALLOWED_LLM_MODELS_BY_PROVIDER: dict[str, tuple[str, ...]] = {
-    "groq": (
-        DEFAULT_LLM_MODEL,
-        "llama-3.1-8b-instant",
-        "llama3-8b-8192",
-        "llama3-70b-8192",
-        "mixtral-8x7b-32768",
-    ),
-    "openai": (
-        "gpt-4.1-mini",
-        "gpt-4.1",
-        "gpt-4o-mini",
-        "gpt-4o",
-    ),
-    "anthropic": (
-        "claude-sonnet-4-20250514",
-        "claude-opus-4-1-20250805",
-        "claude-3-7-sonnet-20250219",
-        "claude-3-5-haiku-20241022",
-    ),
-    "openrouter": (
-        "openrouter/free",
-    ),
-}
+DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat-v3-0324:free"
 
 DEFAULT_LLM_MODELS_BY_PROVIDER = {
     "groq": DEFAULT_LLM_MODEL,
@@ -58,11 +31,22 @@ def is_allowed_llm_provider(value: str | None) -> bool:
 
 def is_allowed_llm_model_preference(value: str | None) -> bool:
     normalized = normalize_llm_model_preference(value)
+    if settings.ai_provider == "openrouter":
+        return bool(normalized and len(normalized) <= 160)
     return normalized in ALLOWED_LLM_MODELS
 
 
 def resolve_llm_runtime_model(value: str | None) -> str:
     normalized = normalize_llm_model_preference(value)
+    if settings.ai_provider == "openrouter":
+        if normalized:
+            return normalized
+        if settings.OPENROUTER_MODEL.strip():
+            return settings.OPENROUTER_MODEL.strip()
+        fallback_models = settings.openrouter_fallback_models
+        if fallback_models:
+            return fallback_models[0]
+        return DEFAULT_OPENROUTER_MODEL
     if normalized in ALLOWED_LLM_MODELS:
         return normalized
     return DEFAULT_LLM_MODEL

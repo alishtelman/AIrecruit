@@ -49,6 +49,12 @@ function formatElapsedDuration(totalSeconds: number) {
   return [minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
 }
 
+function parseApiTimestamp(value: string | null | undefined): number {
+  if (!value) return Number.NaN;
+  const hasZoneSuffix = /(?:[zZ]|[+-]\d{2}:\d{2})$/.test(value);
+  return Date.parse(hasZoneSuffix ? value : `${value}Z`);
+}
+
 type StageRailItem = {
   key: string;
   label: string;
@@ -528,13 +534,13 @@ export default function InterviewPage() {
   }, [waitingForReport, reportStatus?.diagnostics?.next_retry_at]);
 
   useEffect(() => {
-    const startedAtMs = interview?.started_at ? Date.parse(interview.started_at) : Number.NaN;
+    const startedAtMs = parseApiTimestamp(interview?.started_at);
     if (!interview || Number.isNaN(startedAtMs)) {
       setElapsedSeconds(0);
       return;
     }
 
-    const completedAtMs = interview.completed_at ? Date.parse(interview.completed_at) : Number.NaN;
+    const completedAtMs = parseApiTimestamp(interview.completed_at);
     const tick = () => {
       const effectiveEnd = Number.isNaN(completedAtMs) ? Date.now() : completedAtMs;
       setElapsedSeconds(Math.max(0, Math.floor((effectiveEnd - startedAtMs) / 1000)));
@@ -628,6 +634,7 @@ export default function InterviewPage() {
     try {
       const res = await interviewApi.sendMessage(id, { message: text });
       setQuestionCount(res.question_count);
+      setMaxQuestions(res.max_questions);
       setCurrentQuestion(res.current_question);
       setIsFollowup(res.is_followup ?? false);
       setQuestionType(res.question_type ?? "main");
@@ -818,7 +825,9 @@ export default function InterviewPage() {
   }
 
   const roleLabel = startT(`roles.${interview.target_role}.label`);
-  const progress = Math.round((questionCount / maxQuestions) * 100);
+  const coreProgressPct = Math.round((questionCount / maxQuestions) * 100);
+  const assistantAskedCount = messages.filter((msg) => msg.role === "assistant").length;
+  const candidateAnswerCount = messages.filter((msg) => msg.role === "candidate").length;
   const voiceMode = answerMode === "voice";
   const reportAttempts = reportStatus?.diagnostics?.attempt_count ?? 0;
   const reportMaxAttempts = reportStatus?.diagnostics?.max_attempts ?? 0;
@@ -896,6 +905,8 @@ export default function InterviewPage() {
     current: Math.min(Math.max(questionCount, 1), Math.max(maxQuestions, 1)),
     total: Math.max(maxQuestions, 1),
   });
+  const askedInChatLabel = t("askedInChat", { count: assistantAskedCount });
+  const answeredInChatLabel = t("answeredInChat", { count: candidateAnswerCount });
   const stageDisplayTitle =
     structurePhaseLabel ||
     (overviewModuleSession || taskWorkspaceSession)?.stage_title ||
@@ -904,6 +915,9 @@ export default function InterviewPage() {
   const structuredPhaseIndex = structuredInterviewStage
     ? structuredPhaseOrder.indexOf(structuredInterviewStage.phase_key)
     : -1;
+  const structuredPhaseProgressCurrent =
+    structuredPhaseIndex >= 0 ? structuredPhaseIndex + 1 : 1;
+  const structuredPhaseProgressTotal = structuredPhaseOrder.length;
   const stageRailItems: StageRailItem[] =
     structuredPhaseIndex >= 0
       ? structuredPhaseOrder.map((phaseKey, index) => ({
@@ -924,10 +938,14 @@ export default function InterviewPage() {
       ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
       : "border-slate-700 bg-slate-800/80 text-slate-300";
   const currentQuestionTypeLabel =
-    questionType === "verification"
+    questionType === "verification" || questionType === "claim_verification"
       ? t("verification")
       : questionType === "deep_technical"
       ? t("deepDive")
+      : questionType === "clarification"
+      ? t("clarification")
+      : questionType === "structured_reframe"
+      ? t("structuredReframe")
       : isFollowup
       ? t("followup")
       : t("mainQuestion");
@@ -971,6 +989,8 @@ export default function InterviewPage() {
               <div className="truncate text-lg font-semibold">{t("interviewTitle", { role: roleLabel })}</div>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-400">
                 <span>{currentQuestionLabel}</span>
+                <span>•</span>
+                <span>{askedInChatLabel}</span>
                 <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${interviewStatusToneClass}`}>
                   {interview.status === "in_progress" ? t("statusInProgress") : reportPhaseLabel}
                 </span>
@@ -1001,12 +1021,19 @@ export default function InterviewPage() {
             <div className="mt-5 grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
               <WorkspaceStat label={t("timerLabel")} value={elapsedLabel} tone="blue" />
               <WorkspaceStat label={t("questionProgressLabel")} value={currentQuestionLabel} tone="slate" />
+              <WorkspaceStat label={t("askedQuestionsLabel")} value={askedInChatLabel} tone="slate" />
               <WorkspaceStat
                 label={t("estimateLabel")}
                 value={t("structureEstimatedDuration", estimatedDuration)}
                 tone="emerald"
               />
             </div>
+            <p className="mt-3 text-xs text-slate-400">
+              {t("progressHint", {
+                percent: Math.min(100, Math.max(coreProgressPct, 0)),
+                answered: candidateAnswerCount,
+              })}
+            </p>
 
             <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1016,9 +1043,9 @@ export default function InterviewPage() {
                 </div>
                 {structuredInterviewStage ? (
                   <StatusPill tone="emerald">
-                    {t("structureProgress", {
-                      current: structuredInterviewStage.slot_number,
-                      total: Math.max(structuredInterviewStage.slot_count, 1),
+                    {t("stageProgress", {
+                      current: structuredPhaseProgressCurrent,
+                      total: structuredPhaseProgressTotal,
                     })}
                   </StatusPill>
                 ) : (overviewModuleSession || taskWorkspaceSession) ? (
@@ -1388,9 +1415,9 @@ export default function InterviewPage() {
                           {t("structureEstimatedDuration", estimatedDuration)}
                         </div>
                         <div className="rounded-full border border-emerald-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
-                          {t("structureProgress", {
-                            current: structuredInterviewStage.slot_number,
-                            total: Math.max(structuredInterviewStage.slot_count, 1),
+                          {t("stageProgress", {
+                            current: structuredPhaseProgressCurrent,
+                            total: structuredPhaseProgressTotal,
                           })}
                         </div>
                       </div>
@@ -1429,7 +1456,12 @@ export default function InterviewPage() {
                   <div className="rounded-2xl border border-blue-500/30 bg-blue-500/10 p-5 text-center">
                     <div className="text-white font-semibold">{t("completeTitle")}</div>
                     <div className="mt-1 text-sm text-slate-300">
-                      {t("completeDescription", { count: maxQuestions })}
+                      {t("completeDescription", {
+                        coreCount: questionCount,
+                        coreTotal: maxQuestions,
+                        answeredCount: candidateAnswerCount,
+                        askedCount: assistantAskedCount,
+                      })}
                     </div>
                     {uploadStatusLabel && (
                       <div className={`mt-4 text-sm ${recordingUploadState === "failed" ? "text-red-300" : "text-slate-200"}`}>
@@ -1485,10 +1517,17 @@ export default function InterviewPage() {
 
             {!canFinish && interview.status === "in_progress" && (
               <div className="border-t border-slate-800/80 bg-slate-950/80 px-4 py-4 sm:px-6">
-                <div className="space-y-3">
+                <form
+                  className="space-y-3"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handleSend();
+                  }}
+                >
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <button
+                        type="button"
                         onClick={() => setAnswerMode("text")}
                         className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors ${
                           !voiceMode
@@ -1499,6 +1538,7 @@ export default function InterviewPage() {
                         {t("textMode")}
                       </button>
                       <button
+                        type="button"
                         onClick={() => setAnswerMode("voice")}
                         className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors ${
                           voiceMode
@@ -1562,6 +1602,7 @@ export default function InterviewPage() {
                     <div className="flex gap-3 sm:flex-col">
                       {voiceMode && (
                         <button
+                          type="button"
                           onMouseDown={startVoice}
                           onMouseUp={stopVoice}
                           onTouchStart={startVoice}
@@ -1582,7 +1623,7 @@ export default function InterviewPage() {
                         </button>
                       )}
                       <button
-                        onClick={handleSend}
+                        type="submit"
                         disabled={!input.trim() || sending}
                         className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
                       >
@@ -1590,7 +1631,7 @@ export default function InterviewPage() {
                       </button>
                     </div>
                   </div>
-                </div>
+                </form>
               </div>
             )}
           </div>

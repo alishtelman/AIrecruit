@@ -15,12 +15,14 @@ TargetRole = Literal[
     "mobile_engineer",
     "designer",
 ]
+InterviewSeniority = Literal["junior", "middle", "senior"]
 
 
 class StartInterviewRequest(BaseModel):
     target_role: TargetRole
     template_id: uuid.UUID | None = None
     language: Literal["ru", "en"] = "ru"
+    seniority_level: InterviewSeniority | None = None
 
 
 class StartInterviewResponse(BaseModel):
@@ -28,8 +30,12 @@ class StartInterviewResponse(BaseModel):
     status: str
     question_count: int
     max_questions: int
+    core_question_count: int
+    asked_questions_count: int
+    answered_questions_count: int
     current_question: str
     language: Literal["ru", "en"] = "ru"
+    seniority_level: InterviewSeniority | None = None
     interview_stage: "InterviewStageResponse | None" = None
 
 
@@ -110,9 +116,12 @@ class SendMessageResponse(BaseModel):
     status: str
     question_count: int
     max_questions: int
+    core_question_count: int
+    asked_questions_count: int
+    answered_questions_count: int
     current_question: str | None  # null when max_questions reached — call /finish
     is_followup: bool = False  # True when the next question is a follow-up/verification
-    question_type: str = "main"  # main | followup | verification | deep_technical | edge_cases
+    question_type: str = "main"  # main | followup | structured_reframe | clarification | verification | deep_technical | edge_cases
     interview_stage: InterviewStageResponse | None = None
     module_session: InterviewModuleSessionResponse | None = None
 
@@ -182,8 +191,12 @@ class InterviewDetailResponse(BaseModel):
     interview_id: uuid.UUID
     status: str
     target_role: str
+    seniority_level: InterviewSeniority | None = None
     question_count: int
     max_questions: int
+    core_question_count: int
+    asked_questions_count: int
+    answered_questions_count: int
     language: Literal["ru", "en"] = "ru"
     started_at: datetime | None
     completed_at: datetime | None
@@ -193,6 +206,15 @@ class InterviewDetailResponse(BaseModel):
     assessment_progress: AssessmentProgressResponse | None = None
     interview_stage: InterviewStageResponse | None = None
     module_session: InterviewModuleSessionResponse | None = None
+
+
+class InterviewDebugTraceResponse(BaseModel):
+    interview_id: uuid.UUID
+    engine_version: str
+    trace_count: int
+    traces: list[dict[str, Any]] = []
+    interview_quality_metrics: dict[str, int] = {}
+    live_smoke_summary: str | None = None
 
 
 class BehavioralSignalsRequest(BaseModel):
@@ -232,6 +254,7 @@ class InterviewReplayResponse(BaseModel):
     candidate_id: uuid.UUID
     candidate_name: str
     target_role: str
+    seniority_level: InterviewSeniority | None = None
     completed_at: datetime | None
     turns: list[ReplayTurn]
     transcript_blocks: list[TranscriptBlockResponse] | None = None
@@ -265,8 +288,12 @@ class InterviewListItemResponse(BaseModel):
     interview_id: uuid.UUID
     status: str
     target_role: str
+    seniority_level: InterviewSeniority | None = None
     question_count: int
     max_questions: int
+    core_question_count: int
+    asked_questions_count: int
+    answered_questions_count: int
     started_at: datetime | None
     completed_at: datetime | None
     has_report: bool

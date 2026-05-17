@@ -1,9 +1,14 @@
 "use client";
 
 type PreparedInterviewMedia = {
-  screenStream: MediaStream;
   webcamStream: MediaStream;
+  screenStream: MediaStream | null;
   createdAt: number;
+};
+
+type PrepareInterviewMediaOptions = {
+  requireCameraAndMic?: boolean;
+  tryScreenShare?: boolean;
 };
 
 const SESSION_TTL_MS = 2 * 60 * 1000;
@@ -22,33 +27,53 @@ export function clearPreparedInterviewMedia() {
   preparedMedia = null;
 }
 
-export async function prepareInterviewMediaSession(): Promise<void> {
+export async function prepareInterviewMediaSession(
+  options: PrepareInterviewMediaOptions = {},
+): Promise<void> {
+  const requireCameraAndMic = options.requireCameraAndMic ?? true;
+  const tryScreenShare = options.tryScreenShare ?? true;
   clearPreparedInterviewMedia();
 
-  const screenStream = await navigator.mediaDevices.getDisplayMedia({
-    video: { frameRate: { ideal: 15, max: 30 } },
-    audio: false,
-  });
+  let webcamStream: MediaStream | null = null;
+  let screenStream: MediaStream | null = null;
 
   try {
-    const webcamStream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: true,
-    });
+    if (requireCameraAndMic) {
+      webcamStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
+    }
+
+    if (!webcamStream) {
+      throw new Error("Camera or microphone permission is required.");
+    }
+
+    if (tryScreenShare) {
+      try {
+        screenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: { ideal: 15, max: 30 } },
+          audio: false,
+        });
+      } catch {
+        screenStream = null;
+      }
+    }
 
     preparedMedia = {
       screenStream,
-      webcamStream,
+      webcamStream: webcamStream,
       createdAt: Date.now(),
     };
   } catch (error) {
     stopStream(screenStream);
+    stopStream(webcamStream);
     throw error;
   }
 }
 
 export function consumePreparedInterviewMedia():
-  | { screenStream: MediaStream; webcamStream: MediaStream }
+  | { screenStream: MediaStream | null; webcamStream: MediaStream }
   | null {
   if (!preparedMedia) {
     return null;

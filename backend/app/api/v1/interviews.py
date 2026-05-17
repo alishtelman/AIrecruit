@@ -30,6 +30,7 @@ from app.schemas.interview import (
     CodingTaskArtifactResponse,
     FinishInterviewResponse,
     InterviewDetailResponse,
+    InterviewDebugTraceResponse,
     InterviewListItemResponse,
     InterviewReportStatusResponse,
     SendMessageRequest,
@@ -54,6 +55,7 @@ from app.services.interview_service import (
     finish_interview,
     get_coding_task_artifact,
     get_interview_detail,
+    get_interview_debug_trace,
     get_interview_report_status,
     get_written_artifact,
     list_interviews,
@@ -129,7 +131,14 @@ async def start(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await start_interview(db, candidate, body.target_role, body.template_id, body.language)
+        return await start_interview(
+            db,
+            candidate,
+            body.target_role,
+            body.template_id,
+            body.language,
+            seniority_level=body.seniority_level,
+        )
     except NoActiveResumeError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -363,6 +372,22 @@ async def save_written_task_artifact(
         )
     except WrittenArtifactUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+@router.get(
+    "/{interview_id}/debug-trace",
+    response_model=InterviewDebugTraceResponse,
+    summary="Get last Interview Engine v2 decision traces (debug)",
+)
+async def get_debug_trace(
+    interview_id: uuid.UUID,
+    candidate: Candidate = Depends(_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await get_interview_debug_trace(db, candidate, interview_id)
+    except InterviewNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
 
 
 @router.get(

@@ -7,7 +7,10 @@ interface FaceDetectionResult {
   isModelLoaded: boolean;
 }
 
-const MODEL_URL = "https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights";
+const MODEL_URLS = [
+  "https://justadudewhohacks.github.io/face-api.js/models",
+  "https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights",
+];
 const SAMPLE_INTERVAL_MS = 2000;
 
 /**
@@ -34,14 +37,24 @@ export function useFaceDetection(
     let cancelled = false;
 
     async function loadModels() {
+      let lastError: unknown = null;
       try {
         // Dynamic import to avoid SSR issues
         const faceapi = await import("face-api.js");
-        await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
-        if (!cancelled) setIsModelLoaded(true);
+        for (const modelUrl of MODEL_URLS) {
+          try {
+            await faceapi.nets.tinyFaceDetector.loadFromUri(modelUrl);
+            if (!cancelled) setIsModelLoaded(true);
+            return;
+          } catch (err) {
+            lastError = err;
+          }
+        }
       } catch (err) {
-        console.warn("face-api.js model load failed:", err);
+        lastError = err;
       }
+
+      console.warn("face-api.js model load failed for all known sources:", lastError);
     }
 
     loadModels();

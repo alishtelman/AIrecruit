@@ -15,6 +15,8 @@ export function useTTS(language?: string) {
   const [speaking, setSpeaking] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const backendTtsAvailableRef = useRef(true);
+  const backendTtsWarnedRef = useRef(false);
 
   // Clean up on unmount
   useEffect(() => {
@@ -44,9 +46,22 @@ export function useTTS(language?: string) {
       setSpeaking(true);
       const activeLanguage = (languageOverride ?? language ?? "en").toLowerCase();
 
-      // Try backend TTS provider chain first
-      try {
-        const blob = await ttsApi.synthesize(text, activeLanguage);
+      // Try backend TTS provider chain first. If backend TTS fails once,
+      // switch to browser-only fallback for the rest of the session.
+      let blob: Blob | null = null;
+      if (backendTtsAvailableRef.current) {
+        try {
+          blob = await ttsApi.synthesize(text, activeLanguage);
+        } catch (error) {
+          backendTtsAvailableRef.current = false;
+          if (!backendTtsWarnedRef.current) {
+            console.warn("Backend TTS unavailable, switching to browser TTS fallback.", error);
+            backendTtsWarnedRef.current = true;
+          }
+        }
+      }
+
+      if (blob) {
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         audioRef.current = audio;
@@ -62,9 +77,14 @@ export function useTTS(language?: string) {
           setSpeaking(false);
         };
 
-        await audio.play();
-        return;
-      } catch {}
+        try {
+          await audio.play();
+          return;
+        } catch {
+          URL.revokeObjectURL(url);
+          audioRef.current = null;
+        }
+      }
 
       // Fallback: browser SpeechSynthesis
       if (typeof window !== "undefined" && "speechSynthesis" in window) {

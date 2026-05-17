@@ -8,6 +8,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { candidateApi } from "@/lib/api";
 import type { CandidateAccessRequest, CandidatePrivacy, ProfileVisibility } from "@/lib/types";
 
+type ActiveProfileVisibility = Exclude<ProfileVisibility, "private">;
+
 interface Stats {
   has_resume: boolean;
   interview_count: number;
@@ -33,6 +35,7 @@ export default function DashboardPage() {
   const [savingSalary, setSavingSalary] = useState(false);
   const [salarySaved, setSalarySaved] = useState(false);
   const [privacy, setPrivacy] = useState<CandidatePrivacy>({ visibility: "marketplace", share_token: null });
+  const [lastActiveVisibility, setLastActiveVisibility] = useState<ActiveProfileVisibility>("marketplace");
   const [savingPrivacy, setSavingPrivacy] = useState(false);
   const [privacySaved, setPrivacySaved] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
@@ -48,7 +51,12 @@ export default function DashboardPage() {
       setSalaryMax(s.salary_max?.toString() ?? "");
       setSalaryCurrency(s.salary_currency ?? "USD");
     }).catch(() => null);
-    candidateApi.getPrivacy().then(setPrivacy).catch(() => null);
+    candidateApi.getPrivacy().then((data) => {
+      setPrivacy(data);
+      if (data.visibility !== "private") {
+        setLastActiveVisibility(data.visibility as ActiveProfileVisibility);
+      }
+    }).catch(() => null);
     candidateApi.listAccessRequests().then(setAccessRequests).catch(() => null);
   }, [loading]);
 
@@ -75,6 +83,9 @@ export default function DashboardPage() {
     try {
       const updated = await candidateApi.updatePrivacy(privacy.visibility);
       setPrivacy(updated);
+      if (updated.visibility !== "private") {
+        setLastActiveVisibility(updated.visibility as ActiveProfileVisibility);
+      }
       setPrivacySaved(true);
       setTimeout(() => setPrivacySaved(false), 2000);
     } catch {
@@ -110,6 +121,25 @@ export default function DashboardPage() {
     }
   }
 
+  function handleProfileStatusChange(nextActive: boolean) {
+    if (!nextActive && privacy.visibility !== "private") {
+      setLastActiveVisibility(privacy.visibility as ActiveProfileVisibility);
+    }
+
+    setPrivacy((current) => {
+      if (nextActive) {
+        if (current.visibility === "private") {
+          return { ...current, visibility: lastActiveVisibility };
+        }
+        return current;
+      }
+      if (current.visibility === "private") {
+        return current;
+      }
+      return { ...current, visibility: "private" };
+    });
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-900 px-4 py-10">
@@ -130,6 +160,16 @@ export default function DashboardPage() {
   const step1Done = stats?.has_resume ?? false;
   const step2Done = (stats?.interview_count ?? 0) > 0;
   const step3Done = (stats?.completed_count ?? 0) > 0;
+  const isProfileActive = privacy.visibility !== "private";
+  const visibilityLabel = t(
+    `privacy.${
+      privacy.visibility === "direct_link"
+        ? "directLink"
+        : privacy.visibility === "request_only"
+        ? "requestOnly"
+        : privacy.visibility
+    }`
+  );
   const visibilityHelp: Record<ProfileVisibility, { title: string; body: string }> = {
     private: {
       title: t("privacy.help.private.title"),
@@ -188,13 +228,19 @@ export default function DashboardPage() {
             <div className="mt-4 space-y-3">
               <div className="flex items-center justify-between rounded-2xl border border-white/6 bg-white/[0.03] px-4 py-3">
                 <span className="text-sm text-slate-400">{t("profileState")}</span>
-                <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-xs font-semibold text-emerald-300">
-                  {t("active")}
+                <span
+                  className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                    isProfileActive
+                      ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-300"
+                      : "border-slate-500/30 bg-slate-500/10 text-slate-300"
+                  }`}
+                >
+                  {isProfileActive ? t("active") : t("inactive")}
                 </span>
               </div>
               <div className="flex items-center justify-between rounded-2xl border border-white/6 bg-white/[0.03] px-4 py-3">
                 <span className="text-sm text-slate-400">{t("privacy.visibility")}</span>
-                <span className="text-sm font-medium text-white">{t(`privacy.${privacy.visibility === "direct_link" ? "directLink" : privacy.visibility === "request_only" ? "requestOnly" : privacy.visibility}`)}</span>
+                <span className="text-sm font-medium text-white">{visibilityLabel}</span>
               </div>
             </div>
           </div>
@@ -262,12 +308,44 @@ export default function DashboardPage() {
           <h2 className="text-white font-semibold mb-4 text-sm uppercase tracking-[0.18em] text-slate-300">{t("privacy.title")}</h2>
           <div className="flex flex-wrap gap-3 items-end">
             <div className="min-w-[280px] max-w-md flex-1">
+              <label className="text-slate-400 text-xs mb-1 block">{t("privacy.profileStatus")}</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => handleProfileStatusChange(true)}
+                  className={`rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${
+                    isProfileActive
+                      ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                      : "border-slate-700 bg-slate-900/40 text-slate-400 hover:border-slate-600"
+                  }`}
+                >
+                  {t("privacy.profileActive")}
+                </button>
+                <button
+                  onClick={() => handleProfileStatusChange(false)}
+                  className={`rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${
+                    !isProfileActive
+                      ? "border-slate-500/40 bg-slate-500/15 text-slate-200"
+                      : "border-slate-700 bg-slate-900/40 text-slate-400 hover:border-slate-600"
+                  }`}
+                >
+                  {t("privacy.profileInactive")}
+                </button>
+              </div>
+            </div>
+            <div className="min-w-[280px] max-w-md flex-1">
               <label className="text-slate-400 text-xs mb-1 block">{t("privacy.visibility")}</label>
               <div className="relative">
                 <select
                   value={privacy.visibility}
-                  onChange={(e) => setPrivacy((current) => ({ ...current, visibility: e.target.value as ProfileVisibility }))}
-                  className="ai-select w-full appearance-none rounded-xl px-4 py-2 pr-12 text-sm"
+                  onChange={(e) => {
+                    const nextVisibility = e.target.value as ProfileVisibility;
+                    setPrivacy((current) => ({ ...current, visibility: nextVisibility }));
+                    if (nextVisibility !== "private") {
+                      setLastActiveVisibility(nextVisibility as ActiveProfileVisibility);
+                    }
+                  }}
+                  disabled={!isProfileActive}
+                  className="ai-select w-full appearance-none rounded-xl px-4 py-2 pr-12 text-sm disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <option value="marketplace">{t("privacy.marketplace")}</option>
                   <option value="direct_link">{t("privacy.directLink")}</option>
@@ -276,13 +354,16 @@ export default function DashboardPage() {
                 </select>
                 <SelectChevron />
               </div>
+              {!isProfileActive && (
+                <p className="mt-2 text-xs text-slate-500">{t("privacy.inactiveHint")}</p>
+              )}
             </div>
             <button
               onClick={handleSavePrivacy}
               disabled={savingPrivacy}
               className="ai-button-primary rounded-xl px-4 py-2 text-sm text-white disabled:opacity-50"
             >
-              {privacySaved ? t("salary.saved") : savingPrivacy ? common("actions.saving") : common("actions.save")}
+              {privacySaved ? t("privacy.saved") : savingPrivacy ? common("actions.saving") : common("actions.save")}
             </button>
           </div>
           <div className="mt-4 rounded-2xl border border-white/6 bg-slate-950/40 px-4 py-4">

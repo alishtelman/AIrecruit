@@ -6,6 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.v1.router import api_router
+from app.ai.assessor import LLMAssessor, MockAssessor, assessor
+from app.ai.interviewer import LLMInterviewer, MockInterviewer, interviewer
+from app.ai.model_preferences import resolve_llm_runtime_model
+from app.ai.runtime_status import get_ai_runtime_status, set_runtime_identity
 from app.core.config import settings
 from app.core.rate_limit import match_rule, rate_limiter
 from app.core.database import AsyncSessionLocal
@@ -13,6 +17,7 @@ from app.services.auth_service import ensure_platform_admin
 
 cors_origins = settings.cors_origins
 audit_logger = logging.getLogger("security.audit")
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="AI Recruiting Platform API",
@@ -104,7 +109,56 @@ async def startup_event():
         async with AsyncSessionLocal() as db:
             await ensure_platform_admin(db)
 
+    interviewer_provider = (
+        getattr(interviewer, "provider_name", "groq")
+        if isinstance(interviewer, LLMInterviewer)
+        else "mock" if isinstance(interviewer, MockInterviewer) else "disabled"
+    )
+    assessor_provider = (
+        getattr(assessor, "provider_name", "groq")
+        if isinstance(assessor, LLMAssessor)
+        else "mock" if isinstance(assessor, MockAssessor) else "disabled"
+    )
+
+    mock_mode_enabled = interviewer_provider == "mock" or assessor_provider == "mock"
+    app_env = (settings.APP_ENV or "").strip().lower()
+    if app_env == "production" and mock_mode_enabled:
+        raise RuntimeError("Mock AI provider is forbidden when APP_ENV=production")
+
+    if interviewer_provider == assessor_provider:
+        active_provider = interviewer_provider
+    else:
+        active_provider = f"mixed({interviewer_provider},{assessor_provider})"
+
+    model_name = resolve_llm_runtime_model(None) if active_provider not in {"mock", "disabled"} else "disabled"
+    if settings.ai_provider == "openrouter":
+        api_key_present = bool(settings.OPENROUTER_API_KEY)
+    elif settings.ai_provider == "groq":
+        api_key_present = bool(settings.GROQ_API_KEY)
+    else:
+        api_key_present = False
+    set_runtime_identity(
+        provider=active_provider,
+        model=model_name,
+        api_key_present=api_key_present,
+        mock_enabled=mock_mode_enabled,
+    )
+    logger.info(
+        "ai_runtime_startup active_provider=%s model_name=%s api_key_present=%s mock_mode_enabled=%s interviewer_provider=%s assessor_provider=%s",
+        active_provider,
+        model_name,
+        api_key_present,
+        mock_mode_enabled,
+        interviewer_provider,
+        assessor_provider,
+    )
+
 
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "ai-recruiting-backend"}
+
+
+@app.get("/ai/status")
+async def ai_status():
+    return get_ai_runtime_status()

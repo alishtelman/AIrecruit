@@ -1,0 +1,544 @@
+{
+  "backend_engineer": {
+    "core_competency_order": [
+      "API Design & Protocols",
+      "Database Design & Optimization",
+      "System Design & Architecture",
+      "Debugging & Problem Decomposition",
+      "Security & Error Handling",
+      "DevOps & Infrastructure",
+      "Programming Fundamentals"
+    ],
+    "question_blocks": [
+      {
+        "block": "intro",
+        "tier": "adaptive",
+        "lead_question": "Расскажите о себе: путь в backend, профильное образование и ключевой производственный опыт.",
+        "allowed_probes": [
+          "Какие задачи в backend вы вели end-to-end?",
+          "Какой опыт лучше всего готовит вас к этой роли?"
+        ],
+        "scored_metrics": ["communication", "role_fit", "growth_potential"]
+      },
+      {
+        "block": "resume_followup",
+        "tier": "adaptive",
+        "lead_question": "Давайте разберем релевантный кейс из резюме: контекст, архитектурное решение и ваш личный вклад.",
+        "allowed_probes": [
+          "Какие ограничения были у системы?",
+          "Какие метрики улучшились после изменений?"
+        ],
+        "scored_metrics": ["practical_experience", "problem_solving", "communication"]
+      },
+      {
+        "block": "technical_foundation",
+        "tier": "core",
+        "lead_question": "Разберите технический кейс по API/данным: как проектировали, что проверяли, где были trade-off.",
+        "allowed_probes": [
+          "Как выявляли узкое место?",
+          "Как защищали систему от деградации?"
+        ],
+        "scored_metrics": ["technical_depth", "problem_solving", "practical_experience"]
+      },
+      {
+        "block": "technical_depth",
+        "tier": "advanced",
+        "lead_question": "Если нагрузка вырастает в 3 раза, как вы меняете подход к архитектуре и надежности?",
+        "allowed_probes": [
+          "Что оптимизируете в первую очередь?",
+          "Какой rollback/mitigation план готовите?"
+        ],
+        "scored_metrics": ["technical_depth", "ownership", "problem_solving"]
+      },
+      {
+        "block": "behavioral_closing",
+        "tier": "closing",
+        "lead_question": "Расскажите о сложной кросс-командной ситуации и как вы удержали delivery под давлением.",
+        "allowed_probes": [
+          "Как выстраивали коммуникацию с командами?",
+          "Какой урок закрепили в процессах?"
+        ],
+        "scored_metrics": ["ownership", "communication", "growth_potential"]
+      }
+    ]
+  },
+  "frontend_engineer": {
+    "core_competency_order": [
+      "UI Framework Mastery",
+      "Web Performance Optimization",
+      "JavaScript/TypeScript Fundamentals",
+      "Accessibility & Standards",
+      "Testing & Quality",
+      "Debugging & Problem Decomposition",
+      "CSS & Responsive Design"
+    ],
+    "question_blocks": [
+      {
+        "block": "intro",
+        "tier": "adaptive",
+        "lead_question": "Расскажите о себе: путь во frontend, продуктовый контекст и сильные стороны.",
+        "allowed_probes": [
+          "Какие интерфейсы вы запускали лично?",
+          "Где ваш опыт дал максимальный эффект для пользователей?"
+        ],
+        "scored_metrics": ["communication", "role_fit", "growth_potential"]
+      },
+      {
+        "block": "resume_followup",
+        "tier": "adaptive",
+        "lead_question": "Разберите релевантный кейс из резюме: задача, UX-цель, реализация и измеримый результат.",
+        "allowed_probes": [
+          "Как проверяли гипотезу по UX?",
+          "Какой вклад был именно вашим?"
+        ],
+        "scored_metrics": ["practical_experience", "communication", "problem_solving"]
+      },
+      {
+        "block": "technical_foundation",
+        "tier": "core",
+        "lead_question": "Опишите технический кейс: архитектура UI, состояние, производительность и доступность.",
+        "allowed_probes": [
+          "Какие компромиссы между DX и UX принимали?",
+          "Какие метрики производительности отслеживали?"
+        ],
+        "scored_metrics": ["technical_depth", "problem_solving", "practical_experience"]
+      },
+      {
+        "block": "technical_depth",
+        "tier": "advanced",
+        "lead_question": "Как бы вы стабилизировали сложный фронтенд-модуль при росте трафика и регрессий?",
+        "allowed_probes": [
+          "Как диагностируете источник деградации?",
+          "Какую стратегию тестирования выбираете и почему?"
+        ],
+        "scored_metrics": ["technical_depth", "ownership", "problem_solving"]
+      },
+      {
+        "block": "behavioral_closing",
+        "tier": "closing",
+        "lead_question": "Расскажите про конфликт с дизайном/продуктом и как вы привели команду к решению.",
+        "allowed_probes": [
+          "Как аргументировали выбор?",
+          "Что сделали, чтобы команда сохранила темп?"
+        ],
+        "scored_metrics": ["ownership", "communication", "growth_potential"]
+      }
+    ]
+  },
+  "qa_engineer": {
+    "core_competency_order": [
+      "Domain & Product Understanding",
+      "Test Strategy & Planning",
+      "Test Automation",
+      "DevOps & CI/CD Integration",
+      "Root Cause Analysis",
+      "Manual & Exploratory Testing",
+      "API & Performance Testing"
+    ],
+    "question_blocks": [
+      {
+        "block": "intro",
+        "tier": "adaptive",
+        "lead_question": "Расскажите о себе: ваш путь в QA, домены и ключевые зоны ответственности.",
+        "allowed_probes": [
+          "Какие типы рисков вы чаще всего закрываете?",
+          "Какой ваш самый сильный QA-кейс?"
+        ],
+        "scored_metrics": ["communication", "role_fit", "growth_potential"]
+      },
+      {
+        "block": "resume_followup",
+        "tier": "adaptive",
+        "lead_question": "Разберите кейс из резюме: где вы нашли критичный дефект и как довели его до исправления.",
+        "allowed_probes": [
+          "Как локализовали первопричину?",
+          "Как проверили, что фикс действительно закрыл риск?"
+        ],
+        "scored_metrics": ["practical_experience", "problem_solving", "communication"]
+      },
+      {
+        "block": "technical_foundation",
+        "tier": "core",
+        "lead_question": "Опишите, как вы строите test strategy для новой фичи: уровни, риски, приоритезация.",
+        "allowed_probes": [
+          "Что автоматизируете в первую очередь и почему?",
+          "Как проверяете API и нефункциональные требования?"
+        ],
+        "scored_metrics": ["technical_depth", "problem_solving", "practical_experience"]
+      },
+      {
+        "block": "technical_depth",
+        "tier": "advanced",
+        "lead_question": "Что вы делаете, когда времени мало, а релиз критичный: как минимизируете риск дефектов?",
+        "allowed_probes": [
+          "Какой минимальный набор проверок обязателен?",
+          "Как подтверждаете качество после hotfix?"
+        ],
+        "scored_metrics": ["technical_depth", "ownership", "problem_solving"]
+      },
+      {
+        "block": "behavioral_closing",
+        "tier": "closing",
+        "lead_question": "Расскажите о сложной коммуникации с разработкой по качеству и как вы пришли к общему решению.",
+        "allowed_probes": [
+          "Как добивались конструктивной обратной связи?",
+          "Что поменяли в процессе после инцидента?"
+        ],
+        "scored_metrics": ["ownership", "communication", "growth_potential"]
+      }
+    ],
+    "scenario_chains": [
+      {
+        "case_id": "qa_payment_failed_money_deducted",
+        "title": "Платеж не прошел, но деньги списались",
+        "competency": "Root Cause Analysis",
+        "difficulty_tier": 3,
+        "followup_rules": {
+          "clarify": "Уточните один конкретный шаг из вашей практики, а не общий подход.",
+          "deep_dive": "Добавьте технические детали: логи, статус-коды, события, где именно нашли причину.",
+          "simplify": "Переформулирую проще: опишите, что сделали сначала, потом, и чем завершили проверку."
+        },
+        "questions": [
+          "Кейс: платеж не прошел, но деньги списались. Как вы воспроизведете дефект и зафиксируете воспроизводимые шаги?",
+          "Какие данные вы соберете в первую очередь: логи, request/response, трассировка, id транзакции, состояние в БД?",
+          "Где будете искать первопричину: frontend, API gateway, сервис платежей, интеграция с провайдером или БД?",
+          "Как проверите, что фикс действительно сработал и не ломает соседние платежные сценарии?",
+          "Что добавите в регрессию и мониторинг, чтобы такая проблема не вернулась?"
+        ]
+      },
+      {
+        "case_id": "qa_release_regression_under_deadline",
+        "title": "Критичный релиз под дедлайн с риском регрессии",
+        "competency": "Test Strategy & Planning",
+        "difficulty_tier": 4,
+        "followup_rules": {
+          "clarify": "Назовите один реальный релизный кейс и ваши личные действия в нем.",
+          "deep_dive": "Уточните критерии риска, приоритезацию тестов и правила go/no-go.",
+          "simplify": "Переформулирую: что проверили обязательно, что отложили и почему это было безопасно."
+        },
+        "questions": [
+          "Кейс: перед релизом времени мало, риск высокий. Как вы построите минимально достаточный тест-план?",
+          "Какие проверки пойдут в smoke и что из этого обязательно должно быть автоматизировано в пайплайне?",
+          "Как вы оцените и зафиксируете риски пропуска дефектов для бизнеса и пользователей?",
+          "Как примете решение go/no-go: какие метрики, статусы дефектов и критерии готовности используете?",
+          "После релиза: какие post-release проверки и алерты запускаете для раннего обнаружения регрессии?"
+        ]
+      }
+    ]
+  },
+  "devops_engineer": {
+    "core_competency_order": [
+      "CI/CD Pipeline Design",
+      "Security & Compliance",
+      "Container Orchestration",
+      "Monitoring & Observability",
+      "Incident Response & Troubleshooting",
+      "Cloud Infrastructure",
+      "Scripting & Automation"
+    ],
+    "question_blocks": [
+      {
+        "block": "intro",
+        "tier": "adaptive",
+        "lead_question": "Расскажите о себе: ваш DevOps-путь, production-зоны ответственности и стек.",
+        "allowed_probes": [
+          "Какие платформы и окружения вы вели лично?",
+          "Какой опыт наиболее релевантен для надежности сервиса?"
+        ],
+        "scored_metrics": ["communication", "role_fit", "growth_potential"]
+      },
+      {
+        "block": "resume_followup",
+        "tier": "adaptive",
+        "lead_question": "Разберите кейс из резюме: как вы улучшали стабильность или скорость поставки.",
+        "allowed_probes": [
+          "Какой главный риск был в пайплайне?",
+          "Какие метрики улучшили после изменений?"
+        ],
+        "scored_metrics": ["practical_experience", "problem_solving", "communication"]
+      },
+      {
+        "block": "technical_foundation",
+        "tier": "core",
+        "lead_question": "Опишите технический сценарий: CI/CD, безопасность и контроль качества релизов.",
+        "allowed_probes": [
+          "Как строите rollback и rollback-validation?",
+          "Как выявляете узкие места пайплайна?"
+        ],
+        "scored_metrics": ["technical_depth", "problem_solving", "practical_experience"]
+      },
+      {
+        "block": "technical_depth",
+        "tier": "advanced",
+        "lead_question": "Что делаете при production-инциденте под высокой нагрузкой: приоритеты, диагностика, восстановление?",
+        "allowed_probes": [
+          "Как формируете гипотезы и проверяете их?",
+          "Как предотвращаете повторение инцидента?"
+        ],
+        "scored_metrics": ["technical_depth", "ownership", "problem_solving"]
+      },
+      {
+        "block": "behavioral_closing",
+        "tier": "closing",
+        "lead_question": "Расскажите про сложный кросс-командный инцидент и как вы удержали координацию команды.",
+        "allowed_probes": [
+          "Как выстраивали коммуникацию в on-call режиме?",
+          "Какие правила закрепили после постмортема?"
+        ],
+        "scored_metrics": ["ownership", "communication", "growth_potential"]
+      }
+    ]
+  },
+  "data_scientist": {
+    "core_competency_order": [
+      "Domain Knowledge Application",
+      "Data Processing & Feature Engineering",
+      "Statistics & Experimentation",
+      "ML Modeling & Algorithms",
+      "MLOps & Production ML",
+      "Analytical Problem Solving",
+      "Data Infrastructure & Tools"
+    ],
+    "question_blocks": [
+      {
+        "block": "intro",
+        "tier": "adaptive",
+        "lead_question": "Расскажите о себе: ваш путь в data science, доменная экспертиза и прикладные проекты.",
+        "allowed_probes": [
+          "Какие задачи вы решали end-to-end?",
+          "Какой кейс считаете самым показателем вашего уровня?"
+        ],
+        "scored_metrics": ["communication", "role_fit", "growth_potential"]
+      },
+      {
+        "block": "resume_followup",
+        "tier": "adaptive",
+        "lead_question": "Разберите кейс из резюме: постановка задачи, данные, гипотеза, результат.",
+        "allowed_probes": [
+          "Как валидировали качество решения?",
+          "Какую часть работы сделали лично вы?"
+        ],
+        "scored_metrics": ["practical_experience", "problem_solving", "communication"]
+      },
+      {
+        "block": "technical_foundation",
+        "tier": "core",
+        "lead_question": "Опишите, как вы строите pipeline от данных до модели с учетом качества и воспроизводимости.",
+        "allowed_probes": [
+          "Какие риски данных проверяете в первую очередь?",
+          "Как выбираете baseline и критерии успеха?"
+        ],
+        "scored_metrics": ["technical_depth", "problem_solving", "practical_experience"]
+      },
+      {
+        "block": "technical_depth",
+        "tier": "advanced",
+        "lead_question": "Что делаете, если модель деградирует в production: диагностика, гипотезы, восстановление качества?",
+        "allowed_probes": [
+          "Как различаете data drift и concept drift?",
+          "Какой mitigation план запускаете первым?"
+        ],
+        "scored_metrics": ["technical_depth", "ownership", "problem_solving"]
+      },
+      {
+        "block": "behavioral_closing",
+        "tier": "closing",
+        "lead_question": "Расскажите про сложную коммуникацию с бизнесом/инженерами и как вы согласовали решение.",
+        "allowed_probes": [
+          "Как объясняли ограничения модели?",
+          "Какую практику закрепили после кейса?"
+        ],
+        "scored_metrics": ["ownership", "communication", "growth_potential"]
+      }
+    ]
+  },
+  "product_manager": {
+    "core_competency_order": [
+      "Requirements & User Research",
+      "Prioritization & Decision Making",
+      "Metrics & Data-Driven Decisions",
+      "Stakeholder Communication",
+      "Problem Structuring",
+      "Product Strategy & Vision",
+      "Technical Understanding"
+    ],
+    "question_blocks": [
+      {
+        "block": "intro",
+        "tier": "adaptive",
+        "lead_question": "Расскажите о себе: ваш продуктовый путь, ключевые домены и зоны влияния.",
+        "allowed_probes": [
+          "Какие продуктовые решения вы вели лично?",
+          "Где вы получили наиболее сильный пользовательский эффект?"
+        ],
+        "scored_metrics": ["communication", "role_fit", "growth_potential"]
+      },
+      {
+        "block": "resume_followup",
+        "tier": "adaptive",
+        "lead_question": "Разберите кейс из резюме: проблема пользователя, решение, метрики и роль в команде.",
+        "allowed_probes": [
+          "Как принимали решение о приоритетах?",
+          "Какие компромиссы обсуждали со стейкхолдерами?"
+        ],
+        "scored_metrics": ["practical_experience", "problem_solving", "communication"]
+      },
+      {
+        "block": "technical_foundation",
+        "tier": "core",
+        "lead_question": "Опишите, как вы формируете продуктовый план: гипотезы, MVP, метрики и обратная связь.",
+        "allowed_probes": [
+          "Как проверяете, что метрика действительно отражает ценность?",
+          "Как масштабируете решение после MVP?"
+        ],
+        "scored_metrics": ["technical_depth", "problem_solving", "practical_experience"]
+      },
+      {
+        "block": "technical_depth",
+        "tier": "advanced",
+        "lead_question": "Что делаете, когда бизнес-давление растет, а команда ограничена по ресурсу?",
+        "allowed_probes": [
+          "Как защищаете фокус команды?",
+          "Какой сигнал для пересмотра приоритетов считаете решающим?"
+        ],
+        "scored_metrics": ["technical_depth", "ownership", "problem_solving"]
+      },
+      {
+        "block": "behavioral_closing",
+        "tier": "closing",
+        "lead_question": "Расскажите о конфликте интересов между командами и как вы добились рабочего решения.",
+        "allowed_probes": [
+          "Как синхронизировали ожидания сторон?",
+          "Что изменили в процессах после ситуации?"
+        ],
+        "scored_metrics": ["ownership", "communication", "growth_potential"]
+      }
+    ]
+  },
+  "mobile_engineer": {
+    "core_competency_order": [
+      "Platform-Specific Development",
+      "Performance & Memory Optimization",
+      "Debugging & Problem Decomposition",
+      "Testing & CI/CD for Mobile",
+      "Networking & Data Persistence",
+      "Mobile UI & UX Implementation",
+      "Cross-Platform Frameworks"
+    ],
+    "question_blocks": [
+      {
+        "block": "intro",
+        "tier": "adaptive",
+        "lead_question": "Расскажите о себе: опыт mobile-разработки, платформы и ключевые релизы.",
+        "allowed_probes": [
+          "Какие части приложения вы вели лично?",
+          "Где вы дали наибольший вклад в стабильность/UX?"
+        ],
+        "scored_metrics": ["communication", "role_fit", "growth_potential"]
+      },
+      {
+        "block": "resume_followup",
+        "tier": "adaptive",
+        "lead_question": "Разберите мобильный кейс из резюме: задача, ограничения устройства, решение и результат.",
+        "allowed_probes": [
+          "Как проверяли производительность на реальных устройствах?",
+          "Какие компромиссы выбрали и почему?"
+        ],
+        "scored_metrics": ["practical_experience", "problem_solving", "communication"]
+      },
+      {
+        "block": "technical_foundation",
+        "tier": "core",
+        "lead_question": "Опишите технический сценарий: архитектура мобильного модуля, сеть/кэш, надежность релиза.",
+        "allowed_probes": [
+          "Как ловите device-specific дефекты?",
+          "Какой minimum quality bar перед выпуском?"
+        ],
+        "scored_metrics": ["technical_depth", "problem_solving", "practical_experience"]
+      },
+      {
+        "block": "technical_depth",
+        "tier": "advanced",
+        "lead_question": "Что вы делаете при деградации мобильного приложения после релиза в production?",
+        "allowed_probes": [
+          "Как быстро локализуете источник проблемы?",
+          "Как организуете hotfix с минимальным риском?"
+        ],
+        "scored_metrics": ["technical_depth", "ownership", "problem_solving"]
+      },
+      {
+        "block": "behavioral_closing",
+        "tier": "closing",
+        "lead_question": "Расскажите про сложное взаимодействие с backend/design и как вы удержали результат.",
+        "allowed_probes": [
+          "Как синхронизировали приоритеты к релизу?",
+          "Какую практику улучшили после ретроспективы?"
+        ],
+        "scored_metrics": ["ownership", "communication", "growth_potential"]
+      }
+    ]
+  },
+  "designer": {
+    "core_competency_order": [
+      "UX Research & User Understanding",
+      "Information Architecture",
+      "Interaction Design",
+      "Design Problem Solving",
+      "UI Design & Visual Systems",
+      "Accessibility Design",
+      "Design-to-Development Handoff"
+    ],
+    "question_blocks": [
+      {
+        "block": "intro",
+        "tier": "adaptive",
+        "lead_question": "Расскажите о себе: ваш путь в UX/UI, продуктовый контекст и ключевые кейсы.",
+        "allowed_probes": [
+          "Какие решения вы вели от исследования до релиза?",
+          "Где ваш дизайн дал наибольший пользовательский эффект?"
+        ],
+        "scored_metrics": ["communication", "role_fit", "growth_potential"]
+      },
+      {
+        "block": "resume_followup",
+        "tier": "adaptive",
+        "lead_question": "Разберите кейс из резюме: проблема пользователя, ваш дизайн-подход, итоговый результат.",
+        "allowed_probes": [
+          "Какие данные/исследования повлияли на решение?",
+          "Как вы проверяли, что решение работает?"
+        ],
+        "scored_metrics": ["practical_experience", "problem_solving", "communication"]
+      },
+      {
+        "block": "technical_foundation",
+        "tier": "core",
+        "lead_question": "Опишите, как вы проектируете UX-поток: гипотеза, структура, прототип, валидация.",
+        "allowed_probes": [
+          "Какие UX-риски закрываете первыми?",
+          "Как готовите handoff для разработки?"
+        ],
+        "scored_metrics": ["technical_depth", "problem_solving", "practical_experience"]
+      },
+      {
+        "block": "technical_depth",
+        "tier": "advanced",
+        "lead_question": "Что делаете, если бизнес-ограничения мешают UX-качеству: как выбираете компромисс?",
+        "allowed_probes": [
+          "Как аргументируете дизайн-решение команде?",
+          "Какой plan B готовите при ограничениях сроков?"
+        ],
+        "scored_metrics": ["technical_depth", "ownership", "problem_solving"]
+      },
+      {
+        "block": "behavioral_closing",
+        "tier": "closing",
+        "lead_question": "Расскажите о сложной кросс-функциональной ситуации и как вы привели команду к решению.",
+        "allowed_probes": [
+          "Как обрабатывали конфликтные мнения?",
+          "Какую практику коммуникации сохранили после кейса?"
+        ],
+        "scored_metrics": ["ownership", "communication", "growth_potential"]
+      }
+    ]
+  }
+}

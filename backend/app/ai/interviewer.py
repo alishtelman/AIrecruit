@@ -1,14 +1,17 @@
 """
 AI Interviewer module.
 
-Singleton `interviewer` is an LLMInterviewer (Groq) when GROQ_API_KEY is set,
+Singleton `interviewer` is an LLMInterviewer (LLM provider) when provider is configured,
 otherwise falls back to MockInterviewer.
 """
 import re
 import logging
 from dataclasses import dataclass, field
 
-from app.ai.runtime import LLMRuntime, runtime as default_runtime, runtime_settings_from_payload
+from app.ai.model_preferences import resolve_llm_runtime_model
+from app.ai.providers import LLMProvider, get_llm_provider
+from app.ai.resume_anchor_filters import is_low_signal_resume_anchor, is_non_experience_resume_line
+from app.ai.runtime_status import record_ai_error, record_ai_success
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -26,8 +29,8 @@ _ROLE_LABELS: dict[str, str] = {
     "designer": "UX/UI Дизайнер",
 }
 
-_MAX_QUESTION_CHARS = 170
-_MAX_QUESTION_WORDS = 28
+_MAX_QUESTION_CHARS = 220
+_MAX_QUESTION_WORDS = 36
 _QUESTION_SEGMENT_RE = re.compile(r"[^?]{8,}\?")
 _WHITESPACE_RE = re.compile(r"\s+")
 _MARKUP_RE = re.compile(r"[*_`#>\[\]\|]")
@@ -58,6 +61,23 @@ _QUESTION_WORD_HINTS = (
     "как", "что", "какой", "какие", "почему", "зачем", "где",
     "how", "what", "which", "why", "where", "walk me through", "tell me about",
 )
+_CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")
+_AMBIGUOUS_SHORT_QUESTION_RU_RE = re.compile(
+    r"^(как|где|когда|почему|зачем)\s+вы\s+(их|это|эти|такое|так|там|тут)\b",
+    re.IGNORECASE,
+)
+_AMBIGUOUS_SHORT_QUESTION_EN_RE = re.compile(
+    r"^(how|where|when|why)\s+(did|do|would)\s+you\s+(that|those|it|them)\b",
+    re.IGNORECASE,
+)
+_LOW_VALUE_QUESTION_EXACT = {
+    "кого?",
+    "чего?",
+    "что?",
+    "и?",
+    "who?",
+    "what?",
+}
 
 
 def _localized_role_label(target_role: str, language: str) -> str:
@@ -66,10 +86,25 @@ def _localized_role_label(target_role: str, language: str) -> str:
     return _ROLE_LABELS.get(target_role, target_role.replace("_", " "))
 
 
+def _localized_seniority_label(seniority_level: str | None, language: str) -> str | None:
+    normalized = str(seniority_level or "").strip().lower()
+    if normalized not in {"junior", "middle", "senior"}:
+        return None
+    if language == "en":
+        return normalized.title()
+    if normalized == "junior":
+        return "Junior"
+    if normalized == "middle":
+        return "Middle"
+    return "Senior"
+
+
 @dataclass
 class InterviewContext:
     target_role: str
     question_number: int          # 1-based core question index
+    seniority_level: str | None = None
+    difficulty_tier: int = 3
     max_questions: int = MAX_QUESTIONS
     message_history: list[dict] = field(default_factory=list)
     # Each dict: {"role": "assistant"|"candidate", "content": str}
@@ -89,12 +124,17 @@ class InterviewContext:
     diversification_hint: str | None = None
     candidate_memory: list[str] = field(default_factory=list)
     # v3-depth: question type and technology tracking
-    question_type: str = "main"       # main | followup | verification | deep_technical | edge_cases
+    question_type: str = "main"       # main | followup | structured_reframe | clarification | verification | deep_technical | edge_cases
     mentioned_technologies: list[str] = field(default_factory=list)
     verified_skills: list[str] = field(default_factory=list)
     contradiction_flags: list[str] = field(default_factory=list)
     pending_verification: str | None = None  # technology currently being asked about
     topic_phase: str | None = None
+    question_block: str | None = None
+    question_tier: str | None = None
+    lead_question: str | None = None
+    allowed_probes: list[str] = field(default_factory=list)
+    scored_metrics: list[str] = field(default_factory=list)
     module_type: str | None = None
     module_title: str | None = None
     module_scenario_id: str | None = None
@@ -105,6 +145,8 @@ class InterviewContext:
     module_stage_prompt: str | None = None
     module_stage_index: int = 0
     module_stage_count: int = 0
+    asked_topics: list[str] = field(default_factory=list)
+    transcript_summary: list[str] = field(default_factory=list)
 
     @property
     def is_followup_mode(self) -> bool:
@@ -161,6 +203,25 @@ _NO_EXPERIENCE_PHRASES = (
     "don't remember",
     "dont remember",
 )
+_NO_EXPERIENCE_CONTAINS_PHRASES = (
+    "пока только",
+    "только мануал",
+    "только ручн",
+    "без автоматизац",
+    "еще не делал",
+    "ещё не делал",
+    "manual only",
+    "just manual",
+    "mostly manual",
+    "not automated yet",
+)
+_NO_EXPERIENCE_PATTERN_RE = re.compile(
+    r"\b("
+    r"(не|нет)\s+(делал[аи]?|использовал[аи]?|автоматизировал[аи]?|настраивал[аи]?|занимал(?:ся|ась)|работал[аи]?)|"
+    r"(haven'?t|have not|didn'?t|did not)\s+(done|used|worked|automated|implemented)"
+    r")\b",
+    re.IGNORECASE,
+)
 
 _EVASIVE_PHRASES = (
     "обычно",
@@ -192,7 +253,11 @@ def classify_answer(answer: str) -> tuple[str, str]:
     words = normalized.split()
     word_count = len(words)
 
-    if any(phrase == normalized or normalized.startswith(f"{phrase} ") for phrase in _NO_EXPERIENCE_PHRASES):
+    if (
+        any(phrase == normalized or normalized.startswith(f"{phrase} ") for phrase in _NO_EXPERIENCE_PHRASES)
+        or any(phrase in normalized for phrase in _NO_EXPERIENCE_CONTAINS_PHRASES)
+        or bool(_NO_EXPERIENCE_PATTERN_RE.search(normalized))
+    ):
         return "no_experience_honest", "too_short" if word_count < 10 else "no_depth_indicators"
 
     if any(phrase == normalized or normalized.startswith(f"{phrase} ") for phrase in _EVASIVE_PHRASES):
@@ -262,6 +327,19 @@ _FOLLOWUP_PROMPTS_RU: dict[str, list[str]] = {
         "Расскажи про реальный случай: что за проект, какая задача, как решал?",
         "Хорошо — а с какими конкретными проблемами столкнулся и что сделал?",
     ],
+    "no_experience_honest": [
+        "Окей, если такого кейса в опыте не было: как бы вы подошли к решению этой задачи шаг за шагом?",
+        "Понял, это нормально. Тогда опишите гипотетический план: с чего начнёте и как проверите результат?",
+        "Хорошо, давайте как в реальной работе: какие первые 2-3 действия вы бы сделали в такой ситуации?",
+    ],
+    "reused_answer": [
+        "Давайте сменим угол: разберите один другой пример из вашей практики, где вы лично влияли на результат.",
+        "Чтобы не повторяться, возьмите другой кейс: какая была задача и что именно сделали вы?",
+    ],
+    "low_relevance": [
+        "Вернёмся к исходному вопросу: что именно вы делали лично и какой получили результат?",
+        "Сфокусируйтесь на конкретике по этому кейсу: ваша роль, шаги и итог.",
+    ],
 }
 
 _FOLLOWUP_PROMPTS_EN: dict[str, list[str]] = {
@@ -280,6 +358,19 @@ _FOLLOWUP_PROMPTS_EN: dict[str, list[str]] = {
         "Walk me through a real case: what was the project, the problem, and how you solved it?",
         "What concrete problems did you run into and what did you do about them?",
     ],
+    "no_experience_honest": [
+        "Got it. If you have not handled this exact case yet, how would you approach it step by step?",
+        "That is okay. Walk me through your hypothetical plan: where would you start and how would you validate the result?",
+        "Let us model a real situation: what are the first 2-3 actions you would take here?",
+    ],
+    "reused_answer": [
+        "Let's switch perspective: share a different example where your actions changed the outcome.",
+        "To avoid repetition, pick another case: what was the task and what did you personally do?",
+    ],
+    "low_relevance": [
+        "Let's return to the core question: what did you personally do and what was the outcome?",
+        "Please focus on this case specifically: your role, your steps, and the final result.",
+    ],
 }
 
 
@@ -289,6 +380,35 @@ def get_fallback_followup(reason: str, language: str = "ru") -> str:
     bank = (_FOLLOWUP_PROMPTS_RU if language != "en" else _FOLLOWUP_PROMPTS_EN)
     options = bank.get(reason, bank["no_depth_indicators"])
     return random.choice(options)
+
+
+def _honest_gap_reframe_question(ctx: InterviewContext) -> str:
+    role_prompt_ru = {
+        "qa_engineer": "Окей, если именно такого кейса не было: как бы вы с нуля организовали проверку качества и какие риски закрыли бы в первую очередь?",
+        "devops_engineer": "Окей, если такого кейса не было: как бы вы с нуля построили безопасный план изменения в проде и отката?",
+        "data_scientist": "Окей, если такого кейса не было: как бы вы с нуля проверили гипотезу, выбрали метрики и валидировали результат?",
+        "designer": "Окей, если такого кейса не было: как бы вы провели UX/UI-процесс от исследования до проверки решения на метриках?",
+    }
+    role_prompt_en = {
+        "qa_engineer": "If you have not handled this exact case yet, how would you design a QA approach from scratch and which risks would you cover first?",
+        "devops_engineer": "If you have not handled this exact case yet, how would you plan a safe production change and rollback strategy from scratch?",
+        "data_scientist": "If you have not handled this exact case yet, how would you test the hypothesis, choose metrics, and validate the outcome from scratch?",
+        "designer": "If you have not handled this exact case yet, how would you run the UX/UI process from research to measurable validation?",
+    }
+
+    if ctx.language == "en":
+        return _trim_question(
+            role_prompt_en.get(
+                ctx.target_role,
+                "If you have not handled this exact case yet, how would you approach this task step by step in a real project?",
+            )
+        )
+    return _trim_question(
+        role_prompt_ru.get(
+            ctx.target_role,
+            "Окей, если именно такого кейса не было: как бы вы подошли к этой задаче шаг за шагом в реальном проекте?",
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +564,14 @@ _COMPETENCY_MAIN_RU: dict[str, str] = {
     "Debugging & Problem Decomposition": "Расскажите про production-инцидент или сложный баг: как вы сузили проблему и нашли корневую причину?",
     "Technical Communication": "Как вы объясняли сложное техническое решение команде или бизнесу так, чтобы его реально приняли?",
     "Collaboration & Code Review": "Как вы проводите code review и что для вас признак сильного инженерного обсуждения в команде?",
+    "Test Strategy & Planning": "Как вы строите стратегию тестирования нового функционала: риски, покрытие, приоритеты и критерии выхода?",
+    "Test Automation": "Расскажите о вашем подходе к автоматизации тестов: что автоматизируете в первую очередь и почему?",
+    "Manual & Exploratory Testing": "Как вы проводите exploratory testing и какие техники используете, чтобы находить неочевидные дефекты?",
+    "API & Performance Testing": "Как вы тестируете API и производительность: какие метрики смотрите и как выявляете узкие места?",
+    "DevOps & CI/CD Integration": "Как вы встраиваете тестирование в CI/CD и что делаете, чтобы пайплайн оставался быстрым и надёжным?",
+    "Domain & Product Understanding": "Как вы переводите бизнес-требования в проверяемые сценарии и acceptance-критерии?",
+    "Root Cause Analysis": "Разберите реальный дефект: как воспроизводили, локализовали первопричину и подтверждали фикс?",
+    "Collaboration & Advocacy": "Как вы отстаиваете качество в диалоге с разработчиками и стейкхолдерами, когда сроки давят?",
     "Ownership & Growth Mindset": "Расскажите о ситуации, где вы взяли на себя ответственность за проблемный участок и что улучшили после этого.",
 }
 
@@ -457,6 +585,14 @@ _COMPETENCY_MAIN_EN: dict[str, str] = {
     "Debugging & Problem Decomposition": "Tell me about a production incident or hard bug: how did you narrow it down and find the root cause?",
     "Technical Communication": "How did you explain a complex technical decision so the team or business actually aligned on it?",
     "Collaboration & Code Review": "How do you run code review and what does strong engineering discussion look like in your team?",
+    "Test Strategy & Planning": "How do you design a test strategy for new functionality: risks, coverage, priorities, and release criteria?",
+    "Test Automation": "Tell me about your test automation approach: what do you automate first and why?",
+    "Manual & Exploratory Testing": "How do you run exploratory testing, and which techniques help you uncover non-obvious defects?",
+    "API & Performance Testing": "How do you test APIs and performance: which metrics matter most and how do you find bottlenecks?",
+    "DevOps & CI/CD Integration": "How do you integrate testing into CI/CD while keeping the pipeline fast and reliable?",
+    "Domain & Product Understanding": "How do you translate business requirements into testable scenarios and acceptance criteria?",
+    "Root Cause Analysis": "Walk me through a real defect: how you reproduced it, isolated root cause, and validated the fix.",
+    "Collaboration & Advocacy": "How do you advocate for quality with developers and stakeholders when delivery pressure is high?",
     "Ownership & Growth Mindset": "Tell me about a situation where you took ownership of a problematic area and improved it.",
 }
 
@@ -551,7 +687,7 @@ def _question_similarity(a: str, b: str) -> float:
     return len(ta & tb) / max(1, len(ta | tb))
 
 
-def _question_is_repeated(question: str, history: list[dict], *, threshold: float = 0.78) -> bool:
+def _question_is_repeated(question: str, history: list[dict], *, threshold: float = 0.72) -> bool:
     normalized = _trim_question(question).lower().strip(" ?!.")
     if not normalized:
         return False
@@ -559,7 +695,7 @@ def _question_is_repeated(question: str, history: list[dict], *, threshold: floa
         str(item.get("content", "")).strip()
         for item in history
         if item.get("role") == "assistant" and str(item.get("content", "")).strip()
-    ][-4:]
+    ][-8:]
     for previous in recent_assistant:
         prev_normalized = _trim_question(previous).lower().strip(" ?!.")
         if normalized == prev_normalized:
@@ -575,6 +711,201 @@ def _question_like_score(candidate: str) -> tuple[int, int]:
     # Prefer concise direct questions.
     length_penalty = abs(len(candidate) - 90)
     return hint_score, -length_penalty
+
+
+def _is_ambiguous_short_question(candidate: str, language: str) -> bool:
+    compact = _WHITESPACE_RE.sub(" ", candidate or "").strip()
+    if not compact:
+        return True
+    lowered = compact.lower()
+    if lowered in _LOW_VALUE_QUESTION_EXACT:
+        return True
+    words = lowered.split()
+    if len(words) <= 2:
+        return True
+    if len(words) > 12:
+        return False
+    if language == "en":
+        return bool(_AMBIGUOUS_SHORT_QUESTION_EN_RE.search(lowered))
+    if _AMBIGUOUS_SHORT_QUESTION_RU_RE.search(lowered):
+        return True
+    return lowered in {
+        "как вы это делали?",
+        "как вы это решали?",
+        "как вы их решали?",
+        "как вы их диагностировали?",
+        "как вы их делали?",
+    }
+
+
+def _clarification_rephrase_question(ctx: InterviewContext) -> str:
+    context_hint = str((ctx.transcript_summary or [""])[-1]).strip()
+    primary_competency = str((ctx.competency_targets or [""])[0]).strip()
+    primary_competency_short = primary_competency[:90] if primary_competency else ""
+    if ctx.language == "en":
+        if ctx.question_block == "behavioral_closing":
+            return _trim_question(
+                "Let me rephrase with context. Example: release conflict with another team. What happened, what did you do personally, and what measurable result followed?"
+            )
+        if ctx.question_type in {"verification", "claim_verification"} or ctx.verification_target:
+            tech = ctx.verification_target or ctx.pending_verification or "this technology"
+            return _trim_question(
+                f"Let me rephrase with context. For {tech}, describe one real task (for example, debugging a failed check): what you did personally, key steps, and result?"
+            )
+        return _trim_question(
+            "Let me rephrase with context. Give one concrete case on this topic (example: critical bug before release): your role, your steps, and measurable result?"
+        )
+
+    if ctx.question_block == "behavioral_closing":
+        return _trim_question(
+            "Переформулирую с контекстом. Например, конфликт по релизу между командами: что произошло, что вы сделали лично и какой был измеримый итог?"
+        )
+    if ctx.question_type in {"verification", "claim_verification"} or ctx.verification_target:
+        tech = ctx.verification_target or ctx.pending_verification or "этой технологии"
+        return _trim_question(
+            f"Переформулирую с контекстом. По {tech} (например, дефект в проде): какую задачу решали, что делали лично и какой был результат?"
+        )
+    if ctx.target_role == "qa_engineer" and primary_competency_short:
+        return _trim_question(
+            f"Переформулирую проще. По теме «{primary_competency_short}»: один QA-кейс с примером — что тестировали, какие шаги сделали и чем подтвердили результат?"
+        )
+    if context_hint:
+        return _trim_question(
+            f"Переформулирую проще. По теме «{context_hint[:80]}»: один конкретный кейс — задача, ваши действия и измеримый результат?"
+        )
+    return _trim_question(
+        "Переформулирую с примером. Возьмите один реальный QA-кейс (например, критичный дефект перед релизом): задача, ваши действия и результат?"
+    )
+
+
+def _structured_reframe_question(ctx: InterviewContext) -> str:
+    primary_competency = str((ctx.competency_targets or [""])[0]).strip()
+    competency_lower = primary_competency.lower()
+    tech = str(ctx.verification_target or ctx.pending_verification or "").strip()
+    if ctx.target_role == "qa_engineer":
+        if "test strategy" in competency_lower:
+            return _trim_question(
+                "Давайте на примере новой фичи: какие 3 проверки вы ставите в smoke, какие в regression и почему?"
+            )
+        if "test automation" in competency_lower:
+            return _trim_question(
+                "Один кейс по автотестам: что автоматизировали первым, какой риск закрыли и чем проверили стабильность?"
+            )
+        if "api & performance" in competency_lower:
+            return _trim_question(
+                "Один API-кейс: какой endpoint проверяли, какие негативные сценарии добавили и какой критерий успеха выбрали?"
+            )
+        if "manual & exploratory" in competency_lower:
+            return _trim_question(
+                "Один exploratory-кейс: какая гипотеза была, какие шаги сделали и какой неочевидный дефект нашли?"
+            )
+        if "root cause" in competency_lower:
+            return _trim_question(
+                "Один дефект в проде: как воспроизвели, где нашли первопричину и чем подтвердили фикс?"
+            )
+        if "devops & ci/cd" in competency_lower:
+            return _trim_question(
+                "Один CI/CD-кейс: на каком шаге quality-gate, что блокировало релиз и как приняли решение о выпуске?"
+            )
+        if "domain & product" in competency_lower:
+            return _trim_question(
+                "Один продуктовый кейс: какой риск для пользователя считали критичным, как его проверяли и что включили в acceptance?"
+            )
+    if ctx.language == "en":
+        if tech:
+            return _trim_question(
+                f"Let's structure one case on {tech}: context, your 2-3 concrete actions, and measurable outcome?"
+            )
+        return _trim_question(
+            "Let's structure one concrete case: context, your 2-3 actions, and measurable outcome?"
+        )
+    if tech:
+        return _trim_question(
+            f"Давайте проще по {tech}: какая была задача, что вы сделали лично и какой получили результат?"
+        )
+    return _trim_question(
+        "Давайте проще по одному кейсу: какая была задача, что вы сделали лично и какой получили результат?"
+    )
+
+
+def _recent_candidate_requested_move_on(ctx: InterviewContext) -> bool:
+    recent_candidate_messages = [
+        str(item.get("content", "")).strip().lower()
+        for item in ctx.message_history
+        if item.get("role") == "candidate" and str(item.get("content", "")).strip()
+    ][-2:]
+    if not recent_candidate_messages:
+        return False
+    marker_re = re.compile(
+        r"(уже\s+ответ(ил|ила|ил[аи])|уже\s+(писал|писала|говорил|говорила)\s+выше|давайте\s+дальше|перейд(е|ё)м\s+дальше|следующ(ий|ая)\s+вопрос|i already answered|already said above|move on|next question)",
+        re.IGNORECASE,
+    )
+    return any(marker_re.search(message) for message in recent_candidate_messages)
+
+
+def _contextual_followup_question(ctx: InterviewContext) -> str | None:
+    primary_competency = str((ctx.competency_targets or [""])[0]).strip().lower()
+    if ctx.target_role == "qa_engineer":
+        if "test strategy" in primary_competency:
+            return _trim_question(
+                "Уточню по кейсу: какие 2 риска были самыми критичными, и какие конкретные проверки вы поставили первыми?"
+                if ctx.language != "en"
+                else "Quick follow-up: which 2 risks were most critical, and which concrete checks did you prioritize first?"
+            )
+        if "test automation" in primary_competency:
+            return _trim_question(
+                "Уточню по автотестам: какой именно сценарий автоматизировали первым и по какому сигналу поняли, что риск закрыт?"
+                if ctx.language != "en"
+                else "Quick follow-up on automation: which exact scenario did you automate first, and what signal confirmed the risk was covered?"
+            )
+        if "api & performance" in primary_competency:
+            return _trim_question(
+                "Уточню по API: какой endpoint, какие 2 негативных сценария и какой порог ошибки/latency был критичным?"
+                if ctx.language != "en"
+                else "Quick API follow-up: which endpoint, which 2 negative scenarios, and what error/latency threshold was critical?"
+            )
+        if "root cause" in primary_competency:
+            return _trim_question(
+                "Уточню по RCA: чем подтвердили первопричину и каким тестом проверили, что фикс не сломал соседний функционал?"
+                if ctx.language != "en"
+                else "Quick RCA follow-up: how did you confirm the root cause, and what test proved the fix did not break adjacent functionality?"
+            )
+        if "devops & ci/cd" in primary_competency:
+            return _trim_question(
+                "Уточню по CI/CD: какой quality gate блокировал релиз и какое правило было для rollback/ship?"
+                if ctx.language != "en"
+                else "Quick CI/CD follow-up: which quality gate blocked the release, and what rollback/ship rule did you use?"
+            )
+
+    tech = str(ctx.verification_target or ctx.pending_verification or "").strip()
+    if tech:
+        if ctx.language == "en":
+            return _trim_question(
+                f"Let's stay on {tech}: what exactly did you do personally, what were your 2-3 key steps, and what result did you get?"
+            )
+        return _trim_question(
+            f"Ок, останемся на теме {tech}: что именно вы делали лично, какие были 2-3 ключевых шага и какой получили результат?"
+        )
+
+    anchor = str(ctx.resume_anchor or "").strip()
+    if anchor and not is_non_experience_resume_line(anchor) and not is_low_signal_resume_anchor(anchor):
+        if ctx.language == "en":
+            return _trim_question(
+                f"Let's anchor on '{anchor}': what was your personal contribution, key steps, and measurable outcome?"
+            )
+        return _trim_question(
+            f"Давайте заземлимся на кейсе «{anchor}»: какой был ваш личный вклад, ключевые шаги и измеримый результат?"
+        )
+
+    if ctx.topic_phase == "behavioral_closing":
+        if ctx.language == "en":
+            return _trim_question(
+                "Could you give one specific team situation: context, your actions, and what changed after your actions?"
+            )
+        return _trim_question(
+            "Можете привести один конкретный командный кейс: контекст, ваши действия и что изменилось после ваших действий?"
+        )
+    return None
 
 
 def _normalize_question_output(raw: str, ctx: InterviewContext) -> str:
@@ -637,66 +968,93 @@ def _normalize_question_output(raw: str, ctx: InterviewContext) -> str:
             question = question[pos:].strip(" ,;:")
             break
 
-    return _trim_question(question)
+    normalized = _trim_question(question)
+    if _is_ambiguous_short_question(normalized, ctx.language):
+        fallback = _fallback_question_for_context(ctx, prefer_secondary_main_topic=True)
+        if fallback:
+            return _trim_question(fallback)
+        if ctx.language == "en":
+            return "Walk me through one concrete case end-to-end: your role, your steps, and measurable result?"
+        return "Разберите один конкретный кейс целиком: ваша роль, ваши шаги и измеримый результат?"
+    return normalized
 
 
 def _resume_anchored_first_question(ctx: InterviewContext) -> str:
-    """Deterministic opening question focused on resume fit for the target role."""
-    anchor = ctx.resume_anchor
+    """Deterministic opening question: live intro, education, and relevant experience."""
     role_label = _localized_role_label(ctx.target_role, ctx.language)
-    if ctx.resume_text:
-        if not anchor:
-            for raw_line in ctx.resume_text.splitlines():
-                line = _WHITESPACE_RE.sub(" ", raw_line).strip(" \t-•|")
-                if len(line) < 12:
-                    continue
-                lowered = line.lower()
-                if (
-                    "@" in line
-                    or lowered.startswith(("email", "телефон", "phone", "github", "linkedin"))
-                    or lowered.startswith(("skills", "навыки", "summary", "education", "образование"))
-                ):
-                    continue
-                anchor = line[:72]
-                break
+    seniority_label = _localized_seniority_label(ctx.seniority_level, ctx.language)
+    role_with_level = f"{seniority_label} {role_label}".strip() if seniority_label else role_label
 
     if ctx.language == "en":
-        if anchor:
-            return _trim_question(
-                f"For this {role_label} role, why is '{anchor}' relevant to the position, what did you personally own there, and where is your experience still thinner?"
-            )
         return _trim_question(
-            f"For this {role_label} role, which parts of your resume best match the position, what did you personally own, and where is your experience still thinner?"
+            f"Tell me about yourself: your background, relevant education, and the experience that best prepares you for the {role_with_level} role?"
         )
 
-    if anchor:
-        return _trim_question(
-            f"По резюме и роли «{role_label}»: почему опыт «{anchor}» релевантен этой позиции, за что вы там отвечали и где опыта пока меньше?"
-        )
     return _trim_question(
-        f"По резюме и роли «{role_label}»: какие части вашего опыта лучше всего подходят под позицию, за что вы лично отвечали и где опыта пока меньше?"
+        f"Расскажите о себе: ваш путь, профильное образование и опыт, который лучше всего готовит вас к роли «{role_with_level}»?"
     )
 
 
 def _resume_anchored_main_question(ctx: InterviewContext) -> str | None:
     if not ctx.resume_anchor:
         return None
+    if is_non_experience_resume_line(ctx.resume_anchor) or is_low_signal_resume_anchor(ctx.resume_anchor):
+        return None
+
+    role_prompt_ru = {
+        "qa_engineer": "какой самый критичный дефект или риск качества вы там обнаружили, как верифицировали первопричину и как убедились, что фикс реально сработал",
+        "product_manager": "какой самый сложный продуктовый компромисс вы там приняли и по каким данным защищали это решение",
+        "designer": "какое ключевое UX/UI-решение вы там приняли, на каких данных и как проверяли результат после запуска",
+    }
+    role_prompt_en = {
+        "qa_engineer": "what was the most critical quality risk or defect there, how did you verify root cause, and how did you confirm the fix actually worked",
+        "product_manager": "what was the hardest product trade-off there, and which data supported your final decision",
+        "designer": "what was the key UX/UI decision there, what evidence informed it, and how did you validate impact after release",
+    }
 
     if ctx.language == "en":
         if ctx.verification_target:
             return _trim_question(
                 f"You listed '{ctx.resume_anchor}' in your resume. What was your role there and where exactly did you use {ctx.verification_target}?"
             )
+        role_tail = role_prompt_en.get(ctx.target_role, "what was the hardest technical decision there and why did you make it")
         return _trim_question(
-            f"You listed '{ctx.resume_anchor}' in your resume. What was the hardest technical decision there and why did you make it?"
+            f"You listed '{ctx.resume_anchor}' in your resume. {role_tail}?"
         )
 
     if ctx.verification_target:
         return _trim_question(
             f"В резюме у вас указан опыт «{ctx.resume_anchor}». Какую роль вы там играли и где именно использовали {ctx.verification_target}?"
         )
+    role_tail = role_prompt_ru.get(
+        ctx.target_role,
+        "какое самое сложное техническое решение вы там принимали и почему",
+    )
     return _trim_question(
-        f"В резюме у вас указан опыт «{ctx.resume_anchor}». Какое самое сложное техническое решение вы там принимали и почему?"
+        f"В резюме у вас указан опыт «{ctx.resume_anchor}». {role_tail}?"
+    )
+
+
+def _resume_followup_general_question(ctx: InterviewContext) -> str:
+    role_tail_ru = {
+        "qa_engineer": "Особенно интересно, как вы выстраивали тест-стратегию, приоритет дефектов и коммуникацию с разработкой.",
+        "devops_engineer": "Особенно интересно, как вы управляли надежностью, инцидентами и изменениями в проде.",
+        "data_scientist": "Особенно интересно, как вы формулировали задачу, валидировали модель и контролировали качество после релиза.",
+        "designer": "Особенно интересно, как вы принимали UX/UI решения на основе исследований и метрик.",
+    }
+    role_tail_en = {
+        "qa_engineer": "Focus on how you built test strategy, defect prioritization, and quality communication with engineering.",
+        "devops_engineer": "Focus on reliability ownership, incident response, and production change safety.",
+        "data_scientist": "Focus on problem framing, model validation, and post-release model quality control.",
+        "designer": "Focus on UX/UI decisions grounded in research evidence and post-launch metrics.",
+    }
+
+    if ctx.language == "en":
+        return _trim_question(
+            f"Let's walk through your recent work experience: what exactly did you own in your last role, and which results can you attribute to your decisions? {role_tail_en.get(ctx.target_role, '')}".strip()
+        )
+    return _trim_question(
+        f"Давайте пройдем по вашему опыту: за что вы лично отвечали на последнем месте и какие результаты получили благодаря вашим решениям? {role_tail_ru.get(ctx.target_role, '')}".strip()
     )
 
 
@@ -777,9 +1135,80 @@ def _competency_anchored_main_question(ctx: InterviewContext, *, preference_inde
     return _trim_question(base)
 
 
+def _question_matches_context_language(question: str, language: str) -> bool:
+    if not question:
+        return False
+    has_cyrillic = bool(_CYRILLIC_RE.search(question))
+    if language == "en":
+        return not has_cyrillic
+    return True
+
+
+def _configured_lead_question(ctx: InterviewContext) -> str | None:
+    lead = _trim_question(str(ctx.lead_question or "").strip())
+    if not lead:
+        return None
+    if not _question_matches_context_language(lead, ctx.language):
+        return None
+    return lead
+
+
+def _configured_probe_question(ctx: InterviewContext) -> str | None:
+    probes = [str(item).strip() for item in (ctx.allowed_probes or []) if str(item).strip()]
+    if not probes:
+        return None
+    for probe in probes:
+        candidate = _trim_question(probe)
+        if not candidate:
+            continue
+        if not _question_matches_context_language(candidate, ctx.language):
+            continue
+        if not _question_is_repeated(candidate, ctx.message_history):
+            return candidate
+    return None
+
+
+def _is_main_topic_already_covered(ctx: InterviewContext) -> bool:
+    if ctx.question_type != "main":
+        return False
+    current_topic = str(ctx.current_topic or "").strip()
+    if not current_topic:
+        return False
+    covered = {str(item).strip() for item in (ctx.asked_topics or []) if str(item).strip()}
+    return current_topic in covered
+
+
+def _fallback_followup_question(ctx: InterviewContext) -> str:
+    bank = _FOLLOWUP_PROMPTS_RU if ctx.language != "en" else _FOLLOWUP_PROMPTS_EN
+    options = bank.get(ctx.shallow_reason or "no_depth_indicators", bank["no_depth_indicators"])
+    preferred = _trim_question(get_fallback_followup(ctx.shallow_reason or "no_depth_indicators", ctx.language))
+    if preferred:
+        options = [preferred, *options]
+    for option in options:
+        candidate = _trim_question(option)
+        if not candidate:
+            continue
+        if _question_is_repeated(candidate, ctx.message_history, threshold=0.65):
+            continue
+        if _is_ambiguous_short_question(candidate, ctx.language):
+            continue
+        return candidate
+    return _trim_question(get_fallback_followup(ctx.shallow_reason or "no_depth_indicators", ctx.language))
+
+
 def _fallback_question_for_context(ctx: InterviewContext, *, prefer_secondary_main_topic: bool = False) -> str | None:
+    if ctx.question_type == "clarification":
+        return _clarification_rephrase_question(ctx)
     if ctx.question_type == "followup":
-        return _trim_question(get_fallback_followup(ctx.shallow_reason or "no_depth_indicators", ctx.language))
+        configured_probe = _configured_probe_question(ctx)
+        if configured_probe:
+            return configured_probe
+        contextual_followup = _contextual_followup_question(ctx)
+        if contextual_followup:
+            return contextual_followup
+        return _fallback_followup_question(ctx)
+    if ctx.question_type == "structured_reframe":
+        return _structured_reframe_question(ctx)
     if ctx.question_type == "claim_verification":
         probe = _resume_claim_probe_question(ctx)
         return _trim_question(probe) if probe else None
@@ -831,10 +1260,17 @@ def _fallback_question_for_context(ctx: InterviewContext, *, prefer_secondary_ma
         written_main = _written_communication_main_question(ctx)
         if written_main:
             return written_main
+    configured_lead = _configured_lead_question(ctx)
+    if configured_lead:
+        return configured_lead
 
     anchored = _competency_anchored_main_question(ctx, preference_index=1 if prefer_secondary_main_topic else 0)
     if anchored:
         return anchored
+    if ctx.topic_phase == "resume_followup":
+        resume_followup = _resume_followup_general_question(ctx)
+        if resume_followup:
+            return resume_followup
     resume_anchored = _resume_anchored_main_question(ctx)
     if resume_anchored:
         return resume_anchored
@@ -1213,6 +1649,7 @@ def _written_communication_depth_question(ctx: InterviewContext) -> str | None:
 
 def _build_system_prompt(ctx: InterviewContext) -> str:
     role_label = _ROLE_LABELS.get(ctx.target_role, ctx.target_role.replace("_", " "))
+    seniority_label = _localized_seniority_label(ctx.seniority_level, ctx.language)
 
     prompt = (
         f"## ПРИОРИТЕТ\n"
@@ -1252,10 +1689,41 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
 
         "## Формат ответа\n"
         "- Только ОДИН вопрос. Без нумерации.\n"
-        "- Коротко: 1 предложение, максимум 170 символов.\n"
+        "- Коротко: 1 предложение, максимум 220 символов.\n"
         "- НЕ начинай с оценки («Отлично!», «Хороший ответ», «Интересно»).\n"
         "- НЕ повторяй вопрос. НЕ давай советов и комментариев.\n"
     )
+
+    if seniority_label:
+        if ctx.language == "en":
+            prompt += (
+                f"\n## Interview level\n"
+                f"The interview level is **{seniority_label}**.\n"
+                "Calibrate the question depth and complexity to this level.\n"
+            )
+        else:
+            prompt += (
+                f"\n## Уровень интервью\n"
+                f"Уровень кандидата для этого интервью: **{seniority_label}**.\n"
+                "Калибруй глубину и сложность вопросов под этот уровень.\n"
+            )
+    difficulty_tier = max(1, min(5, int(getattr(ctx, "difficulty_tier", 3) or 3)))
+    if ctx.language == "en":
+        prompt += (
+            f"\n## Adaptive difficulty\n"
+            f"Current difficulty tier: **{difficulty_tier}/5**.\n"
+            "Tier 1-2: foundation and concrete basics.\n"
+            "Tier 3: practical ownership with real examples.\n"
+            "Tier 4-5: deep trade-offs, edge cases, and production constraints.\n"
+        )
+    else:
+        prompt += (
+            f"\n## Адаптивная сложность\n"
+            f"Текущий уровень сложности: **{difficulty_tier}/5**.\n"
+            "Уровни 1-2: база и конкретные основы.\n"
+            "Уровень 3: практический опыт и зона ответственности.\n"
+            "Уровни 4-5: глубокие trade-offs, edge cases и production-ограничения.\n"
+        )
 
     if ctx.candidate_memory:
         memory_lines = "\n".join(f"- {item}" for item in ctx.candidate_memory[-8:])
@@ -1265,6 +1733,73 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
             "если нет новой цели верификации или углубления.\n"
             f"{memory_lines}\n"
         )
+    if ctx.asked_topics:
+        topic_lines = "\n".join(f"- {item}" for item in ctx.asked_topics[-12:])
+        if ctx.language == "en":
+            prompt += (
+                "\n## Already covered topic signatures\n"
+                "Before asking the next main question, verify it does not duplicate these signatures.\n"
+                f"{topic_lines}\n"
+            )
+        else:
+            prompt += (
+                "\n## Уже покрытые сигнатуры тем\n"
+                "Перед следующим основным вопросом проверь, что вопрос не дублирует эти сигнатуры.\n"
+                f"{topic_lines}\n"
+            )
+    if ctx.transcript_summary:
+        summary_lines = "\n".join(f"- {item}" for item in ctx.transcript_summary[-8:])
+        if ctx.language == "en":
+            prompt += (
+                "\n## Transcript summary\n"
+                "Use this summary to avoid asking for the same information again.\n"
+                f"{summary_lines}\n"
+            )
+        else:
+            prompt += (
+                "\n## Краткий summary диалога\n"
+                "Используй summary, чтобы не переспрашивать уже раскрытые детали.\n"
+                f"{summary_lines}\n"
+            )
+
+    if ctx.question_block or ctx.question_tier or ctx.scored_metrics or ctx.lead_question:
+        scored_metrics = ", ".join(ctx.scored_metrics) if ctx.scored_metrics else "relevance, specificity, depth"
+        if ctx.language == "en":
+            prompt += (
+                "\n## Structured question target\n"
+                f"Current block: {ctx.question_block or 'technical'}\n"
+                f"Current tier: {ctx.question_tier or 'adaptive'}\n"
+                f"Scored metrics focus: {scored_metrics}\n"
+            )
+            if ctx.lead_question:
+                prompt += (
+                    "Use this lead intent as anchor for wording (adapt to context, do not copy verbatim if it becomes repetitive):\n"
+                    f"- {ctx.lead_question}\n"
+                )
+            if ctx.allowed_probes:
+                probes = "\n".join(f"- {item}" for item in ctx.allowed_probes[:4])
+                prompt += (
+                    "Allowed probe directions if answer is shallow/partial:\n"
+                    f"{probes}\n"
+                )
+        else:
+            prompt += (
+                "\n## Структурная цель вопроса\n"
+                f"Текущий блок: {ctx.question_block or 'technical'}\n"
+                f"Текущий tier: {ctx.question_tier or 'adaptive'}\n"
+                f"Фокус оцениваемых метрик: {scored_metrics}\n"
+            )
+            if ctx.lead_question:
+                prompt += (
+                    "Используй этот lead intent как якорь формулировки (адаптируй под контекст, не копируй дословно при повторе):\n"
+                    f"- {ctx.lead_question}\n"
+                )
+            if ctx.allowed_probes:
+                probes = "\n".join(f"- {item}" for item in ctx.allowed_probes[:4])
+                prompt += (
+                    "Допустимые probe-направления при слабом/частичном ответе:\n"
+                    f"{probes}\n"
+                )
 
     if ctx.module_type == "system_design":
         prompt += (
@@ -1405,6 +1940,23 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
                     "- No metrics → 'What was the scale and what was the measurable result?'\n"
                     "- Tech mentioned → 'You mentioned [X] — how exactly did you use it and what problems came up?'\n"
                     "- No 'why' → 'Why that approach and not the alternatives?'\n"
+                )
+        elif ctx.question_type == "structured_reframe":
+            if is_ru:
+                prompt += (
+                    "\n## Режим: Structured reframe\n"
+                    "Кандидат несколько раз подряд отвечает слишком общо/кратко.\n\n"
+                    "Задача: задать ОДИН короткий вопрос в формате "
+                    "'контекст → 2-3 личных шага → измеримый результат'.\n"
+                    "Не дави и не оценивай. Не меняй тему.\n"
+                )
+            else:
+                prompt += (
+                    "\n## Mode: Structured reframe\n"
+                    "The candidate has provided multiple low-signal answers in a row.\n\n"
+                    "Task: ask ONE short question in the format "
+                    "'context -> 2-3 personal actions -> measurable outcome'.\n"
+                    "Do not be pushy and do not switch topic.\n"
                 )
 
         # ── VERIFICATION (checking claimed technology knowledge) ───────────
@@ -1605,18 +2157,60 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
 
 
 class LLMInterviewer:
-    """Generates adaptive interview questions via the configured LLM runtime."""
+    """Generates adaptive interview questions via configured LLM provider."""
 
-    def __init__(self, client=None, runtime: LLMRuntime | None = None) -> None:
-        self._client = client
-        self._runtime = runtime or default_runtime
+    def __init__(self, provider: LLMProvider) -> None:
+        self._provider = provider
 
-    async def get_next_question(
-        self,
-        ctx: InterviewContext,
-        model_override: str | None = None,
-        runtime_settings: dict | None = None,
-    ) -> str:
+    @property
+    def provider_name(self) -> str:
+        return getattr(self._provider, "name", "unknown")
+
+    async def get_next_question(self, ctx: InterviewContext, model_override: str | None = None) -> str:
+        if _recent_candidate_requested_move_on(ctx):
+            if ctx.question_type in {"followup", "structured_reframe", "verification", "claim_verification"}:
+                next_main = _competency_anchored_main_question(ctx, preference_index=1)
+                if not next_main:
+                    configured_lead = _configured_lead_question(ctx)
+                    next_main = configured_lead if configured_lead and not _question_is_repeated(configured_lead, ctx.message_history) else None
+                if not next_main:
+                    next_main = _resume_followup_general_question(ctx)
+                if not next_main:
+                    next_main = _fallback_question_for_context(ctx, prefer_secondary_main_topic=True)
+                if next_main and not _question_is_repeated(next_main, ctx.message_history):
+                    return next_main
+
+        if _is_main_topic_already_covered(ctx):
+            alternative_main = _competency_anchored_main_question(ctx, preference_index=1)
+            if alternative_main and not _question_is_repeated(alternative_main, ctx.message_history):
+                return alternative_main
+            configured_lead = _configured_lead_question(ctx)
+            if configured_lead and not _question_is_repeated(configured_lead, ctx.message_history):
+                return configured_lead
+            fallback_main = _fallback_question_for_context(ctx, prefer_secondary_main_topic=True)
+            if fallback_main and not _question_is_repeated(fallback_main, ctx.message_history):
+                return fallback_main
+
+        if ctx.question_type == "clarification":
+            clarification_question = _clarification_rephrase_question(ctx)
+            if clarification_question and not _question_is_repeated(clarification_question, ctx.message_history):
+                return clarification_question
+            deterministic_clarification = _fallback_question_for_context(ctx)
+            if deterministic_clarification:
+                return deterministic_clarification
+        if ctx.question_type == "followup":
+            if ctx.answer_class == "no_experience_honest":
+                reframe = _honest_gap_reframe_question(ctx)
+                if reframe and not _question_is_repeated(reframe, ctx.message_history):
+                    return reframe
+            deterministic_followup = _fallback_question_for_context(ctx)
+            if deterministic_followup and not _question_is_repeated(deterministic_followup, ctx.message_history):
+                return deterministic_followup
+        if ctx.question_type == "structured_reframe":
+            deterministic_reframe = _structured_reframe_question(ctx)
+            if deterministic_reframe and not _question_is_repeated(deterministic_reframe, ctx.message_history):
+                return deterministic_reframe
+
         # First question: always deterministic (faster, no LLM needed)
         if ctx.module_type == "system_design" and ctx.question_type == "main":
             system_design_main = _system_design_main_question(ctx)
@@ -1642,10 +2236,20 @@ class LLMInterviewer:
             return _resume_anchored_first_question(ctx)
         if ctx.topic_phase == "behavioral_closing" and ctx.question_type == "main":
             return _behavioral_closing_question(ctx)
-        if ctx.question_type == "main" and ctx.topic_phase == "resume_followup" and ctx.resume_anchor:
+        if ctx.question_type == "main" and ctx.topic_phase == "resume_followup":
             anchored = _resume_anchored_main_question(ctx)
             if anchored and not _question_is_repeated(anchored, ctx.message_history):
                 return anchored
+            configured_lead = _configured_lead_question(ctx)
+            if configured_lead and not _question_is_repeated(configured_lead, ctx.message_history):
+                return configured_lead
+            general_resume_followup = _resume_followup_general_question(ctx)
+            if general_resume_followup and not _question_is_repeated(general_resume_followup, ctx.message_history):
+                return general_resume_followup
+        if ctx.question_type == "main":
+            configured_lead = _configured_lead_question(ctx)
+            if configured_lead and not _question_is_repeated(configured_lead, ctx.message_history):
+                return configured_lead
         if ctx.question_type == "main":
             anchored_main = _competency_anchored_main_question(ctx)
             if anchored_main and not _question_is_repeated(anchored_main, ctx.message_history):
@@ -1673,31 +2277,45 @@ class LLMInterviewer:
         max_tokens = 96 if is_non_main else 140
         temperature = 0.65 if is_non_main else 0.5
 
+        resolved_model = resolve_llm_runtime_model(model_override)
         try:
-            if self._client is not None and runtime_settings is None:
-                response = await self._client.chat.completions.create(
-                    model=model_override or "llama-3.3-70b-versatile",
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    messages=messages,
-                )
-                raw = response.choices[0].message.content.strip()
-            else:
-                resolved_runtime = runtime_settings_from_payload(runtime_settings, role="interviewer")
-                result = await self._runtime.complete_text(
-                    runtime_settings=resolved_runtime,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    messages=messages,
-                )
-                raw = result.text
+            logger.info(
+                "ai_model_call component=interviewer provider=%s model=%s question_type=%s role=%s",
+                self.provider_name,
+                resolved_model,
+                ctx.question_type,
+                ctx.target_role,
+            )
+            response = await self._provider.chat_completion(
+                messages=messages,
+                model=resolved_model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            record_ai_success(
+                component="interviewer",
+                provider=self.provider_name,
+                model=response.actual_model_used,
+                note=(
+                    "fallback_models_used"
+                    if response.fallback_used
+                    else None
+                ),
+            )
+            raw = response.text.strip()
             normalized = _normalize_question_output(raw, ctx)
             if _question_is_repeated(normalized, ctx.message_history):
                 fallback = _fallback_question_for_context(ctx, prefer_secondary_main_topic=True)
                 if fallback and not _question_is_repeated(fallback, ctx.message_history):
                     return fallback
             return normalized
-        except Exception:
+        except Exception as exc:
+            record_ai_error(
+                component="interviewer",
+                provider=self.provider_name,
+                model=resolved_model,
+                error=str(exc),
+            )
             if settings.allow_mock_ai:
                 logger.exception("Interviewer LLM failed, using deterministic fallback question")
                 return await MockInterviewer().get_next_question(ctx, model_override=model_override)
@@ -1800,6 +2418,10 @@ class MockInterviewer:
         match ctx.question_type:
             case "followup":
                 return get_fallback_followup(ctx.shallow_reason or "no_depth_indicators", ctx.language)
+            case "structured_reframe":
+                return _structured_reframe_question(ctx)
+            case "clarification":
+                return _clarification_rephrase_question(ctx)
             case "claim_verification":
                 q = _resume_claim_probe_question(ctx)
                 return q or get_fallback_followup("no_depth_indicators", ctx.language)
@@ -1877,4 +2499,14 @@ class DisabledInterviewer:
 # Singleton
 # ---------------------------------------------------------------------------
 
-interviewer = LLMInterviewer()
+try:
+    _provider = get_llm_provider(settings)
+except Exception:
+    _provider = None
+
+if _provider and _provider.name not in {"mock"}:
+    interviewer = LLMInterviewer(provider=_provider)
+elif settings.allow_mock_ai:
+    interviewer = MockInterviewer()  # type: ignore[assignment]
+else:
+    interviewer = DisabledInterviewer()  # type: ignore[assignment]

@@ -4,6 +4,7 @@ from app.ai.assessor import (
     _aggregate_skills,
     _apply_recommendation_gates,
     _apply_summary_penalties,
+    _build_explainability_report,
     _build_outcome_feedback,
     _build_mock_competency_scores,
     _build_mock_question_analysis,
@@ -32,7 +33,7 @@ def test_normalize_question_output_keeps_single_concise_question():
 
     assert normalized.endswith("?")
     assert normalized.count("?") == 1
-    assert len(normalized) <= 170
+    assert len(normalized) <= 220
     assert "I understand" not in normalized
 
 
@@ -59,11 +60,11 @@ def test_resume_anchored_first_question_uses_resume_line_context():
 
     question = _resume_anchored_first_question(ctx)
 
-    assert "Acme Payments" in question
+    assert "Acme Payments" not in question
     assert "Backend-разработчик" in question
-    assert "релевант" in question
+    assert "образован" in question.lower()
     assert question.endswith("?")
-    assert len(question) <= 170
+    assert len(question) <= 220
 
 
 def test_resume_anchored_first_question_has_safe_fallback_without_resume():
@@ -77,7 +78,26 @@ def test_resume_anchored_first_question_has_safe_fallback_without_resume():
     question = _resume_anchored_first_question(ctx)
 
     assert "backend engineer" in question.lower()
-    assert "best match the position" in question.lower()
+    assert "relevant education" in question.lower()
+    assert question.endswith("?")
+
+
+def test_resume_anchored_first_question_ignores_relocation_anchor():
+    ctx = InterviewContext(
+        target_role="data_scientist",
+        question_number=1,
+        language="ru",
+        resume_anchor="Готов к переезду, готов к командировкам",
+        resume_text=(
+            "Готов к переезду, готов к командировкам\n"
+            "Data Scientist в финтехе, строил пайплайны данных и валидацию моделей."
+        ),
+    )
+
+    question = _resume_anchored_first_question(ctx)
+
+    assert "Готов к переезду" not in question
+    assert "профильное образование" in question.lower()
     assert question.endswith("?")
 
 
@@ -316,6 +336,11 @@ def test_mock_question_analysis_promotes_concrete_partial_answer_to_high_signal(
                 {
                     "competencies": ["Database Design & Optimization"],
                     "verification_target": "postgresql",
+                    "block": "technical_foundation",
+                    "tier": "core",
+                    "lead_question": "Разберите технический кейс по данным.",
+                    "allowed_probes": ["Как диагностировали узкое место?"],
+                    "scored_metrics": ["technical_depth", "problem_solving"],
                 }
             ]
         },
@@ -325,6 +350,13 @@ def test_mock_question_analysis_promotes_concrete_partial_answer_to_high_signal(
     assert per_q[0]["answer_quality"] >= 7.2
     assert per_q[0]["depth"] in {"strong", "expert", "adequate"}
     assert per_q[0]["specificity"] in {"medium", "high"}
+    assert per_q[0]["block"] == "technical_foundation"
+    assert per_q[0]["tier"] == "core"
+    assert per_q[0]["lead_question"] == "Разберите технический кейс по данным."
+    assert per_q[0]["allowed_probes"] == ["Как диагностировали узкое место?"]
+    assert per_q[0]["scored_metrics"] == ["technical_depth", "problem_solving"]
+    assert "Вопрос задан" in per_q[0]["why_asked"]
+    assert "метрики" in per_q[0]["what_was_scored"]
 
 
 def test_summary_model_marks_validated_topic_for_concrete_mechanistic_answer():
@@ -352,6 +384,11 @@ def test_summary_model_marks_validated_topic_for_concrete_mechanistic_answer():
                 {
                     "competencies": ["Database Design & Optimization"],
                     "verification_target": "postgresql",
+                    "block": "technical_foundation",
+                    "tier": "core",
+                    "lead_question": "Разберите технический кейс по данным.",
+                    "allowed_probes": ["Как диагностировали узкое место?"],
+                    "scored_metrics": ["technical_depth", "problem_solving"],
                 }
             ],
             "topic_signals": ["partial"],
@@ -362,6 +399,13 @@ def test_summary_model_marks_validated_topic_for_concrete_mechanistic_answer():
 
     assert summary["validated_topics"] == 1
     assert summary["topic_outcomes"][0]["outcome"] == "validated"
+    assert summary["topic_outcomes"][0]["block"] == "technical_foundation"
+    assert summary["topic_outcomes"][0]["tier"] == "core"
+    assert summary["topic_outcomes"][0]["lead_question"] == "Разберите технический кейс по данным."
+    assert summary["topic_outcomes"][0]["allowed_probes"] == ["Как диагностировали узкое место?"]
+    assert summary["topic_outcomes"][0]["scored_metrics"] == ["technical_depth", "problem_solving"]
+    assert "Вопрос задан" in summary["topic_outcomes"][0]["why_asked"]
+    assert "метрики" in summary["topic_outcomes"][0]["what_was_scored"]
 
 
 def test_mock_competency_scores_raise_validated_topic_into_seven_plus_range():
@@ -594,8 +638,29 @@ def test_recommendation_gate_allows_yes_for_high_signal_validated_interview():
         ],
     )
 
-    assert recommendation == "yes"
-    assert all("yes requires stable medium-or-better evidence" not in item for item in reasons)
+    assert recommendation == "maybe"
+    assert any("below 70%" in item for item in reasons)
+
+
+def test_recommendation_gate_forces_maybe_when_confidence_is_below_50():
+    recommendation, reasons = _apply_recommendation_gates(
+        llm_rec="no",
+        overall_score=4.8,
+        summary_model={
+            "core_topics": 8,
+            "signal_quality": "limited",
+            "strong_topics": 0,
+            "validated_topics": 1,
+            "honest_gaps": 2,
+            "generic_or_evasive_topics": 4,
+        },
+        answer_metrics={"short_answer_ratio": 0.45, "avg_answer_quality": 4.2},
+        confidence_metrics={"overall_confidence": 0.32},
+        competency_scores=[{"score": 3.8}, {"score": 4.1}],
+    )
+
+    assert recommendation == "maybe"
+    assert any("below 40%" in item for item in reasons)
 
 
 def test_build_diversification_hint_mentions_new_focus_and_old_topic():
@@ -609,3 +674,129 @@ def test_build_diversification_hint_mentions_new_focus_and_old_topic():
     assert hint
     assert "не продолжай спрашивать про postgresql" in hint.lower()
     assert "docker" in hint.lower()
+
+
+def test_explainability_report_builds_evidence_based_sections():
+    summary_model = {
+        "signal_quality": "medium",
+        "topic_outcomes": [
+            {
+                "slot": 1,
+                "label": "PostgreSQL",
+                "signal": "strong",
+                "outcome": "validated",
+                "evidence_hint": "Оптимизировал тяжелый запрос через explain analyze и индексы.",
+                "scored_metrics": ["technical_depth", "problem_solving"],
+                "why_asked": "Проверка глубины работы с SQL.",
+                "what_was_scored": "Техническая глубина и качество диагностики.",
+            },
+            {
+                "slot": 2,
+                "label": "Kubernetes",
+                "signal": "generic",
+                "outcome": "unverified_claim",
+                "evidence_hint": "Ответ был общий и без примеров из продакшна.",
+                "scored_metrics": ["technical_depth"],
+                "why_asked": "Проверка резюме-заявления по инфраструктуре.",
+                "what_was_scored": "Практический опыт.",
+            },
+        ],
+    }
+    per_question = [
+        {
+            "question_number": 1,
+            "answer_quality": 8.0,
+            "evidence": "Оптимизировал SQL через explain analyze, добавил индекс по status+created_at.",
+            "specificity": "high",
+            "depth": "strong",
+            "scored_metrics": ["technical_depth", "problem_solving"],
+        },
+        {
+            "question_number": 2,
+            "answer_quality": 4.0,
+            "evidence": "С Kubernetes работал поверхностно, без собственного кластера.",
+            "specificity": "low",
+            "depth": "surface",
+            "scored_metrics": ["technical_depth"],
+        },
+    ]
+
+    payload = _build_explainability_report(
+        target_role="backend_engineer",
+        report_language="ru",
+        summary_model=summary_model,
+        per_question_analysis=per_question,
+        strengths=["Сильная диагностика SQL-проблем."],
+        weaknesses=["Недостаточно подтвержден практический опыт с Kubernetes."],
+        recommendations=["Подготовить production-кейс по Kubernetes с конкретным результатом."],
+        hiring_recommendation="maybe",
+        overall_score=6.4,
+        overall_confidence=0.61,
+        calibrated_scoring={
+            "pre_penalty_overall_score": 6.8,
+            "post_penalty_overall_score": 6.4,
+            "block_metrics": [{"block": "technical_depth", "score": 7.2, "weight": 0.3, "question_count": 2}],
+        },
+        penalties=["generic_answers (38%): capped_at_6"],
+    )
+
+    assert payload["version"] == "2.0"
+    assert payload["overall_assessment"]["overall_score"] == 6.4
+    assert payload["evidence_based_strengths"]
+    assert payload["evidence_based_gaps"]
+    assert payload["growth_recommendations"]
+    assert payload["evidence_based_strengths"][0]["evidence"][0]["question_number"] == 1
+    assert payload["evidence_based_gaps"][0]["evidence"][0]["question_number"] == 2
+    assert payload["scoring_trace"]["penalty_explanations"]
+
+
+def test_explainability_report_penalty_mapping_is_human_readable():
+    payload = _build_explainability_report(
+        target_role="qa_engineer",
+        report_language="en",
+        summary_model={"signal_quality": "limited", "topic_outcomes": []},
+        per_question_analysis=[],
+        strengths=[],
+        weaknesses=[],
+        recommendations=[],
+        hiring_recommendation="no",
+        overall_score=4.9,
+        overall_confidence=0.42,
+        calibrated_scoring={
+            "pre_penalty_overall_score": 5.7,
+            "post_penalty_overall_score": 4.9,
+            "block_metrics": [],
+        },
+        penalties=[
+            "short_answers (0.35): capped_at_6",
+            "unstable_response_consistency (4.2/10): capped_at_6.0",
+        ],
+    )
+
+    explanations = payload["scoring_trace"]["penalty_explanations"]
+    assert any("Short answers reduced the score" in item for item in explanations)
+    assert any("Cross-answer consistency was below target" in item for item in explanations)
+
+
+def test_explainability_report_marks_insufficient_signal_when_confidence_is_low():
+    payload = _build_explainability_report(
+        target_role="qa_engineer",
+        report_language="ru",
+        summary_model={"signal_quality": "limited", "topic_outcomes": []},
+        per_question_analysis=[],
+        strengths=[],
+        weaknesses=[],
+        recommendations=[],
+        hiring_recommendation="maybe",
+        overall_score=5.2,
+        overall_confidence=0.41,
+        calibrated_scoring={
+            "pre_penalty_overall_score": 5.8,
+            "post_penalty_overall_score": 5.2,
+            "block_metrics": [],
+        },
+        penalties=[],
+    )
+
+    assert payload["overall_assessment"]["insufficient_signal"] is True
+    assert "нужен ручной review" in payload["overall_assessment"]["summary"]

@@ -1,0 +1,386 @@
+{
+  "backend_engineer": {
+    "competencies": [
+      "System Design & Reliability",
+      "API Design & Contracts",
+      "Database Performance",
+      "Async Processing & Messaging",
+      "Observability & Incident Response",
+      "Security & Fault Tolerance"
+    ],
+    "scenarios": [
+      {
+        "id": "be_api_500_under_load",
+        "title": "API начал отдавать 500 под нагрузкой",
+        "competency": "Observability & Incident Response",
+        "steps": [
+          "Представьте: после запуска рекламной кампании API начал отдавать 500 при росте RPS. Что проверите первым за 10 минут?",
+          "Какие сигналы соберёте: rate ошибок, latency, saturation, конкретные endpoint, correlation id?",
+          "Как отделите проблему кода от проблемы инфраструктуры и зависимостей?",
+          "Какой временный mitigation примените, чтобы стабилизировать сервис до фикса?",
+          "Как подтвердите, что инцидент закрыт и не повторится на следующем пике?"
+        ]
+      },
+      {
+        "id": "be_slow_sql_endpoint",
+        "title": "Медленный SQL-запрос тормозит endpoint",
+        "competency": "Database Performance",
+        "steps": [
+          "Представьте: endpoint отвечает 4-6 секунд из-за SQL. Как воспроизведёте и локализуете узкое место?",
+          "Какие данные запросите: план выполнения, частота вызовов, кардинальность, параметры запроса?",
+          "Какие варианты оптимизации рассмотрите: индекс, переписывание запроса, кэш, денормализация?",
+          "Как оцените trade-off между скоростью чтения, стоимостью записи и сложностью сопровождения?",
+          "Как проверите результат на production-like нагрузке?"
+        ]
+      },
+      {
+        "id": "be_kafka_duplicate_processing",
+        "title": "Дублируется обработка события из Kafka",
+        "competency": "Async Processing & Messaging",
+        "steps": [
+          "Представьте: одно событие из Kafka обрабатывается дважды. Где начнёте расследование?",
+          "Какие причины проверите: retries, offset commit, consumer rebalance, идемпотентность обработчика?",
+          "Как измените обработку, чтобы исключить двойные побочные эффекты?",
+          "Какие метрики и алерты добавите для раннего обнаружения дублей?",
+          "Как протестируете исправление на сбоях и повторной доставке?"
+        ]
+      }
+    ]
+  },
+  "frontend_engineer": {
+    "competencies": [
+      "UI Performance",
+      "Rendering & State Management",
+      "Reliability in Production",
+      "API Integration Correctness",
+      "Debugging & Root Cause Analysis",
+      "Accessibility & UX Robustness"
+    ],
+    "scenarios": [
+      {
+        "id": "fe_large_list_lag",
+        "title": "Страница лагает при большом списке",
+        "competency": "UI Performance",
+        "steps": [
+          "Представьте: страница с 10 000 элементов начинает лагать. Что диагностируете первым?",
+          "Какие измерения соберёте: FPS, commit time, re-render count, memory usage?",
+          "Какой набор оптимизаций примените: virtualization, memoization, splitting state, debounce?",
+          "Как убедитесь, что оптимизация не сломала UX и доступность?",
+          "Как закрепите регрессионную защиту по производительности?"
+        ]
+      },
+      {
+        "id": "fe_blank_screen_after_release",
+        "title": "После релиза часть пользователей видит пустой экран",
+        "competency": "Reliability in Production",
+        "steps": [
+          "Представьте: после релиза 8% пользователей видят blank screen. Какие гипотезы проверите первыми?",
+          "Какие данные поднимете: frontend error logs, sourcemaps, версия бандла, сегмент браузеров?",
+          "Как быстро ограничите impact: rollback, feature flag, selective disable?",
+          "Как найдёте точную причину и воспроизведёте баг локально?",
+          "Какие проверки добавите в release-процесс, чтобы это не повторилось?"
+        ]
+      },
+      {
+        "id": "fe_form_invalid_payload",
+        "title": "Форма отправляет некорректные данные в API",
+        "competency": "API Integration Correctness",
+        "steps": [
+          "Представьте: форма отправляет payload, который API принимает, но бизнес-данные оказываются неверными. Что проверите сначала?",
+          "Как валидируете контракт: типы, nullable-поля, преобразования дат/чисел, локализацию?",
+          "Как разделите ответственность между frontend validation и backend validation?",
+          "Как протестируете edge-cases: пустые поля, большие значения, race при двойной отправке?",
+          "Что добавите в автотесты и мониторинг клиентских ошибок?"
+        ]
+      }
+    ]
+  },
+  "qa_engineer": {
+    "competencies": [
+      "Test Strategy & Planning",
+      "Bug Investigation",
+      "API Testing",
+      "Regression Risk",
+      "Test Automation",
+      "Release Quality"
+    ],
+    "scenarios": [
+      {
+        "id": "qa_payment_status_error",
+        "title": "Деньги списались, статус ошибка",
+        "competency": "Bug Investigation",
+        "steps": [
+          "Представьте: пользователь сделал перевод, деньги списались, но статус операции — ошибка. Что проверите первым?",
+          "Какие данные соберёте: request id, response, логи, БД, статус транзакции?",
+          "Как поймёте, где проблема: фронт, backend, интеграция или процессинг?",
+          "Как проверите фикс?",
+          "Что добавите в регрессию?"
+        ]
+      },
+      {
+        "id": "qa_fee_change_before_release",
+        "title": "Релиз завтра, изменилась комиссия",
+        "competency": "Regression Risk",
+        "steps": [
+          "Представьте: за день до релиза меняется логика комиссии. Как вы перестроите тест-приоритеты?",
+          "Какие зоны риска выделите: расчёт, округление, валюты, лимиты, отчётность?",
+          "Какие проверки обязательны до релиза, а что можно вынести в post-release?",
+          "Как согласуете риск с продуктом и разработкой, если времени не хватает?",
+          "Какие runtime-мониторы поставите на первые часы после выката?"
+        ]
+      },
+      {
+        "id": "qa_api_returns_200_wrong_data",
+        "title": "API endpoint возвращает 200, но данные неверные",
+        "competency": "API Testing",
+        "steps": [
+          "Представьте: endpoint стабильно отдаёт 200, но бизнес-поле заполнено неверно. С чего начнёте проверку?",
+          "Какие тесты добавите: позитивные, негативные, contract, boundary, data consistency?",
+          "Как определите, это баг API-логики, маппинга данных или тестовых ожиданий?",
+          "Какие доказательства приложите в баг-репорт для быстрого исправления?",
+          "Как предотвратите повторение этого класса дефектов?"
+        ]
+      }
+    ]
+  },
+  "devops_engineer": {
+    "competencies": [
+      "CI/CD Reliability",
+      "Kubernetes Operations",
+      "Production Incident Management",
+      "Observability & SLO",
+      "Infrastructure Scalability",
+      "Security & Change Safety"
+    ],
+    "scenarios": [
+      {
+        "id": "de_deploy_stuck_prod",
+        "title": "Deployment завис на production",
+        "competency": "CI/CD Reliability",
+        "steps": [
+          "Представьте: production deployment завис на шаге rollout. Какие действия сделаете первыми?",
+          "Какие причины проверите: image pull, миграции, readiness probe, pipeline permissions?",
+          "Как безопасно принять решение: ждать, откатить, или переключить трафик?",
+          "Как минимизируете downtime и риски для пользователей?",
+          "Какие улучшения внесёте в pipeline после инцидента?"
+        ]
+      },
+      {
+        "id": "de_k8s_crashloop",
+        "title": "Kubernetes pod в CrashLoopBackOff",
+        "competency": "Kubernetes Operations",
+        "steps": [
+          "Представьте: ключевой pod уходит в CrashLoopBackOff. С чего начнёте диагностику?",
+          "Какие артефакты проверите: logs, events, describe, probes, env/secret, resource limits?",
+          "Как отличите конфигурационный дефект от регрессии приложения?",
+          "Какой временный workaround примените, чтобы восстановить сервис?",
+          "Как закрепите решение в IaC и runbook?"
+        ]
+      },
+      {
+        "id": "de_latency_error_after_release",
+        "title": "После релиза вырос latency и error rate",
+        "competency": "Observability & SLO",
+        "steps": [
+          "Представьте: после релиза p95 latency вырос в 2 раза и увеличились 5xx. Что проверите в первые 15 минут?",
+          "Какие SLI/SLO и дашборды должны дать вам ответ по источнику деградации?",
+          "Как определите, проблема в приложении, базе, сети или стороннем сервисе?",
+          "Как примете решение об откате или канареечном ограничении трафика?",
+          "Какие postmortem-действия внесёте в процесс релизов?"
+        ]
+      }
+    ]
+  },
+  "data_scientist": {
+    "competencies": [
+      "Problem Framing & Metrics",
+      "Feature Engineering",
+      "Model Validation",
+      "Experimentation & Causal Thinking",
+      "Production ML Monitoring",
+      "Data Quality & Leakage Control"
+    ],
+    "scenarios": [
+      {
+        "id": "ds_train_prod_gap",
+        "title": "Модель хороша на train, слаба в production",
+        "competency": "Production ML Monitoring",
+        "steps": [
+          "Представьте: на train/offline модель показывает высокий score, но в production результат хуже. Что проверите первым?",
+          "Какие гипотезы рассмотрите: drift, leakage, mismatch feature pipeline, label delay?",
+          "Какие метрики и срезы данных поднимете для подтверждения причины?",
+          "Какой план стабилизации модели запустите без долгой остановки продукта?",
+          "Какие guardrails добавите для раннего обнаружения деградации?"
+        ]
+      },
+      {
+        "id": "ds_ab_ambiguous_result",
+        "title": "A/B test показывает спорный результат",
+        "competency": "Experimentation & Causal Thinking",
+        "steps": [
+          "Представьте: A/B тест дал рост основной метрики, но просел retention. Как интерпретируете результат?",
+          "Какие проверки корректности эксперимента сделаете: randomization, sample ratio, power, novelty effect?",
+          "Как примете решение: катить, остановить, продолжить эксперимент с изменениями?",
+          "Какие дополнительные метрики/сегменты помогут снять неопределённость?",
+          "Как объясните решение бизнес-стороне?"
+        ]
+      },
+      {
+        "id": "ds_data_leakage_case",
+        "title": "Обнаружен data leakage",
+        "competency": "Data Quality & Leakage Control",
+        "steps": [
+          "Представьте: выяснилось, что в признаках есть data leakage. Как обнаружите источник leakage?",
+          "Какие части пайплайна проверите: feature generation time, train-test split, target leakage through joins?",
+          "Как перестроите валидацию, чтобы leakage не повторялся?",
+          "Как оцените ущерб ранее опубликованных метрик модели?",
+          "Какие правила quality gate добавите перед обучением?"
+        ]
+      }
+    ]
+  },
+  "product_manager": {
+    "competencies": [
+      "Product Discovery",
+      "Prioritization & Trade-offs",
+      "Metrics & Outcome Thinking",
+      "Cross-functional Leadership",
+      "Execution & Delivery",
+      "Stakeholder Management"
+    ],
+    "scenarios": [
+      {
+        "id": "pm_metric_drop_after_release",
+        "title": "Метрика падает после релиза",
+        "competency": "Metrics & Outcome Thinking",
+        "steps": [
+          "Представьте: после релиза ключевая продуктовая метрика упала на 12%. Какие действия в первые сутки?",
+          "Какие данные и сегменты проверите, чтобы понять масштаб и источник падения?",
+          "Как решите: откат, hotfix, или controlled experiment?",
+          "Как синхронизируете команду и стейкхолдеров под давлением?",
+          "Какие выводы внесёте в release-критерии?"
+        ]
+      },
+      {
+        "id": "pm_two_features_choice",
+        "title": "Нужно выбрать между двумя фичами",
+        "competency": "Prioritization & Trade-offs",
+        "steps": [
+          "Представьте: есть две фичи с ограниченным ресурсом команды. Как структурируете выбор?",
+          "Какие критерии используете: impact, confidence, effort, strategic fit, risk?",
+          "Как учтёте технический долг и операционную стоимость сопровождения?",
+          "Как примете решение при неполных данных?",
+          "Как проверите, что выбранная фича дала ожидаемый outcome?"
+        ]
+      },
+      {
+        "id": "pm_stakeholder_roadmap_conflict",
+        "title": "Stakeholders конфликтуют по roadmap",
+        "competency": "Stakeholder Management",
+        "steps": [
+          "Представьте: два ключевых стейкхолдера требуют взаимоисключающие приоритеты в roadmap. Как действуете?",
+          "Как вытащите реальные бизнес-цели и критерии успеха каждой стороны?",
+          "Как предложите прозрачный фрейм решения конфликта?",
+          "Как коммуницируете итог, чтобы сохранить доверие и темп команды?",
+          "Какие механизмы предотвратят повторение такого конфликта?"
+        ]
+      }
+    ]
+  },
+  "mobile_engineer": {
+    "competencies": [
+      "Mobile Performance Optimization",
+      "Crash Diagnostics",
+      "Network & Offline Reliability",
+      "Release & Rollout Safety",
+      "Device/OS Compatibility",
+      "Mobile Observability"
+    ],
+    "scenarios": [
+      {
+        "id": "me_android_partial_crash",
+        "title": "Crash только на части Android устройств",
+        "competency": "Crash Diagnostics",
+        "steps": [
+          "Представьте: crash происходит только на части Android устройств. С чего начнёте triage?",
+          "Какие данные соберёте: stack traces, device model, OS version, memory state, app version?",
+          "Как воспроизведёте проблему без полного доступа к таким устройствам?",
+          "Какой безопасный rollout/rollback план примените до фикса?",
+          "Как проверите, что crash rate стабильно вернулся в норму?"
+        ]
+      },
+      {
+        "id": "me_push_not_delivered",
+        "title": "Push notifications не доходят",
+        "competency": "Network & Offline Reliability",
+        "steps": [
+          "Представьте: пользователи не получают push-уведомления. Где проверите цепочку первой?",
+          "Как разделите причины между клиентом, backend, push-провайдером и permission state?",
+          "Какие диагностические события и логи должны быть в приложении?",
+          "Как организуете проверку исправления на разных устройствах и состояниях приложения?",
+          "Что добавите в мониторинг доставки push?"
+        ]
+      },
+      {
+        "id": "me_low_end_slow_app",
+        "title": "Приложение тормозит на слабых устройствах",
+        "competency": "Mobile Performance Optimization",
+        "steps": [
+          "Представьте: приложение заметно тормозит на low-end устройствах. Что измерите первым?",
+          "Какие оптимизации рассмотрите: layout/render, image handling, network batching, background work?",
+          "Как оцените trade-off между качеством интерфейса и скоростью?",
+          "Как подтвердите улучшение через профилирование и пользовательские метрики?",
+          "Какие performance budget правила зададите команде?"
+        ]
+      }
+    ]
+  },
+  "designer": {
+    "competencies": [
+      "User Research & Problem Framing",
+      "Information Architecture",
+      "Interaction Design",
+      "Conversion-focused UX",
+      "Design System Consistency",
+      "Cross-functional Handoff"
+    ],
+    "scenarios": [
+      {
+        "id": "ux_onboarding_dropoff",
+        "title": "Пользователи не завершают onboarding",
+        "competency": "Conversion-focused UX",
+        "steps": [
+          "Представьте: 40% пользователей отваливаются в onboarding. Как определите, где именно теряется конверсия?",
+          "Какие данные и исследования используете: funnel, session replay, интервью, usability testing?",
+          "Какие гипотезы приоритизируете для первого изменения?",
+          "Как проверите, что изменение улучшило поведение, а не просто сдвинуло проблему дальше по воронке?",
+          "Как оформите решение для масштабирования на другие потоки?"
+        ]
+      },
+      {
+        "id": "ux_payment_form_improvement",
+        "title": "Нужно улучшить форму оплаты",
+        "competency": "Interaction Design",
+        "steps": [
+          "Представьте: форма оплаты имеет высокий bounce rate. Как начнёте редизайн?",
+          "Какие ошибки и friction points ищете в текущем сценарии?",
+          "Какую структуру полей, подсказок и валидации предложите и почему?",
+          "Как протестируете изменения до полного релиза?",
+          "Какие продуктовые и UX-метрики подтвердят успех?"
+        ]
+      },
+      {
+        "id": "ux_design_system_handoff_break",
+        "title": "Design system ломается в handoff",
+        "competency": "Design System Consistency",
+        "steps": [
+          "Представьте: после handoff дизайн-система реализуется непоследовательно между командами. Как диагностируете проблему?",
+          "Какие артефакты и договорённости проверите: токены, компоненты, usage rules, acceptance criteria?",
+          "Как перестроите процесс handoff, чтобы снизить разночтения?",
+          "Как синхронизируете дизайнеров и разработчиков вокруг единого источника правды?",
+          "Какие проверки качества добавите перед релизом?"
+        ]
+      }
+    ]
+  }
+}

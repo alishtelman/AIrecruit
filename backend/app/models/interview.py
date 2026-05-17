@@ -19,6 +19,8 @@ class Interview(Base):
     # created | in_progress | completed | report_generated | failed
     target_role: Mapped[str] = mapped_column(String(100), nullable=False)
     # backend_engineer | qa_engineer | product_manager
+    seniority_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # junior | middle | senior
     question_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     max_questions: Mapped[int] = mapped_column(Integer, default=8, nullable=False)
     followup_depth: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")

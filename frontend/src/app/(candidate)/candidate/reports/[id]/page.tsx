@@ -134,6 +134,20 @@ function localizeFreeformText(text: string, locale: string) {
   return result;
 }
 
+function localizeScoredMetric(metric: string, locale: string) {
+  const ruLabels: Record<string, string> = {
+    technical_depth: "Техническая глубина",
+    practical_experience: "Практический опыт",
+    problem_solving: "Решение задач",
+    communication: "Коммуникация",
+    ownership: "Ownership",
+    role_fit: "Role fit",
+    growth_potential: "Потенциал роста",
+  };
+  if (locale === "ru") return ruLabels[metric] ?? metric.replace(/_/g, " ");
+  return metric.replace(/_/g, " ");
+}
+
 function getCategoryLabel(t: ReturnType<typeof useTranslations>, category: string) {
   if (category === "technical_core") return t("labels.technicalCore");
   if (category === "technical_breadth") return t("labels.technicalBreadth");
@@ -298,6 +312,34 @@ function InterviewSummaryPanel({
                       </div>
                     </div>
                   )}
+                  {outcome.why_asked && (
+                    <div className="mt-3">
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t("summaryModel.whyAsked")}</div>
+                      <div className="mt-1 text-sm leading-6 text-slate-300">
+                        {localizeFreeformText(outcome.why_asked, locale)}
+                      </div>
+                    </div>
+                  )}
+                  {outcome.what_was_scored && (
+                    <div className="mt-3">
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t("summaryModel.whatWasScored")}</div>
+                      <div className="mt-1 text-sm leading-6 text-slate-300">
+                        {localizeFreeformText(outcome.what_was_scored, locale)}
+                      </div>
+                    </div>
+                  )}
+                  {outcome.scored_metrics && outcome.scored_metrics.length > 0 && (
+                    <div className="mt-3">
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t("summaryModel.scoredMetrics")}</div>
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        {outcome.scored_metrics.map((metric) => (
+                          <span key={metric} className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-1 text-[11px] text-sky-200">
+                            {localizeScoredMetric(metric, locale)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -426,6 +468,11 @@ export default function ReportPage() {
         <div className={`inline-flex items-center gap-2 border rounded-full px-4 py-1.5 text-sm font-semibold mb-6 ${rec.bg} ${rec.color}`}>
           {t("recommendation")}: {rec.label}
         </div>
+        {report.proficiency_label && (
+          <div className="ml-3 inline-flex items-center gap-2 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-4 py-1.5 text-sm font-semibold text-cyan-200">
+            {t("proficiencyLevel")}: {report.proficiency_label}
+          </div>
+        )}
 
         {/* Score cards — 5 dimensions */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
@@ -440,6 +487,9 @@ export default function ReportPage() {
         </div>
 
         <ConfidencePanel report={report} locale={locale} />
+        {report.explainability_report && (
+          <ExplainabilityPanel explainability={report.explainability_report} />
+        )}
 
         {/* Competency heatmap */}
         {report.competency_scores && report.competency_scores.length > 0 && (
@@ -1405,6 +1455,183 @@ function RoadmapPanel({ phases }: { phases: DevelopmentRoadmapPhase[] }) {
   );
 }
 
+function localizeInterviewBlock(block: string, locale: string): string {
+  const normalized = String(block || "").trim().toLowerCase();
+  if (locale === "ru") {
+    const labels: Record<string, string> = {
+      intro: "Вводный блок",
+      resume_followup: "Разбор резюме",
+      technical_foundation: "Техническая база",
+      technical_depth: "Техническая глубина",
+      behavioral_closing: "Финальный behavioral-блок",
+    };
+    return labels[normalized] ?? block;
+  }
+  const labels: Record<string, string> = {
+    intro: "Intro",
+    resume_followup: "Resume follow-up",
+    technical_foundation: "Technical foundation",
+    technical_depth: "Technical depth",
+    behavioral_closing: "Behavioral closing",
+  };
+  return labels[normalized] ?? block;
+}
+
+function ExplainabilityPanel({
+  explainability,
+}: {
+  explainability: NonNullable<AssessmentReport["explainability_report"]>;
+}) {
+  const t = useTranslations("report");
+  const locale = useLocale();
+  const overall = explainability.overall_assessment;
+  const trace = explainability.scoring_trace;
+  const recommendationLabelMap: Record<HiringRecommendation, string> = {
+    strong_yes: t("labels.strongYes"),
+    yes: t("labels.yes"),
+    maybe: t("labels.maybe"),
+    no: t("labels.no"),
+  };
+  const scoreDelta = (trace.post_penalty_overall_score ?? 0) - (trace.pre_penalty_overall_score ?? 0);
+  const signalQualityLabel = t(`summaryModel.signal.${overall.signal_quality}` as "summaryModel.signal.high");
+
+  return (
+    <div className="mb-6 rounded-2xl border border-fuchsia-500/20 bg-fuchsia-500/10 p-5">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.24em] text-fuchsia-300">{t("explainability.eyebrow")}</div>
+          <div className="text-sm font-semibold text-white">{t("explainability.title")}</div>
+          <div className="mt-1 max-w-3xl text-sm leading-6 text-slate-300">
+            {localizeFreeformText(overall.summary, locale)}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="rounded-full border border-fuchsia-400/30 bg-fuchsia-950/40 px-3 py-1 text-fuchsia-200">
+            {t("recommendation")}: {recommendationLabelMap[overall.recommendation] ?? overall.recommendation}
+          </span>
+          <span className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-slate-300">
+            {signalQualityLabel}
+          </span>
+        </div>
+      </div>
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+        <ConfidenceStatCard label={t("overallScore")} value={`${overall.overall_score.toFixed(1)}/10`} highlight />
+        <ConfidenceStatCard
+          label={t("confidence.overall")}
+          value={overall.overall_confidence != null ? `${Math.round(overall.overall_confidence * 100)}%` : "—"}
+        />
+        <ConfidenceStatCard
+          label={t("explainability.scoreDelta")}
+          value={`${scoreDelta > 0 ? "+" : ""}${scoreDelta.toFixed(1)}`}
+        />
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-3">
+        <div className="rounded-xl border border-emerald-500/20 bg-slate-900/60 p-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.18em] text-emerald-300">{t("explainability.strengthsTitle")}</div>
+          <div className="space-y-3">
+            {explainability.evidence_based_strengths.length === 0 ? (
+              <div className="text-sm text-slate-500">{t("empty")}</div>
+            ) : (
+              explainability.evidence_based_strengths.map((item, idx) => (
+                <div key={`${item.title}-${idx}`} className="rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+                  <div className="text-sm font-medium text-white">{localizeFreeformText(item.title, locale)}</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-300">{localizeFreeformText(item.why_it_matters, locale)}</div>
+                  {item.evidence.length > 0 && (
+                    <div className="mt-2 text-xs text-slate-400">
+                      Q{item.evidence[0].question_number}: {localizeFreeformText(item.evidence[0].evidence_excerpt, locale)}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-amber-500/20 bg-slate-900/60 p-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.18em] text-amber-300">{t("explainability.gapsTitle")}</div>
+          <div className="space-y-3">
+            {explainability.evidence_based_gaps.length === 0 ? (
+              <div className="text-sm text-slate-500">{t("empty")}</div>
+            ) : (
+              explainability.evidence_based_gaps.map((item, idx) => (
+                <div key={`${item.title}-${idx}`} className="rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+                  <div className="text-sm font-medium text-white">{localizeFreeformText(item.title, locale)}</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-300">{localizeFreeformText(item.risk, locale)}</div>
+                  {item.evidence.length > 0 && (
+                    <div className="mt-2 text-xs text-slate-400">
+                      Q{item.evidence[0].question_number}: {localizeFreeformText(item.evidence[0].evidence_excerpt, locale)}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-blue-500/20 bg-slate-900/60 p-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.18em] text-blue-300">{t("explainability.growthPlanTitle")}</div>
+          <div className="space-y-3">
+            {explainability.growth_recommendations.length === 0 ? (
+              <div className="text-sm text-slate-500">{t("empty")}</div>
+            ) : (
+              explainability.growth_recommendations.map((item, idx) => (
+                <div key={`${item.title}-${idx}`} className="rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+                  <div className="text-sm font-medium text-white">{localizeFreeformText(item.title, locale)}</div>
+                  {item.linked_gap && (
+                    <div className="mt-1 text-xs text-slate-400">
+                      {t("explainability.linkedGap")}: {localizeFreeformText(item.linked_gap, locale)}
+                    </div>
+                  )}
+                  <ul className="mt-2 space-y-1 text-xs text-slate-300">
+                    {item.actions.map((action, actionIndex) => (
+                      <li key={`${item.title}-action-${actionIndex}`} className="flex gap-2">
+                        <span className="mt-1 text-blue-300">•</span>
+                        <span>{localizeFreeformText(action, locale)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-2 text-xs text-slate-400">
+                    {t("explainability.successCriteria")}: {localizeFreeformText(item.success_criteria, locale)}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      {(trace.penalty_explanations.length > 0 || trace.top_block_signals.length > 0) && (
+        <div className="mt-4 rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.18em] text-fuchsia-300">{t("explainability.scoringTraceTitle")}</div>
+          {trace.penalty_explanations.length > 0 && (
+            <div className="mb-3 space-y-2">
+              {trace.penalty_explanations.map((item, idx) => (
+                <div key={`${item}-${idx}`} className="text-xs leading-5 text-slate-300">
+                  • {localizeFreeformText(item, locale)}
+                </div>
+              ))}
+            </div>
+          )}
+          {trace.top_block_signals.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {trace.top_block_signals.map((item, idx) => (
+                <span
+                  key={`${item.block}-${idx}`}
+                  className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-xs text-slate-200"
+                >
+                  {localizeInterviewBlock(item.block, locale)} · {item.score.toFixed(1)} · {Math.round(item.weight * 100)}%
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function localizeConfidenceReason(text: string, locale: string) {
   if (locale !== "ru") return text;
 
@@ -1800,6 +2027,30 @@ function QuestionAccordion({ qa, expanded, onToggle }: { qa: QuestionAnalysis; e
             <div>
               <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">{t("evidence")}</p>
               <p className="text-slate-300 text-sm">{localizeEvidenceText(qa.evidence, locale)}</p>
+            </div>
+          )}
+          {qa.why_asked && (
+            <div>
+              <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">{t("whyAsked")}</p>
+              <p className="text-slate-300 text-sm">{localizeFreeformText(qa.why_asked, locale)}</p>
+            </div>
+          )}
+          {qa.what_was_scored && (
+            <div>
+              <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">{t("whatWasScored")}</p>
+              <p className="text-slate-300 text-sm">{localizeFreeformText(qa.what_was_scored, locale)}</p>
+            </div>
+          )}
+          {qa.scored_metrics && qa.scored_metrics.length > 0 && (
+            <div>
+              <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">{t("scoredMetrics")}</p>
+              <div className="flex flex-wrap gap-1.5">
+                {qa.scored_metrics.map((metric) => (
+                  <span key={metric} className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-xs text-sky-200">
+                    {localizeScoredMetric(metric, locale)}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
           {qa.skills_mentioned.length > 0 && (
