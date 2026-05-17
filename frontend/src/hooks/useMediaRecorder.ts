@@ -190,7 +190,7 @@ export function useMediaRecorder() {
       bindPreview(webcamStream);
 
       let screenStream: MediaStream;
-      if (prepared) {
+      if (prepared?.screenStream) {
         screenStream = prepared.screenStream;
       } else {
         try {

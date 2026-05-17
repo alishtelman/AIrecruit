@@ -410,6 +410,7 @@ export type TargetRole =
   | "product_manager"
   | "mobile_engineer"
   | "designer";
+export type InterviewSeniority = "junior" | "middle" | "senior";
 export type InterviewStatus =
   | "created"
   | "in_progress"
@@ -433,6 +434,7 @@ export interface StartInterviewRequest {
   target_role: TargetRole;
   template_id?: string | null;
   language?: "ru" | "en";
+  seniority_level?: InterviewSeniority | null;
 }
 
 export interface StartInterviewResponse {
@@ -440,7 +442,11 @@ export interface StartInterviewResponse {
   status: InterviewStatus;
   question_count: number;
   max_questions: number;
+  core_question_count: number;
+  asked_questions_count: number;
+  answered_questions_count: number;
   current_question: string;
+  seniority_level?: InterviewSeniority | null;
   interview_stage?: InterviewStage | null;
 }
 
@@ -453,6 +459,9 @@ export interface SendMessageResponse {
   status: InterviewStatus;
   question_count: number;
   max_questions: number;
+  core_question_count: number;
+  asked_questions_count: number;
+  answered_questions_count: number;
   current_question: string | null;
   is_followup: boolean;
   question_type: string;
@@ -470,8 +479,12 @@ export interface InterviewListItem {
   interview_id: string;
   status: InterviewStatus;
   target_role: TargetRole;
+  seniority_level?: InterviewSeniority | null;
   question_count: number;
   max_questions: number;
+  core_question_count: number;
+  asked_questions_count: number;
+  answered_questions_count: number;
   started_at: string | null;
   completed_at: string | null;
   has_report: boolean;
@@ -482,8 +495,12 @@ export interface InterviewDetail {
   interview_id: string;
   status: InterviewStatus;
   target_role: TargetRole;
+  seniority_level?: InterviewSeniority | null;
   question_count: number;
   max_questions: number;
+  core_question_count: number;
+  asked_questions_count: number;
+  answered_questions_count: number;
   language?: string;
   started_at: string | null;
   completed_at: string | null;
@@ -694,6 +711,7 @@ export interface InterviewReplay {
   candidate_id: string;
   candidate_name: string;
   target_role: string;
+  seniority_level?: InterviewSeniority | null;
   completed_at: string | null;
   turns: ReplayTurn[];
   transcript_blocks?: TranscriptBlock[] | null;
@@ -836,6 +854,13 @@ export interface InterviewSummaryModel {
     resume_anchor: string | null;
     evidence_hint: string | null;
     phase: string | null;
+    block: string | null;
+    tier: string | null;
+    lead_question: string | null;
+    allowed_probes: string[];
+    scored_metrics: string[];
+    why_asked: string | null;
+    what_was_scored: string | null;
   }>;
   role: string;
   core_topics: number;
@@ -873,6 +898,13 @@ export interface QuestionAnalysis {
   ai_likelihood: number | null;
   stage_key?: string | null;
   stage_title?: string | null;
+  block?: string | null;
+  tier?: string | null;
+  lead_question?: string | null;
+  allowed_probes?: string[];
+  scored_metrics?: string[];
+  why_asked?: string | null;
+  what_was_scored?: string | null;
 }
 
 export interface SkillTag {
@@ -895,6 +927,69 @@ export interface DevelopmentRoadmapPhase {
 
 export interface DevelopmentRoadmap {
   phases: DevelopmentRoadmapPhase[];
+}
+
+export interface ExplainabilityEvidenceItem {
+  question_number: number;
+  topic: string;
+  signal: string;
+  outcome: string;
+  answer_quality: number | null;
+  evidence_excerpt: string;
+  why_asked: string;
+  what_was_scored: string;
+  scored_metrics: string[];
+}
+
+export interface ExplainabilityStrengthItem {
+  title: string;
+  why_it_matters: string;
+  evidence: ExplainabilityEvidenceItem[];
+}
+
+export interface ExplainabilityGapItem {
+  title: string;
+  risk: string;
+  evidence: ExplainabilityEvidenceItem[];
+}
+
+export interface ExplainabilityRecommendationItem {
+  title: string;
+  linked_gap: string;
+  actions: string[];
+  success_criteria: string;
+}
+
+export interface ExplainabilityOverallAssessment {
+  summary: string;
+  overall_score: number;
+  recommendation: HiringRecommendation;
+  signal_quality: string;
+  overall_confidence: number | null;
+  score_method: string;
+}
+
+export interface ExplainabilityScoringTrace {
+  pre_penalty_overall_score: number;
+  post_penalty_overall_score: number;
+  penalty_explanations: string[];
+  top_block_signals: Array<{
+    block: string;
+    score: number;
+    weight: number;
+    question_count: number;
+  }>;
+}
+
+export interface ExplainabilityReport {
+  version: string;
+  overall_assessment: ExplainabilityOverallAssessment;
+  evidence_based_strengths: ExplainabilityStrengthItem[];
+  evidence_based_gaps: ExplainabilityGapItem[];
+  growth_recommendations: ExplainabilityRecommendationItem[];
+  scoring_trace: ExplainabilityScoringTrace;
+  summary_strengths: string[];
+  summary_weaknesses: string[];
 }
 
 export interface AssessmentReport {
@@ -929,6 +1024,11 @@ export interface AssessmentReport {
   development_roadmap: DevelopmentRoadmap | null;
   summary_model: InterviewSummaryModel | null;
   module_session: ReportModuleSession | null;
+  proficiency_level: number | null;
+  proficiency_band: string | null;
+  proficiency_label: string | null;
+  calibrated_scoring: Record<string, unknown> | null;
+  explainability_report: ExplainabilityReport | null;
   system_design_summary: SystemDesignSummary | null;
   behavioral_interview_summary: BehavioralInterviewSummary | null;
   coding_task_summary: CodingTaskSummary | null;

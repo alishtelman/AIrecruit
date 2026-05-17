@@ -127,6 +127,9 @@ export default function CompanyReportPage() {
         </div>
 
         <ConfidencePanel report={report} locale={locale} />
+        {report.explainability_report && (
+          <ExplainabilityPanel explainability={report.explainability_report} />
+        )}
 
         {report.competency_scores && report.competency_scores.length > 0 && (
           <Section title={t("competencyHeatmap")} color="blue">
@@ -1174,6 +1177,155 @@ function ConfidencePanel({ report, locale }: { report: AssessmentReport; locale:
               </div>
             ))}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function localizeInterviewBlock(block: string, locale: string): string {
+  const normalized = String(block || "").trim().toLowerCase();
+  if (locale === "ru") {
+    const labels: Record<string, string> = {
+      intro: "Вводный блок",
+      resume_followup: "Разбор резюме",
+      technical_foundation: "Техническая база",
+      technical_depth: "Техническая глубина",
+      behavioral_closing: "Финальный behavioral-блок",
+    };
+    return labels[normalized] ?? block;
+  }
+  const labels: Record<string, string> = {
+    intro: "Intro",
+    resume_followup: "Resume follow-up",
+    technical_foundation: "Technical foundation",
+    technical_depth: "Technical depth",
+    behavioral_closing: "Behavioral closing",
+  };
+  return labels[normalized] ?? block;
+}
+
+function ExplainabilityPanel({
+  explainability,
+}: {
+  explainability: NonNullable<AssessmentReport["explainability_report"]>;
+}) {
+  const t = useTranslations("report");
+  const locale = useLocale();
+  const overall = explainability.overall_assessment;
+  const trace = explainability.scoring_trace;
+  const recommendationLabelMap: Record<HiringRecommendation, string> = {
+    strong_yes: t("labels.strongYes"),
+    yes: t("labels.yes"),
+    maybe: t("labels.maybe"),
+    no: t("labels.no"),
+  };
+  const scoreDelta = (trace.post_penalty_overall_score ?? 0) - (trace.pre_penalty_overall_score ?? 0);
+
+  return (
+    <div className="mb-6 rounded-2xl border border-fuchsia-500/20 bg-fuchsia-500/10 p-5">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.24em] text-fuchsia-300">{t("explainability.eyebrow")}</div>
+          <div className="text-sm font-semibold text-white">{t("explainability.title")}</div>
+          <div className="mt-1 max-w-3xl text-sm leading-6 text-slate-300">{overall.summary}</div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="rounded-full border border-fuchsia-400/30 bg-fuchsia-950/40 px-3 py-1 text-fuchsia-200">
+            {t("recommendation")}: {recommendationLabelMap[overall.recommendation] ?? overall.recommendation}
+          </span>
+          <span className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-slate-300">
+            {t(`summaryModel.signal.${overall.signal_quality}`)}
+          </span>
+        </div>
+      </div>
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+        <ConfidenceStatCard label={t("overallScore")} value={`${overall.overall_score.toFixed(1)}/10`} highlight />
+        <ConfidenceStatCard
+          label={t("confidence.overall")}
+          value={overall.overall_confidence != null ? `${Math.round(overall.overall_confidence * 100)}%` : "—"}
+        />
+        <ConfidenceStatCard
+          label={t("explainability.scoreDelta")}
+          value={`${scoreDelta > 0 ? "+" : ""}${scoreDelta.toFixed(1)}`}
+        />
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-3">
+        <div className="rounded-xl border border-emerald-500/20 bg-slate-900/60 p-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.18em] text-emerald-300">{t("explainability.strengthsTitle")}</div>
+          <div className="space-y-3">
+            {explainability.evidence_based_strengths.length === 0 ? (
+              <div className="text-sm text-slate-500">{t("empty")}</div>
+            ) : (
+              explainability.evidence_based_strengths.map((item, idx) => (
+                <div key={`${item.title}-${idx}`} className="rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+                  <div className="text-sm font-medium text-white">{item.title}</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-300">{item.why_it_matters}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-amber-500/20 bg-slate-900/60 p-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.18em] text-amber-300">{t("explainability.gapsTitle")}</div>
+          <div className="space-y-3">
+            {explainability.evidence_based_gaps.length === 0 ? (
+              <div className="text-sm text-slate-500">{t("empty")}</div>
+            ) : (
+              explainability.evidence_based_gaps.map((item, idx) => (
+                <div key={`${item.title}-${idx}`} className="rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+                  <div className="text-sm font-medium text-white">{item.title}</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-300">{item.risk}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-blue-500/20 bg-slate-900/60 p-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.18em] text-blue-300">{t("explainability.growthPlanTitle")}</div>
+          <div className="space-y-3">
+            {explainability.growth_recommendations.length === 0 ? (
+              <div className="text-sm text-slate-500">{t("empty")}</div>
+            ) : (
+              explainability.growth_recommendations.map((item, idx) => (
+                <div key={`${item.title}-${idx}`} className="rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+                  <div className="text-sm font-medium text-white">{item.title}</div>
+                  {item.linked_gap && <div className="mt-1 text-xs text-slate-400">{t("explainability.linkedGap")}: {item.linked_gap}</div>}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      {(trace.penalty_explanations.length > 0 || trace.top_block_signals.length > 0) && (
+        <div className="mt-4 rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.18em] text-fuchsia-300">{t("explainability.scoringTraceTitle")}</div>
+          {trace.penalty_explanations.length > 0 && (
+            <div className="mb-3 space-y-2">
+              {trace.penalty_explanations.map((item, idx) => (
+                <div key={`${item}-${idx}`} className="text-xs leading-5 text-slate-300">
+                  • {item}
+                </div>
+              ))}
+            </div>
+          )}
+          {trace.top_block_signals.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {trace.top_block_signals.map((item, idx) => (
+                <span
+                  key={`${item.block}-${idx}`}
+                  className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-xs text-slate-200"
+                >
+                  {localizeInterviewBlock(item.block, locale)} · {item.score.toFixed(1)} · {Math.round(item.weight * 100)}%
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

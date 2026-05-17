@@ -25,6 +25,13 @@ class QuestionAnalysis(BaseModel):
     ai_likelihood: float | None = None
     stage_key: str | None = None
     stage_title: str | None = None
+    block: str | None = None
+    tier: str | None = None
+    lead_question: str | None = None
+    allowed_probes: list[str] = []
+    scored_metrics: list[str] = []
+    why_asked: str | None = None
+    what_was_scored: str | None = None
 
 
 class SkillTag(BaseModel):
@@ -66,6 +73,13 @@ class InterviewSummaryModel(BaseModel):
         resume_anchor: str | None = None
         evidence_hint: str | None = None
         phase: str | None = None
+        block: str | None = None
+        tier: str | None = None
+        lead_question: str | None = None
+        allowed_probes: list[str] = []
+        scored_metrics: list[str] = []
+        why_asked: str | None = None
+        what_was_scored: str | None = None
 
     role: str
     core_topics: int
@@ -290,6 +304,7 @@ class AssessmentReportResponse(BaseModel):
     red_flags: list[RedFlag] | None = None
     response_consistency: float | None = None
     overall_confidence: float | None = None
+    confidence_verdict: str | None = None
     competency_confidence: dict[str, float] | None = None
     confidence_reasons: list[str] | None = None
     evidence_coverage: dict | None = None
@@ -300,6 +315,11 @@ class AssessmentReportResponse(BaseModel):
     development_roadmap: DevelopmentRoadmap | None = None
     summary_model: InterviewSummaryModel | None = None
     module_session: ReportModuleSession | None = None
+    proficiency_level: float | None = None
+    proficiency_band: str | None = None
+    proficiency_label: str | None = None
+    calibrated_scoring: dict | None = None
+    explainability_report: dict | None = None
     system_design_summary: SystemDesignSummary | None = None
     behavioral_interview_summary: BehavioralInterviewSummary | None = None
     coding_task_summary: CodingTaskSummary | None = None
@@ -326,8 +346,15 @@ class AssessmentReportResponse(BaseModel):
         per_question_analysis = _get_value(data, "per_question_analysis")
 
         if isinstance(full_report_json, dict):
+            proficiency_profile = full_report_json.get("proficiency_profile")
+            if isinstance(proficiency_profile, dict):
+                _set_value(data, "proficiency_level", proficiency_profile.get("proficiency_level"))
+                _set_value(data, "proficiency_band", proficiency_profile.get("proficiency_band"))
+                _set_value(data, "proficiency_label", proficiency_profile.get("proficiency_label"))
             summary_model = full_report_json.get("summary_model")
             _set_value(data, "summary_model", summary_model)
+            _set_value(data, "calibrated_scoring", full_report_json.get("calibrated_scoring"))
+            _set_value(data, "explainability_report", full_report_json.get("explainability_report"))
 
             competency_scores = _get_value(data, "competency_scores")
             if isinstance(competency_scores, list) and isinstance(per_question_analysis, list):
@@ -336,11 +363,16 @@ class AssessmentReportResponse(BaseModel):
                 confidence_metrics = _compute_confidence_metrics(
                     competency_scores,
                     per_question_analysis,
+                    summary_model=summary_model if isinstance(summary_model, dict) else None,
+                    interview_meta=full_report_json.get("interview_meta") if isinstance(full_report_json.get("interview_meta"), dict) else None,
                 )
                 _set_value(data, "overall_confidence", confidence_metrics["overall_confidence"])
+                _set_value(data, "confidence_verdict", confidence_metrics.get("confidence_verdict"))
                 _set_value(data, "competency_confidence", confidence_metrics["competency_confidence"])
                 _set_value(data, "confidence_reasons", confidence_metrics["confidence_reasons"])
                 _set_value(data, "evidence_coverage", confidence_metrics["evidence_coverage"])
+            elif isinstance(full_report_json.get("confidence_verdict"), str):
+                _set_value(data, "confidence_verdict", full_report_json.get("confidence_verdict"))
 
             interview_meta = full_report_json.get("interview_meta")
             if isinstance(interview_meta, dict):

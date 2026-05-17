@@ -16,8 +16,13 @@ _ALLOWED_PROCTORING_POLICY_MODES = {"observe_only", "strict_flagging"}
 
 
 def _runtime_provider_name() -> str:
-    if settings.GROQ_API_KEY:
+    provider = settings.ai_provider
+    if provider == "openrouter" and settings.OPENROUTER_API_KEY:
+        return "openrouter"
+    if provider == "groq" and settings.GROQ_API_KEY:
         return "groq"
+    if provider == "mock" and settings.allow_mock_ai:
+        return "mock"
     if settings.allow_mock_ai:
         return "mock"
     return "disabled"

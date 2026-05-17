@@ -19,7 +19,18 @@ Scoring rubric (behavioral anchors):
 
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+
+from app.ai.resume_anchor_filters import (
+    filter_resume_anchors_for_role,
+    filter_verification_targets_for_role,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +240,325 @@ ROLE_COMPETENCIES: dict[str, list[Competency]] = {
     ],
 }
 
+# ---------------------------------------------------------------------------
+# Structured role block ordering (Iteration 2)
+# ---------------------------------------------------------------------------
+
+# Priority order of core competencies for resume deep-dive + technical block.
+# This enforces stable role-relevant sequencing and avoids topic jumps.
+_DEFAULT_ROLE_CORE_COMPETENCY_ORDER: dict[str, list[str]] = {
+    # service -> API/data -> reliability
+    "backend_engineer": [
+        "API Design & Protocols",
+        "Database Design & Optimization",
+        "System Design & Architecture",
+        "Debugging & Problem Decomposition",
+        "Security & Error Handling",
+        "DevOps & Infrastructure",
+        "Programming Fundamentals",
+    ],
+    # feature ownership -> state/perf -> accessibility
+    "frontend_engineer": [
+        "UI Framework Mastery",
+        "Web Performance Optimization",
+        "JavaScript/TypeScript Fundamentals",
+        "Accessibility & Standards",
+        "Testing & Quality",
+        "Debugging & Problem Decomposition",
+        "CSS & Responsive Design",
+    ],
+    # product quality -> strategy -> automation/CI
+    "qa_engineer": [
+        "Domain & Product Understanding",
+        "Test Strategy & Planning",
+        "Test Automation",
+        "DevOps & CI/CD Integration",
+        "Root Cause Analysis",
+        "Manual & Exploratory Testing",
+        "API & Performance Testing",
+    ],
+    # pipeline -> rollout safety -> incidents/SLO
+    "devops_engineer": [
+        "CI/CD Pipeline Design",
+        "Security & Compliance",
+        "Container Orchestration",
+        "Monitoring & Observability",
+        "Incident Response & Troubleshooting",
+        "Cloud Infrastructure",
+        "Scripting & Automation",
+    ],
+    # problem framing -> data/statistics -> model/monitoring
+    "data_scientist": [
+        "Domain Knowledge Application",
+        "Data Processing & Feature Engineering",
+        "Statistics & Experimentation",
+        "ML Modeling & Algorithms",
+        "MLOps & Production ML",
+        "Analytical Problem Solving",
+        "Data Infrastructure & Tools",
+    ],
+    # user problem -> prioritization -> metrics/stakeholders
+    "product_manager": [
+        "Requirements & User Research",
+        "Prioritization & Decision Making",
+        "Metrics & Data-Driven Decisions",
+        "Stakeholder Communication",
+        "Problem Structuring",
+        "Product Strategy & Vision",
+        "Technical Understanding",
+    ],
+    # module ownership -> crash/perf -> release quality
+    "mobile_engineer": [
+        "Platform-Specific Development",
+        "Performance & Memory Optimization",
+        "Debugging & Problem Decomposition",
+        "Testing & CI/CD for Mobile",
+        "Networking & Data Persistence",
+        "Mobile UI & UX Implementation",
+        "Cross-Platform Frameworks",
+    ],
+    # case study -> research -> design trade-offs
+    "designer": [
+        "UX Research & User Understanding",
+        "Information Architecture",
+        "Interaction Design",
+        "Design Problem Solving",
+        "UI Design & Visual Systems",
+        "Accessibility Design",
+        "Design-to-Development Handoff",
+    ],
+}
+
+
+@lru_cache(maxsize=1)
+def _load_role_question_banks() -> dict:
+    banks_path = Path(__file__).with_name("role_question_banks.json")
+    try:
+        with banks_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except FileNotFoundError:
+        logger.warning("role_question_banks.json not found, using built-in defaults")
+        return {}
+    except Exception:
+        logger.exception("Failed to load role_question_banks.json, using built-in defaults")
+        return {}
+
+    if not isinstance(payload, dict):
+        logger.warning("role_question_banks.json has invalid shape, using built-in defaults")
+        return {}
+    return payload
+
+
+def get_role_core_competency_order(role: str) -> list[str]:
+    banks = _load_role_question_banks()
+    role_entry = banks.get(role) if isinstance(banks, dict) else None
+    if isinstance(role_entry, dict):
+        configured = role_entry.get("core_competency_order")
+        if isinstance(configured, list):
+            validated = [str(item).strip() for item in configured if str(item).strip()]
+            if validated:
+                return validated
+    return _DEFAULT_ROLE_CORE_COMPETENCY_ORDER.get(role, [])
+
+
+def _normalized_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if text:
+            result.append(text)
+    return result
+
+
+def _normalize_question_block_entry(raw: object) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    block = str(raw.get("block") or "").strip()
+    tier = str(raw.get("tier") or "").strip()
+    lead_question = str(raw.get("lead_question") or "").strip()
+    allowed_probes = _normalized_string_list(raw.get("allowed_probes"))
+    scored_metrics = _normalized_string_list(raw.get("scored_metrics"))
+    if not block or not tier or not lead_question:
+        return None
+    if not scored_metrics:
+        return None
+    return {
+        "block": block,
+        "tier": tier,
+        "lead_question": lead_question,
+        "allowed_probes": allowed_probes,
+        "scored_metrics": scored_metrics,
+    }
+
+
+def get_role_question_blocks(role: str) -> list[dict]:
+    banks = _load_role_question_banks()
+    role_entry = banks.get(role) if isinstance(banks, dict) else None
+    if isinstance(role_entry, dict):
+        configured = role_entry.get("question_blocks")
+        if isinstance(configured, list):
+            normalized = [
+                item
+                for item in (_normalize_question_block_entry(raw) for raw in configured)
+                if item is not None
+            ]
+            if normalized:
+                return normalized
+
+    return [
+        {
+            "block": "intro",
+            "tier": "adaptive",
+            "lead_question": "Расскажите о себе: путь, профильное образование и релевантный опыт.",
+            "allowed_probes": [
+                "Что в вашем опыте лучше всего готовит к целевой роли?",
+                "Какие задачи вам давались сложнее и как вы их закрывали?",
+            ],
+            "scored_metrics": ["communication", "role_fit", "growth_potential"],
+        },
+        {
+            "block": "resume_followup",
+            "tier": "adaptive",
+            "lead_question": "Давайте пройдем по опыту из резюме: зона ответственности, сложные кейсы и личный вклад.",
+            "allowed_probes": [
+                "Какие решения принимали лично вы?",
+                "По каким сигналам оценивали результат?",
+            ],
+            "scored_metrics": ["practical_experience", "problem_solving", "communication"],
+        },
+        {
+            "block": "technical_foundation",
+            "tier": "core",
+            "lead_question": "Разберите ключевой технический кейс: контекст, действия, результат.",
+            "allowed_probes": [
+                "Какие trade-off учитывали?",
+                "Какие проверки или метрики использовали?",
+            ],
+            "scored_metrics": ["technical_depth", "problem_solving", "practical_experience"],
+        },
+        {
+            "block": "technical_depth",
+            "tier": "advanced",
+            "lead_question": "Усложним задачу: как бы вы действовали при ограничениях и рисках в production?",
+            "allowed_probes": [
+                "Как диагностировали первопричину?",
+                "Какой альтернативный подход рассматривали?",
+            ],
+            "scored_metrics": ["technical_depth", "problem_solving", "ownership"],
+        },
+        {
+            "block": "behavioral_closing",
+            "tier": "closing",
+            "lead_question": "В завершение: расскажите о сложной кросс-командной ситуации и вашей роли в результате.",
+            "allowed_probes": [
+                "Как снимали напряжение и выравнивали ожидания?",
+                "Чему научились и что изменили в подходе?",
+            ],
+            "scored_metrics": ["ownership", "communication", "growth_potential"],
+        },
+    ]
+
+
+def _normalize_followup_rules(raw: object) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        return {}
+    normalized: dict[str, str] = {}
+    for key in ("clarify", "deep_dive", "simplify"):
+        text = str(raw.get(key) or "").strip()
+        if text:
+            normalized[key] = text
+    return normalized
+
+
+def _normalize_scenario_chain_entry(raw: object) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    case_id = str(raw.get("case_id") or "").strip()
+    title = str(raw.get("title") or "").strip()
+    competency = str(raw.get("competency") or "").strip()
+    try:
+        difficulty_tier = int(raw.get("difficulty_tier") or 3)
+    except (TypeError, ValueError):
+        difficulty_tier = 3
+    if difficulty_tier < 1:
+        difficulty_tier = 1
+    if difficulty_tier > 5:
+        difficulty_tier = 5
+    followup_rules = _normalize_followup_rules(raw.get("followup_rules"))
+    questions = _normalized_string_list(raw.get("questions"))
+    if not case_id or not title or not competency:
+        return None
+    if len(questions) < 4:
+        return None
+    return {
+        "case_id": case_id,
+        "title": title,
+        "competency": competency,
+        "difficulty_tier": difficulty_tier,
+        "followup_rules": followup_rules,
+        "questions": questions[:6],
+    }
+
+
+def get_role_scenario_chains(role: str) -> list[dict]:
+    banks = _load_role_question_banks()
+    role_entry = banks.get(role) if isinstance(banks, dict) else None
+    if not isinstance(role_entry, dict):
+        return []
+    configured = role_entry.get("scenario_chains")
+    if not isinstance(configured, list):
+        return []
+    normalized = [
+        item
+        for item in (_normalize_scenario_chain_entry(raw) for raw in configured)
+        if item is not None
+    ]
+    return normalized
+
+
+_QA_COMPETENCY_CASE_QUESTIONS_RU: dict[str, str] = {
+    "Domain & Product Understanding": "Разберите продуктовый QA-кейс: какой пользовательский риск считали критичным, как проверяли и что включили в acceptance?",
+    "Test Strategy & Planning": "На примере новой фичи: какие проверки ставите в smoke, какие в regression и почему?",
+    "Test Automation": "Один кейс по автотестам: что автоматизировали первым, какой риск закрыли и чем подтвердили стабильность?",
+    "DevOps & CI/CD Integration": "Один CI/CD-кейс: где quality gate, что блокирует релиз и по каким правилам принимаете решение о выпуске?",
+    "Root Cause Analysis": "Один production-дефект: как воспроизвели, где нашли первопричину и как подтвердили фикc?",
+    "Manual & Exploratory Testing": "Один exploratory-кейс: какая гипотеза была, какие шаги сделали и какой неочевидный дефект нашли?",
+    "API & Performance Testing": "Один API-кейс: какой endpoint проверяли, какие негативные сценарии добавили и какие метрики использовали для решения о релизе?",
+}
+
+_QA_COMPETENCY_ALLOWED_PROBES_RU: dict[str, list[str]] = {
+    "Domain & Product Understanding": [
+        "Как приоритизировали риск для пользователя и бизнеса?",
+        "Какой сигнал показал, что риск действительно закрыт?",
+    ],
+    "Test Strategy & Planning": [
+        "Какие критерии входа/выхода были у тестирования?",
+        "Что бы вы убрали из плана, если времени стало в 2 раза меньше?",
+    ],
+    "Test Automation": [
+        "Какой флаки-тест был самым проблемным и как его стабилизировали?",
+        "Как отслеживали, что автотесты продолжают ловить реальные регрессии?",
+    ],
+    "DevOps & CI/CD Integration": [
+        "Что должно падать в пайплайне автоматически, а что требует ручного решения?",
+        "Какой rollback-сценарий считали минимально безопасным?",
+    ],
+    "Root Cause Analysis": [
+        "Какие артефакты использовали в расследовании: логи, метрики, трассировки?",
+        "Как убедились, что фикс не сломал соседний функционал?",
+    ],
+    "Manual & Exploratory Testing": [
+        "Какие эвристики использовали для поиска неочевидных дефектов?",
+        "Как документировали находки, чтобы команда могла воспроизвести дефект?",
+    ],
+    "API & Performance Testing": [
+        "Какие коды/контракты ответа считали критичными для блокировки релиза?",
+        "Какой порог latency/error rate считали приемлемым и почему?",
+    ],
+}
+
 
 def get_competencies(role: str) -> list[Competency]:
     """Return competencies for the given role, falling back to backend_engineer."""
@@ -320,27 +650,35 @@ def build_question_plan(
             plan[max_questions - 1].append(behavioral[1].name)
             assigned.add(behavioral[1].name)
 
-    ps_and_breadth = [
-        c for c in sorted_comps
-        if c.category in ("problem_solving", "technical_breadth") and c.name not in assigned
-    ]
-    for i, slot_idx in enumerate(range(max(2, max_questions - 3), max_questions - 1)):
-        if i < len(ps_and_breadth):
-            plan[slot_idx].append(ps_and_breadth[i].name)
-            assigned.add(ps_and_breadth[i].name)
+    remaining_by_weight = [c for c in sorted_comps if c.name not in assigned]
+    remaining_map = {c.name: c for c in remaining_by_weight}
 
-    remaining = [c for c in sorted_comps if c.name not in assigned]
-    empty_slots = [i for i in range(1, max_questions) if not plan[i]]
+    ordered_names: list[str] = []
+    for name in get_role_core_competency_order(role):
+        if name in remaining_map and name not in ordered_names:
+            ordered_names.append(name)
 
-    for i, slot_idx in enumerate(empty_slots):
-        if i < len(remaining):
-            plan[slot_idx].append(remaining[i].name)
-            assigned.add(remaining[i].name)
+    for comp in remaining_by_weight:
+        if comp.name not in ordered_names:
+            ordered_names.append(comp.name)
 
-    still_unassigned = [c for c in sorted_comps if c.name not in assigned]
-    for comp in still_unassigned:
-        min_slot = min(range(1, max_questions), key=lambda s: len(plan[s]))
-        plan[min_slot].append(comp.name)
+    if not ordered_names:
+        return plan
+
+    # Slot 2 is always resume deep-dive for structured flow.
+    if max_questions > 2:
+        plan[1] = [ordered_names[0]]
+
+    # Fill technical block with stable role order; once exhausted, keep cycling.
+    technical_slots = list(range(2, max_questions - 1))
+    cursor = 1
+    for slot_idx in technical_slots:
+        if cursor < len(ordered_names):
+            plan[slot_idx] = [ordered_names[cursor]]
+            cursor += 1
+        else:
+            cycle_idx = (slot_idx - technical_slots[0]) % len(ordered_names)
+            plan[slot_idx] = [ordered_names[cycle_idx]]
 
     return plan
 
@@ -358,14 +696,40 @@ def build_interview_plan(
     verification target derived from the uploaded resume.
     """
     base_plan = build_question_plan(role, max_questions, structured_flow=structured_flow)
-    anchors = list((resume_profile or {}).get("project_highlights", []))
-    verification_targets = list((resume_profile or {}).get("verification_targets", []))
+    role_blocks = get_role_question_blocks(role)
+    anchors = filter_resume_anchors_for_role(
+        role,
+        list((resume_profile or {}).get("project_highlights", [])),
+    )
+    verification_targets = filter_verification_targets_for_role(
+        role,
+        list((resume_profile or {}).get("verification_targets", [])),
+    )
 
     topic_plan: list[dict] = []
     anchor_idx = 0
     verification_idx = 0
+    technical_block_idx = 0
+
+    normalized_blocks = {item.get("block"): item for item in role_blocks}
+    technical_blocks = [
+        item for item in role_blocks
+        if str(item.get("block", "")).startswith("technical")
+    ]
 
     for idx, competencies in enumerate(base_plan):
+        if structured_flow and idx == 0:
+            block_spec = normalized_blocks.get("intro")
+        elif structured_flow and idx == 1:
+            block_spec = normalized_blocks.get("resume_followup")
+        elif structured_flow and idx == max_questions - 1:
+            block_spec = normalized_blocks.get("behavioral_closing")
+        elif structured_flow and technical_blocks:
+            block_spec = technical_blocks[technical_block_idx % len(technical_blocks)]
+            technical_block_idx += 1
+        else:
+            block_spec = role_blocks[min(idx, len(role_blocks) - 1)] if role_blocks else None
+
         entry: dict = {
             "slot": idx + 1,
             "competencies": competencies,
@@ -382,9 +746,28 @@ def build_interview_plan(
                 if structured_flow
                 else None
             ),
+            "block": block_spec.get("block") if isinstance(block_spec, dict) else None,
+            "tier": block_spec.get("tier") if isinstance(block_spec, dict) else None,
+            "lead_question": block_spec.get("lead_question") if isinstance(block_spec, dict) else None,
+            "allowed_probes": list(block_spec.get("allowed_probes") or []) if isinstance(block_spec, dict) else [],
+            "scored_metrics": list(block_spec.get("scored_metrics") or []) if isinstance(block_spec, dict) else [],
         }
 
-        if anchor_idx < len(anchors) and (idx == 0 or idx < max_questions - 1):
+        if role == "qa_engineer" and structured_flow and entry.get("phase") == "technical":
+            primary_competency = str(competencies[0]).strip() if competencies else ""
+            override_question = _QA_COMPETENCY_CASE_QUESTIONS_RU.get(primary_competency)
+            override_probes = _QA_COMPETENCY_ALLOWED_PROBES_RU.get(primary_competency)
+            if override_question:
+                entry["lead_question"] = override_question
+            if override_probes:
+                entry["allowed_probes"] = list(override_probes)
+
+        use_anchor_slot = idx < max_questions - 1
+        if structured_flow and idx == 0:
+            # Keep opening intro generic and reserve strongest anchor for resume follow-up.
+            use_anchor_slot = False
+
+        if anchor_idx < len(anchors) and use_anchor_slot:
             entry["resume_anchor"] = anchors[anchor_idx]
             anchor_idx += 1
 

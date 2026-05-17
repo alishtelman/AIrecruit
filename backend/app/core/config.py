@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     RATE_LIMIT_STT_PER_MINUTE: int = 90
     ANTHROPIC_API_KEY: str = ""
     GROQ_API_KEY: str = ""
+    AI_PROVIDER: str = "groq"
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENROUTER_MODEL: str = ""
+    OPENROUTER_FALLBACK_MODELS: str = ""
+    OPENROUTER_SITE_URL: str = "http://localhost:3000"
+    OPENROUTER_APP_NAME: str = "AI Talent Verification Platform"
     ALLOW_MOCK_AI: bool = True
     ELEVENLABS_API_KEY: str = ""
     TTS_PROVIDER: str = "groq"
@@ -42,11 +49,14 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = ""
     FROM_EMAIL: str = "AIRecruit <noreply@airecruit.app>"
     APP_URL: str = "http://localhost:3000"
-    CORS_ORIGINS: str = "http://localhost:3000"
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
     PROCTORING_POLICY_MODE: str = "observe_only"
     PLATFORM_ADMIN_EMAIL: str = ""
     PLATFORM_ADMIN_PASSWORD: str = ""
     PLATFORM_ADMIN_BOOTSTRAP: bool = False
+    INTERVIEW_ENGINE_VERSION: str = "v1"
+    INTERVIEW_ENGINE_V2_ROLES: str = ""
+    CONVERSATIONAL_INTERVIEWER_MODE: bool = False
 
     @property
     def cors_origins(self) -> list[str]:
@@ -64,6 +74,21 @@ class Settings(BaseSettings):
     @property
     def allow_mock_ai(self) -> bool:
         return self.ALLOW_MOCK_AI and self.is_local_or_test
+
+    @property
+    def ai_provider(self) -> str:
+        normalized = (self.AI_PROVIDER or "").strip().lower()
+        if normalized in {"groq", "openrouter", "mock"}:
+            return normalized
+        return "groq"
+
+    @property
+    def openrouter_fallback_models(self) -> list[str]:
+        return [
+            token.strip()
+            for token in (self.OPENROUTER_FALLBACK_MODELS or "").split(",")
+            if token and token.strip()
+        ]
 
     @property
     def allow_bearer_auth(self) -> bool:
@@ -94,6 +119,24 @@ class Settings(BaseSettings):
         return (self.is_local_or_test or self.PLATFORM_ADMIN_BOOTSTRAP) and bool(
             self.platform_admin_email and self.platform_admin_password
         )
+
+    @property
+    def interview_engine_version(self) -> str:
+        normalized = (self.INTERVIEW_ENGINE_VERSION or "").strip().lower()
+        if normalized in {"v1", "v2"}:
+            return normalized
+        return "v1"
+
+    @property
+    def interview_engine_v2_roles(self) -> set[str]:
+        raw = (self.INTERVIEW_ENGINE_V2_ROLES or "").strip()
+        if not raw:
+            return set()
+        return {
+            token.strip().lower()
+            for token in raw.split(",")
+            if token and token.strip()
+        }
 
     def validate_security_settings(self) -> None:
         insecure_defaults = {

@@ -2,6 +2,7 @@
 import asyncio
 import io
 import json
+from pathlib import Path
 
 import pytest
 from docx import Document
@@ -199,6 +200,29 @@ async def test_start_interview_no_resume(client: AsyncClient, candidate_token: s
         json={"target_role": "backend_engineer"},
     )
     assert resp.status_code == 422  # no resume
+
+
+@pytest.mark.asyncio
+async def test_start_interview_persists_seniority_level(client: AsyncClient, candidate_token: str):
+    await _upload_resume(client, candidate_token)
+
+    resp = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "backend_engineer", "seniority_level": "junior"},
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["seniority_level"] == "junior"
+
+    interview_id = data["interview_id"]
+    detail_resp = await client.get(
+        f"/api/v1/interviews/{interview_id}",
+        headers=auth_headers(candidate_token),
+    )
+    assert detail_resp.status_code == 200
+    detail = detail_resp.json()
+    assert detail["seniority_level"] == "junior"
 
 
 @pytest.mark.asyncio
@@ -602,6 +626,7 @@ async def test_dynamic_question_budget_early_stops_weak_session(
     assert terminal_response["current_question"] is None
     assert terminal_response["max_questions"] == terminal_response["question_count"]
     assert terminal_response["question_count"] <= 10
+    assert terminal_response["interview_stage"]["phase_key"] == "behavioral_closing"
 
 
 def test_build_interview_plan_marks_intro_and_behavioral_closing_phases():
@@ -618,6 +643,114 @@ def test_build_interview_plan_marks_intro_and_behavioral_closing_phases():
     assert plan[1]["phase"] == "resume_followup"
     assert all(item["phase"] == "technical" for item in plan[2:-1])
     assert plan[-1]["phase"] == "behavioral_closing"
+
+
+@pytest.mark.parametrize(
+    ("role", "expected_resume_competency", "expected_first_technical_competency"),
+    [
+        ("backend_engineer", "API Design & Protocols", "Database Design & Optimization"),
+        ("frontend_engineer", "UI Framework Mastery", "Web Performance Optimization"),
+        ("qa_engineer", "Domain & Product Understanding", "Test Strategy & Planning"),
+        ("devops_engineer", "CI/CD Pipeline Design", "Security & Compliance"),
+        ("data_scientist", "Domain Knowledge Application", "Data Processing & Feature Engineering"),
+        ("product_manager", "Requirements & User Research", "Prioritization & Decision Making"),
+        ("mobile_engineer", "Platform-Specific Development", "Performance & Memory Optimization"),
+        ("designer", "UX Research & User Understanding", "Information Architecture"),
+    ],
+)
+def test_build_interview_plan_uses_strict_role_order_blocks(
+    role: str,
+    expected_resume_competency: str,
+    expected_first_technical_competency: str,
+):
+    plan = build_interview_plan(
+        role,
+        8,
+        {
+            "project_highlights": ["Sample project anchor"],
+            "verification_targets": [],
+        },
+        structured_flow=True,
+    )
+
+    assert plan[0]["phase"] == "intro"
+    assert plan[1]["phase"] == "resume_followup"
+    assert plan[2]["phase"] == "technical"
+    assert plan[-1]["phase"] == "behavioral_closing"
+    assert plan[1]["competencies"][0] == expected_resume_competency
+    assert plan[2]["competencies"][0] == expected_first_technical_competency
+
+
+def test_role_question_banks_config_drives_resume_and_first_technical_slots():
+    banks_path = Path(__file__).resolve().parents[1] / "app" / "ai" / "role_question_banks.json"
+    with banks_path.open("r", encoding="utf-8") as handle:
+        banks = json.load(handle)
+
+    assert isinstance(banks, dict)
+    for role, role_entry in banks.items():
+        assert isinstance(role_entry, dict)
+        order = role_entry.get("core_competency_order")
+        assert isinstance(order, list)
+        assert len(order) >= 2
+
+        plan = build_interview_plan(
+            role,
+            8,
+            {"project_highlights": ["Sample project anchor"], "verification_targets": []},
+            structured_flow=True,
+        )
+        assert plan[1]["competencies"][0] == order[0]
+        assert plan[2]["competencies"][0] == order[1]
+        assert plan[0]["block"] == "intro"
+        assert plan[1]["block"] == "resume_followup"
+        assert plan[-1]["block"] == "behavioral_closing"
+        for slot in plan:
+            assert isinstance(slot.get("tier"), str)
+            assert isinstance(slot.get("lead_question"), str)
+            assert isinstance(slot.get("allowed_probes"), list)
+            assert isinstance(slot.get("scored_metrics"), list)
+            assert slot["scored_metrics"]
+
+
+def test_build_interview_plan_reserves_first_resume_anchor_for_resume_followup_slot():
+    plan = build_interview_plan(
+        "qa_engineer",
+        8,
+        {
+            "project_highlights": [
+                "Кейс A: автоматизировал регрессию и снизил дефекты.",
+                "Кейс B: внедрил мониторинг критичных сценариев.",
+            ],
+            "verification_targets": ["postgresql", "docker"],
+        },
+        structured_flow=True,
+    )
+
+    assert plan[0]["phase"] == "intro"
+    assert plan[0]["resume_anchor"] is None
+    assert plan[1]["phase"] == "resume_followup"
+    assert plan[1]["resume_anchor"] == "Кейс A: автоматизировал регрессию и снизил дефекты."
+
+
+def test_build_interview_plan_for_qa_filters_db_verification_targets_from_resume_profile():
+    plan = build_interview_plan(
+        "qa_engineer",
+        8,
+        {
+            "project_highlights": [
+                "Проводил тест-стратегию для мобильных релизов и дефект-триаж.",
+                "Настроил регрессионный набор для критичных платежных сценариев.",
+            ],
+            "verification_targets": ["postgresql", "redis", "kafka", "graphql"],
+        },
+        structured_flow=True,
+    )
+
+    assigned_targets = [str(item.get("verification_target") or "").lower() for item in plan]
+
+    assert "postgresql" not in assigned_targets
+    assert "redis" not in assigned_targets
+    assert "kafka" not in assigned_targets
 
 
 @pytest.mark.asyncio
@@ -708,6 +841,85 @@ async def test_honest_no_experience_causes_single_reframe_then_moves_on(
     second_data = second.json()
     assert second_data["question_count"] == 3
     assert second_data["is_followup"] is False
+
+
+@pytest.mark.asyncio
+async def test_clarification_request_rephrases_once_then_advances_topic(
+    client: AsyncClient, candidate_token: str
+):
+    await _upload_resume(client, candidate_token)
+
+    start_resp = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "qa_engineer", "language": "ru"},
+    )
+    assert start_resp.status_code == 201, start_resp.text
+    interview_id = start_resp.json()["interview_id"]
+
+    intro_answer = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={"message": "Я работаю в тестировании мобильного приложения и отвечаю за контроль качества."},
+    )
+    assert intro_answer.status_code == 200, intro_answer.text
+    assert intro_answer.json()["question_count"] == 2
+
+    clarification_once = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={"message": "не понял"},
+    )
+    assert clarification_once.status_code == 200, clarification_once.text
+    clarification_once_data = clarification_once.json()
+    assert clarification_once_data["question_type"] == "clarification"
+    assert clarification_once_data["is_followup"] is True
+    assert clarification_once_data["question_count"] == 2
+
+    clarification_twice = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={"message": "не понял"},
+    )
+    assert clarification_twice.status_code == 200, clarification_twice.text
+    clarification_twice_data = clarification_twice.json()
+    assert clarification_twice_data["question_type"] == "main"
+    assert clarification_twice_data["is_followup"] is False
+    assert clarification_twice_data["question_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_move_on_request_advances_topic_without_followup_loop(
+    client: AsyncClient, candidate_token: str
+):
+    await _upload_resume(client, candidate_token)
+
+    start_resp = await client.post(
+        "/api/v1/interviews/start",
+        headers=auth_headers(candidate_token),
+        json={"target_role": "backend_engineer", "language": "ru"},
+    )
+    assert start_resp.status_code == 201, start_resp.text
+    interview_id = start_resp.json()["interview_id"]
+
+    intro_answer = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={"message": "Я работал с backend API, сопровождал сервисы и решал инциденты в production."},
+    )
+    assert intro_answer.status_code == 200, intro_answer.text
+    assert intro_answer.json()["question_count"] == 2
+
+    move_on = await client.post(
+        f"/api/v1/interviews/{interview_id}/message",
+        headers=auth_headers(candidate_token),
+        json={"message": "На этот вопрос уже отвечал, давайте дальше."},
+    )
+    assert move_on.status_code == 200, move_on.text
+    move_on_data = move_on.json()
+    assert move_on_data["question_type"] == "main"
+    assert move_on_data["is_followup"] is False
+    assert move_on_data["question_count"] == 3
 
 
 @pytest.mark.asyncio

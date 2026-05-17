@@ -4,7 +4,7 @@ AI Assessor module — two-pass scientific assessment pipeline.
 Pass 1: Per-question evidence extraction (answer quality, skills, red flags).
 Pass 2: Competency scoring with evidence aggregation.
 
-Singleton `assessor` is an LLMAssessor (Groq) when GROQ_API_KEY is set,
+Singleton `assessor` is an LLMAssessor (configured LLM provider) when provider is available,
 otherwise falls back to MockAssessor.
 """
 import json
@@ -18,17 +18,17 @@ import tempfile
 import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
-
-from groq import AsyncGroq
+from typing import Any
 
 from app.ai.calibration import build_calibration_prompt
 from app.ai.competencies import get_competencies, get_category_weights
 from app.ai.interviewer import classify_answer, extract_mentioned_technologies
 from app.ai.model_preferences import (
-    DEFAULT_LLM_MODEL,
     is_allowed_llm_model_preference,
     resolve_llm_runtime_model,
 )
+from app.ai.providers import LLMProvider, get_llm_provider
+from app.ai.runtime_status import record_ai_error, record_ai_success
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -396,6 +396,119 @@ def _to_int(value: object, default: int = 0) -> int:
         return default
 
 
+def _to_str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if text:
+            result.append(text)
+    return result
+
+
+def _scored_metric_labels(metrics: list[str], report_language: str) -> list[str]:
+    label_map_ru = {
+        "technical_depth": "техническая глубина",
+        "practical_experience": "практический опыт",
+        "problem_solving": "решение задач",
+        "communication": "коммуникация",
+        "ownership": "ownership",
+        "role_fit": "role fit",
+        "growth_potential": "потенциал роста",
+    }
+    label_map_en = {
+        "technical_depth": "technical depth",
+        "practical_experience": "practical experience",
+        "problem_solving": "problem solving",
+        "communication": "communication",
+        "ownership": "ownership",
+        "role_fit": "role fit",
+        "growth_potential": "growth potential",
+    }
+    normalized = [item.strip() for item in metrics if item.strip()]
+    if report_language == "ru":
+        return [label_map_ru.get(item, item.replace("_", " ")) for item in normalized]
+    return [label_map_en.get(item, item.replace("_", " ")) for item in normalized]
+
+
+def _topic_why_asked(block: str | None, report_language: str) -> str:
+    key = str(block or "").strip().lower()
+    why_ru = {
+        "intro": "Вопрос задан для стартовой калибровки релевантности опыта и качества коммуникации.",
+        "resume_followup": "Вопрос задан, чтобы проверить заявленный опыт из резюме на конкретных кейсах.",
+        "technical_foundation": "Вопрос задан для проверки базовой технической практики по целевой роли.",
+        "technical_depth": "Вопрос задан для углубленной проверки trade-offs, диагностики и решений в сложных условиях.",
+        "behavioral_closing": "Вопрос задан для оценки поведения в командной и стрессовой ситуации перед финальной рекомендацией.",
+    }
+    why_en = {
+        "intro": "This question is used to calibrate initial role fit and communication quality.",
+        "resume_followup": "This question validates claimed resume experience through concrete real-world cases.",
+        "technical_foundation": "This question checks baseline technical practice for the target role.",
+        "technical_depth": "This question probes deeper trade-offs, diagnostics, and decision-making under constraints.",
+        "behavioral_closing": "This question assesses teamwork and behavior under pressure before final recommendation.",
+    }
+    fallback = (
+        "Вопрос задан в рамках структурированного плана интервью."
+        if report_language == "ru"
+        else "This question is part of the structured interview plan."
+    )
+    if report_language == "ru":
+        return why_ru.get(key, fallback)
+    return why_en.get(key, fallback)
+
+
+def _topic_scoring_focus(scored_metrics: list[str], report_language: str) -> str:
+    labels = _scored_metric_labels(scored_metrics, report_language)
+    if not labels:
+        return (
+            "Оценивались релевантность, конкретика и глубина ответа."
+            if report_language == "ru"
+            else "Scoring focused on relevance, specificity, and depth of the answer."
+        )
+    joined = ", ".join(labels)
+    if report_language == "ru":
+        return f"Оценивались метрики: {joined}."
+    return f"Scored metrics: {joined}."
+
+
+def _enrich_per_question_analysis_with_topic_plan(
+    per_question_analysis: list[dict],
+    topic_plan: list[dict],
+    report_language: str = "ru",
+) -> list[dict]:
+    if not per_question_analysis:
+        return per_question_analysis
+
+    enriched_items: list[dict] = []
+    for item in per_question_analysis:
+        if not isinstance(item, dict):
+            enriched_items.append(item)
+            continue
+
+        q_num = _to_int(item.get("question_number"), 0)
+        target = topic_plan[q_num - 1] if 0 < q_num <= len(topic_plan) else {}
+        block = str(target.get("block") or "").strip() or None
+        tier = str(target.get("tier") or "").strip() or None
+        lead_question = str(target.get("lead_question") or "").strip() or None
+        allowed_probes = _to_str_list(target.get("allowed_probes"))
+        scored_metrics = _to_str_list(target.get("scored_metrics"))
+        why_asked = _topic_why_asked(block, report_language)
+        what_was_scored = _topic_scoring_focus(scored_metrics, report_language)
+
+        enriched = dict(item)
+        enriched["block"] = block
+        enriched["tier"] = tier
+        enriched["lead_question"] = lead_question
+        enriched["allowed_probes"] = allowed_probes
+        enriched["scored_metrics"] = scored_metrics
+        enriched["why_asked"] = why_asked
+        enriched["what_was_scored"] = what_was_scored
+        enriched_items.append(enriched)
+
+    return enriched_items
+
+
 def _build_summary_model(
     target_role: str,
     report_language: str,
@@ -522,6 +635,7 @@ def _build_summary_model(
         else:
             outcome = "partial"
 
+        scored_metrics = _to_str_list(topic.get("scored_metrics"))
         topic_outcomes.append(
             {
                 "slot": idx + 1,
@@ -532,6 +646,13 @@ def _build_summary_model(
                 "resume_anchor": topic.get("resume_anchor"),
                 "evidence_hint": _slot_evidence_hint(slot_questions),
                 "phase": topic.get("phase"),
+                "block": topic.get("block"),
+                "tier": topic.get("tier"),
+                "lead_question": topic.get("lead_question"),
+                "allowed_probes": _to_str_list(topic.get("allowed_probes")),
+                "scored_metrics": scored_metrics,
+                "why_asked": _topic_why_asked(topic.get("block"), report_language),
+                "what_was_scored": _topic_scoring_focus(scored_metrics, report_language),
             }
         )
 
@@ -647,6 +768,464 @@ def _build_interview_summary_text(
     return " ".join(parts)
 
 
+_CALIBRATED_METRIC_WEIGHTS: dict[str, float] = {
+    "technical_depth": 0.22,
+    "practical_experience": 0.20,
+    "problem_solving": 0.18,
+    "communication": 0.14,
+    "ownership": 0.10,
+    "role_fit": 0.10,
+    "growth_potential": 0.06,
+}
+
+_CALIBRATED_BLOCK_WEIGHTS: dict[str, float] = {
+    "intro": 0.10,
+    "resume_followup": 0.20,
+    "technical_foundation": 0.28,
+    "technical_depth": 0.30,
+    "behavioral_closing": 0.12,
+}
+
+
+def _depth_score_10(depth: str) -> float:
+    return {
+        "none": 1.0,
+        "surface": 3.0,
+        "adequate": 6.0,
+        "strong": 8.0,
+        "expert": 10.0,
+    }.get(str(depth or "").strip().lower(), 4.0)
+
+
+def _specificity_score_10(specificity: str) -> float:
+    return {
+        "low": 3.5,
+        "medium": 6.8,
+        "high": 9.0,
+    }.get(str(specificity or "").strip().lower(), 5.5)
+
+
+def _metric_score_from_question(question_item: dict, metric: str) -> float:
+    answer_quality = max(0.0, min(_to_float(question_item.get("answer_quality"), 5.0), 10.0))
+    depth_score = _depth_score_10(str(question_item.get("depth", "adequate")))
+    specificity_score = _specificity_score_10(str(question_item.get("specificity", "medium")))
+    evidence_text = str(question_item.get("evidence", "")).strip().lower()
+    evidence_len = len(evidence_text)
+    evidence_density = min(10.0, max(2.5, evidence_len / 18.0))
+    targeted_count = len(_to_str_list(question_item.get("targeted_competencies")))
+    has_tradeoff_signal = bool(re.search(r"(trade-?off|компромисс|почему|because|why|решил|decid)", evidence_text))
+    has_ownership_signal = bool(re.search(r"\b(я|i|my|мой|моя|мы|our)\b", evidence_text))
+    has_growth_signal = bool(re.search(r"(learn|improv|growth|ошиб|ретро|feedback|развив|улучш)", evidence_text))
+
+    metric_key = str(metric or "").strip()
+    if metric_key == "technical_depth":
+        score = answer_quality * 0.55 + depth_score * 0.45
+    elif metric_key == "practical_experience":
+        score = answer_quality * 0.45 + specificity_score * 0.30 + evidence_density * 0.25
+    elif metric_key == "problem_solving":
+        score = answer_quality * 0.55 + depth_score * 0.25 + (8.5 if has_tradeoff_signal else 5.0) * 0.20
+    elif metric_key == "communication":
+        score = answer_quality * 0.45 + specificity_score * 0.35 + evidence_density * 0.20
+    elif metric_key == "ownership":
+        score = answer_quality * 0.55 + specificity_score * 0.20 + (8.8 if has_ownership_signal else 5.2) * 0.25
+    elif metric_key == "role_fit":
+        role_fit_signal = min(10.0, 5.5 + targeted_count * 1.3)
+        score = answer_quality * 0.70 + role_fit_signal * 0.30
+    elif metric_key == "growth_potential":
+        growth_signal = 8.5 if has_growth_signal else 5.0
+        score = answer_quality * 0.55 + specificity_score * 0.20 + growth_signal * 0.25
+    else:
+        score = answer_quality * 0.65 + depth_score * 0.20 + specificity_score * 0.15
+
+    return round(max(0.0, min(score, 10.0)), 2)
+
+
+def _normalize_metric_weight_subset(metrics: list[str]) -> dict[str, float]:
+    normalized_metrics = [item for item in metrics if item in _CALIBRATED_METRIC_WEIGHTS]
+    if not normalized_metrics:
+        normalized_metrics = ["technical_depth", "practical_experience", "problem_solving", "communication"]
+    total = sum(_CALIBRATED_METRIC_WEIGHTS[item] for item in normalized_metrics)
+    if total <= 0:
+        equal = round(1.0 / max(1, len(normalized_metrics)), 4)
+        return {item: equal for item in normalized_metrics}
+    return {item: round(_CALIBRATED_METRIC_WEIGHTS[item] / total, 4) for item in normalized_metrics}
+
+
+def _normalize_block_weight_subset(blocks: list[str]) -> dict[str, float]:
+    normalized_blocks = [item for item in blocks if item in _CALIBRATED_BLOCK_WEIGHTS]
+    if not normalized_blocks:
+        return {}
+    total = sum(_CALIBRATED_BLOCK_WEIGHTS[item] for item in normalized_blocks)
+    if total <= 0:
+        equal = round(1.0 / max(1, len(normalized_blocks)), 4)
+        return {item: equal for item in normalized_blocks}
+    return {item: round(_CALIBRATED_BLOCK_WEIGHTS[item] / total, 4) for item in normalized_blocks}
+
+
+def _build_calibrated_scoring(
+    *,
+    per_question_analysis: list[dict],
+    summary_model: dict,
+    report_language: str,
+    aggregates_pre_penalty: dict[str, float],
+    aggregates_final: dict[str, float],
+    penalties: list[str],
+) -> dict:
+    block_rows: dict[str, dict] = {}
+    for qa in per_question_analysis:
+        block = str(qa.get("block") or "").strip().lower() or "technical_foundation"
+        row = block_rows.setdefault(
+            block,
+            {
+                "question_count": 0,
+                "answer_quality_sum": 0.0,
+                "depth_sum": 0.0,
+                "specificity_sum": 0.0,
+                "metrics": set(),
+                "metric_values": {},
+            },
+        )
+        row["question_count"] += 1
+        row["answer_quality_sum"] += max(0.0, min(_to_float(qa.get("answer_quality"), 5.0), 10.0))
+        row["depth_sum"] += _depth_score_10(str(qa.get("depth", "adequate")))
+        row["specificity_sum"] += _specificity_score_10(str(qa.get("specificity", "medium")))
+        scored_metrics = _to_str_list(qa.get("scored_metrics"))
+        if not scored_metrics:
+            scored_metrics = ["technical_depth", "practical_experience", "problem_solving", "communication"]
+        for metric in scored_metrics:
+            if metric not in _CALIBRATED_METRIC_WEIGHTS:
+                continue
+            row["metrics"].add(metric)
+            row["metric_values"].setdefault(metric, []).append(_metric_score_from_question(qa, metric))
+
+    present_blocks = list(block_rows.keys())
+    block_weights = _normalize_block_weight_subset(present_blocks)
+    block_metrics: list[dict] = []
+    weighted_sum = 0.0
+    total_weight = 0.0
+    for block in present_blocks:
+        row = block_rows[block]
+        q_count = max(1, int(row["question_count"]))
+        metrics_sorted = sorted(row["metrics"]) if row["metrics"] else []
+        metric_weights = _normalize_metric_weight_subset(metrics_sorted)
+        metric_scores: dict[str, float] = {}
+        block_score_sum = 0.0
+        block_score_weight = 0.0
+        for metric, weight in metric_weights.items():
+            values = row["metric_values"].get(metric, [])
+            metric_score = round(sum(values) / len(values), 2) if values else 0.0
+            metric_scores[metric] = metric_score
+            block_score_sum += metric_score * weight
+            block_score_weight += weight
+        block_score = round(block_score_sum / block_score_weight, 2) if block_score_weight > 0 else 0.0
+        block_weight = block_weights.get(block, 0.0)
+        weighted_sum += block_score * block_weight
+        total_weight += block_weight
+        block_metrics.append(
+            {
+                "block": block,
+                "weight": block_weight,
+                "question_count": q_count,
+                "score": block_score,
+                "avg_answer_quality": round(row["answer_quality_sum"] / q_count, 2),
+                "avg_depth_score": round(row["depth_sum"] / q_count, 2),
+                "avg_specificity_score": round(row["specificity_sum"] / q_count, 2),
+                "metric_weights": metric_weights,
+                "metric_scores": metric_scores,
+                "why_asked": _topic_why_asked(block, report_language),
+                "what_was_scored": _topic_scoring_focus(metrics_sorted, report_language),
+            }
+        )
+
+    block_metrics.sort(key=lambda item: item["weight"], reverse=True)
+    block_weighted_score = round(weighted_sum / total_weight, 2) if total_weight > 0 else 0.0
+    pre_overall = round(_to_float(aggregates_pre_penalty.get("overall_score"), 0.0), 2)
+    final_overall = round(_to_float(aggregates_final.get("overall_score"), 0.0), 2)
+
+    return {
+        "metric_weight_model": _CALIBRATED_METRIC_WEIGHTS,
+        "block_weight_model": block_weights,
+        "block_metrics": block_metrics,
+        "block_weighted_score": block_weighted_score,
+        "penalties": penalties,
+        "pre_penalty_overall_score": pre_overall,
+        "post_penalty_overall_score": final_overall,
+        "penalty_delta": round(final_overall - pre_overall, 2),
+        "topic_signal_quality": str(summary_model.get("signal_quality") or "unknown"),
+    }
+
+
+def _recommendation_label(recommendation: str, report_language: str) -> str:
+    mapping_ru = {
+        "strong_yes": "Strong Yes",
+        "yes": "Yes",
+        "maybe": "Maybe",
+        "no": "No",
+    }
+    mapping_en = {
+        "strong_yes": "Strong Yes",
+        "yes": "Yes",
+        "maybe": "Maybe",
+        "no": "No",
+    }
+    if report_language == "ru":
+        return mapping_ru.get(recommendation, recommendation)
+    return mapping_en.get(recommendation, recommendation)
+
+
+def _short_text(text: str | None, limit: int = 180) -> str:
+    normalized = str(text or "").strip()
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _map_penalty_to_explanation(penalty: str, report_language: str) -> str:
+    normalized = str(penalty or "").strip().lower()
+    if not normalized:
+        return ""
+    if report_language == "ru":
+        mapping = [
+            ("short_answers", "Короткие ответы снизили итоговый балл, потому что не хватило проверяемой конкретики."),
+            ("generic_answers", "Часть ответов была слишком общей, поэтому сигнал по практическому опыту ослаб."),
+            ("weak_answers", "Среднее качество ответов было низким, из-за чего общий балл ограничен."),
+            ("critical_weakness", "Критические просадки по ключевым компетенциям ограничили финальную рекомендацию."),
+            ("multiple_critical_weaknesses", "Несколько критически слабых компетенций ограничили общий потолок оценки."),
+            ("low_response_consistency", "Обнаружены противоречия между ответами, это снизило доверие к итоговому уровню."),
+            ("unstable_response_consistency", "Согласованность ответов ниже желаемой, поэтому итоговая оценка ограничена."),
+            ("low_signal_quality", "Низкое качество сигнала по темам интервью не позволило поднять итог выше."),
+        ]
+    else:
+        mapping = [
+            ("short_answers", "Short answers reduced the score because there was not enough verifiable detail."),
+            ("generic_answers", "Several answers were too generic, which weakened the practical signal."),
+            ("weak_answers", "Average answer quality was low, so the overall score was capped."),
+            ("critical_weakness", "Critical weakness in key competencies limited the final recommendation."),
+            ("multiple_critical_weaknesses", "Multiple critical competency weaknesses capped the overall result."),
+            ("low_response_consistency", "Contradictions between answers lowered trust in the final level."),
+            ("unstable_response_consistency", "Cross-answer consistency was below target, so the score was constrained."),
+            ("low_signal_quality", "Low topic-level signal quality prevented a higher final result."),
+        ]
+    for marker, text in mapping:
+        if marker in normalized:
+            return text
+    return penalty
+
+
+def _build_explainability_report(
+    *,
+    target_role: str,
+    report_language: str,
+    summary_model: dict,
+    per_question_analysis: list[dict],
+    strengths: list[str],
+    weaknesses: list[str],
+    recommendations: list[str],
+    hiring_recommendation: str,
+    overall_score: float,
+    overall_confidence: float | None,
+    calibrated_scoring: dict,
+    penalties: list[str],
+) -> dict:
+    topic_outcomes = list(summary_model.get("topic_outcomes", []) or [])
+    qa_by_question: dict[int, dict] = {}
+    for qa in per_question_analysis:
+        question_number = int(qa.get("question_number", 0) or 0)
+        if question_number <= 0:
+            continue
+        current = qa_by_question.get(question_number)
+        if current is None or _to_float(qa.get("answer_quality"), 0.0) >= _to_float(current.get("answer_quality"), 0.0):
+            qa_by_question[question_number] = qa
+
+    def _build_evidence_item(topic: dict) -> dict:
+        question_number = int(topic.get("slot", 0) or 0)
+        qa = qa_by_question.get(question_number, {})
+        evidence_hint = str(topic.get("evidence_hint") or qa.get("evidence") or "").strip()
+        return {
+            "question_number": question_number,
+            "topic": str(topic.get("label") or ""),
+            "signal": str(topic.get("signal") or "unknown"),
+            "outcome": str(topic.get("outcome") or "partial"),
+            "answer_quality": round(_to_float(qa.get("answer_quality"), 0.0), 1) if qa else None,
+            "evidence_excerpt": _short_text(evidence_hint, 220),
+            "why_asked": str(topic.get("why_asked") or qa.get("why_asked") or ""),
+            "what_was_scored": str(topic.get("what_was_scored") or qa.get("what_was_scored") or ""),
+            "scored_metrics": _to_str_list(topic.get("scored_metrics") or qa.get("scored_metrics")),
+        }
+
+    strength_topics = [
+        item
+        for item in topic_outcomes
+        if item.get("outcome") == "validated" or (item.get("outcome") == "partial" and item.get("signal") == "strong")
+    ][:3]
+    if not strength_topics:
+        strength_topics = [item for item in topic_outcomes if item.get("outcome") == "partial"][:2]
+
+    gap_topics = [
+        item
+        for item in topic_outcomes
+        if item.get("outcome") in {"honest_gap", "unverified_claim", "evasive"}
+    ][:4]
+    if not gap_topics:
+        gap_topics = [item for item in topic_outcomes if item.get("outcome") == "partial" and item.get("signal") in {"generic", "evasive"}][:3]
+
+    strength_items: list[dict] = []
+    for topic in strength_topics:
+        label = str(topic.get("label") or "")
+        if report_language == "ru":
+            title = f"Подтвержден рабочий сигнал по теме «{label}»."
+            why_it_matters = "Это повышает предсказуемость выполнения задач роли в продакшн-среде."
+        else:
+            title = f"Validated working signal in “{label}”."
+            why_it_matters = "This increases confidence in day-to-day execution for the target role."
+        strength_items.append(
+            {
+                "title": title,
+                "why_it_matters": why_it_matters,
+                "evidence": [_build_evidence_item(topic)],
+            }
+        )
+
+    gap_items: list[dict] = []
+    for topic in gap_topics:
+        label = str(topic.get("label") or "")
+        outcome = str(topic.get("outcome") or "")
+        if report_language == "ru":
+            if outcome == "honest_gap":
+                risk = "Есть честно признанный пробел: без практики по этой теме скорость входа в задачи будет ниже."
+            elif outcome == "unverified_claim":
+                risk = "Заявленный навык пока не подтверждён кейсом из практики, это риск для точности self-assessment."
+            elif outcome == "evasive":
+                risk = "Ответы по теме были уклончивыми, поэтому сложно подтвердить глубину владения."
+            else:
+                risk = "По теме не хватило глубины, чтобы уверенно подтвердить уровень."
+            title = f"Зона роста: «{label}»."
+        else:
+            if outcome == "honest_gap":
+                risk = "This is an explicit experience gap, so ramp-up risk is higher for related tasks."
+            elif outcome == "unverified_claim":
+                risk = "The claimed skill was not backed by a concrete example, which increases self-assessment risk."
+            elif outcome == "evasive":
+                risk = "Answers were evasive, so depth in this area could not be validated."
+            else:
+                risk = "Depth in this topic was not sufficient for confident validation."
+            title = f"Growth area: “{label}”."
+        gap_items.append(
+            {
+                "title": title,
+                "risk": risk,
+                "evidence": [_build_evidence_item(topic)],
+            }
+        )
+
+    recommendation_items: list[dict] = []
+    for idx, recommendation in enumerate(recommendations[:3]):
+        linked_gap = gap_items[idx]["title"] if idx < len(gap_items) else ""
+        if report_language == "ru":
+            actions = [
+                "Подготовьте один короткий кейс в формате: контекст → действие → результат.",
+                "Добавьте 1-2 технических детали: выбор подхода, компромисс, проверка результата.",
+            ]
+            success_criteria = "На следующем интервью по теме получается дать конкретный пример и объяснить решение без общих формулировок."
+        else:
+            actions = [
+                "Prepare one short case in context → action → result format.",
+                "Add 1-2 technical details: decision trade-off and validation method.",
+            ]
+            success_criteria = "In the next interview you can explain a concrete case with clear decision logic and outcome."
+        recommendation_items.append(
+            {
+                "title": recommendation,
+                "linked_gap": linked_gap,
+                "actions": actions,
+                "success_criteria": success_criteria,
+            }
+        )
+
+    penalty_explanations = [
+        text
+        for text in (_map_penalty_to_explanation(item, report_language) for item in penalties)
+        if text
+    ]
+    penalty_explanations = list(dict.fromkeys(penalty_explanations))[:4]
+    block_metrics = list(calibrated_scoring.get("block_metrics", []) or [])
+    top_block_signals = [
+        {
+            "block": str(item.get("block") or ""),
+            "score": round(_to_float(item.get("score"), 0.0), 2),
+            "weight": round(_to_float(item.get("weight"), 0.0), 4),
+            "question_count": int(item.get("question_count") or 0),
+        }
+        for item in sorted(block_metrics, key=lambda row: _to_float(row.get("weight"), 0.0), reverse=True)[:3]
+    ]
+    confidence_verdict = _confidence_verdict_band(overall_confidence)
+    insufficient_signal = confidence_verdict != "normal"
+
+    if report_language == "ru":
+        if confidence_verdict == "insufficient_data":
+            confidence_pct = int(round(_to_float(overall_confidence, 0.0) * 100))
+            overall_text = (
+                f"Итог: {_role_label(target_role, report_language)} получил {overall_score:.1f}/10. "
+                f"Сигнал недостаточный (confidence {confidence_pct}%), поэтому жёсткий verdict по найму не выносится."
+            )
+        elif confidence_verdict == "needs_human_review":
+            confidence_pct = int(round(_to_float(overall_confidence, 0.0) * 100))
+            overall_text = (
+                f"Итог: {_role_label(target_role, report_language)} получил {overall_score:.1f}/10. "
+                f"Confidence {confidence_pct}%: нужен ручной review перед финальным решением по найму."
+            )
+        else:
+            overall_text = (
+                f"Итог: {_role_label(target_role, report_language)} получил {overall_score:.1f}/10 "
+                f"с рекомендацией {_recommendation_label(hiring_recommendation, report_language)}. "
+                "Оценка основана на подтверждённых ответах по темам интервью, а не на резюме."
+            )
+    else:
+        if confidence_verdict == "insufficient_data":
+            confidence_pct = int(round(_to_float(overall_confidence, 0.0) * 100))
+            overall_text = (
+                f"Final result: {_role_label(target_role, report_language)} scored {overall_score:.1f}/10. "
+                f"Signal is insufficient (confidence {confidence_pct}%), so no hard hiring verdict is issued."
+            )
+        elif confidence_verdict == "needs_human_review":
+            confidence_pct = int(round(_to_float(overall_confidence, 0.0) * 100))
+            overall_text = (
+                f"Final result: {_role_label(target_role, report_language)} scored {overall_score:.1f}/10. "
+                f"Confidence {confidence_pct}% requires human review before a final hiring verdict."
+            )
+        else:
+            overall_text = (
+                f"Final result: { _role_label(target_role, report_language) } scored {overall_score:.1f}/10 "
+                f"with recommendation {_recommendation_label(hiring_recommendation, report_language)}. "
+                "The result is based on validated interview evidence, not resume claims alone."
+            )
+
+    return {
+        "version": "2.0",
+        "overall_assessment": {
+            "summary": overall_text,
+            "overall_score": round(_to_float(overall_score), 2),
+            "recommendation": hiring_recommendation,
+            "signal_quality": str(summary_model.get("signal_quality") or "unknown"),
+            "overall_confidence": round(_to_float(overall_confidence), 3) if overall_confidence is not None else None,
+            "insufficient_signal": insufficient_signal,
+            "confidence_verdict": confidence_verdict,
+            "score_method": "evidence_weighted_with_penalties",
+        },
+        "evidence_based_strengths": strength_items,
+        "evidence_based_gaps": gap_items,
+        "growth_recommendations": recommendation_items,
+        "scoring_trace": {
+            "pre_penalty_overall_score": round(_to_float(calibrated_scoring.get("pre_penalty_overall_score"), overall_score), 2),
+            "post_penalty_overall_score": round(_to_float(calibrated_scoring.get("post_penalty_overall_score"), overall_score), 2),
+            "penalty_explanations": penalty_explanations,
+            "top_block_signals": top_block_signals,
+        },
+        "summary_strengths": strengths[:3],
+        "summary_weaknesses": weaknesses[:3],
+    }
+
+
 def _apply_recommendation_gates(
     *,
     llm_rec: str,
@@ -665,9 +1244,17 @@ def _apply_recommendation_gates(
     honest_gaps = int(summary_model.get("honest_gaps", 0) or 0)
     generic_topics = int(summary_model.get("generic_or_evasive_topics", 0) or 0)
     overall_confidence = _to_float(confidence_metrics.get("overall_confidence"), 0.0)
+    confidence_verdict = _confidence_verdict_band(overall_confidence)
 
     recommendation_rank = {"no": 0, "maybe": 1, "yes": 2, "strong_yes": 3}
     max_allowed = "strong_yes"
+
+    if confidence_verdict == "insufficient_data":
+        reasons.append("overall confidence below 40%; signal is insufficient for a hard hire verdict")
+        return "maybe", reasons
+    if confidence_verdict == "needs_human_review":
+        reasons.append("overall confidence below 70%; human review is required before hard hire verdict")
+        return "maybe", reasons
 
     critical = [cs for cs in competency_scores if _to_float(cs.get("score"), 5.0) <= 4.0]
     if critical:
@@ -688,10 +1275,6 @@ def _apply_recommendation_gates(
     if generic_topics >= max(2, core_topics // 2 or 1) and int(summary_model.get("validated_topics", 0) or 0) < max(2, core_topics // 3 or 1):
         max_allowed = min((max_allowed, "maybe"), key=lambda item: recommendation_rank[item])
         reasons.append("too many generic or evasive topic outcomes")
-
-    if overall_confidence < 0.45:
-        max_allowed = min((max_allowed, "maybe"), key=lambda item: recommendation_rank[item])
-        reasons.append("low overall confidence limits recommendation")
 
     if llm_rec == "strong_yes":
         if overall_score < 8.5 or overall_confidence < 0.7 or signal_quality != "high" or strong_topics < max(2, core_topics // 2 or 1):
@@ -3886,6 +4469,7 @@ def _apply_score_penalties(
     aggregates: dict[str, float],
     answer_metrics: dict,
     competency_scores: list[dict],
+    response_consistency: float | None = None,
 ) -> tuple[dict[str, float], list[str]]:
     """Apply deterministic hard caps on scores to prevent inflation.
 
@@ -3895,6 +4479,7 @@ def _apply_score_penalties(
     - Weak answers (avg quality < 4.5)  → cap at 5
     - ≥1 competency scored ≤ 4          → cap overall at 6
     - ≥2 competencies scored ≤ 3        → cap overall at 5
+    - Low response consistency (<5.0)   → additional consistency cap
     """
     penalties: list[str] = []
     cap = 10.0
@@ -3931,6 +4516,19 @@ def _apply_score_penalties(
             f"critical_weakness ({len(critical)} competencies ≤4): overall_capped_at_6"
         )
 
+    consistency = _to_float(response_consistency, 0.0)
+    if response_consistency is not None:
+        if consistency < 4.0:
+            cap = min(cap, 5.5)
+            penalties.append(
+                f"low_response_consistency ({consistency:.1f}/10): capped_at_5.5"
+            )
+        elif consistency < 5.0:
+            cap = min(cap, 6.0)
+            penalties.append(
+                f"unstable_response_consistency ({consistency:.1f}/10): capped_at_6.0"
+            )
+
     if cap < 10.0:
         return {k: round(min(v, cap), 1) for k, v in aggregates.items()}, penalties
     return aggregates, penalties
@@ -3952,6 +4550,15 @@ def _question_evidence_confidence(q: dict) -> float:
     return max(0.0, min(confidence, 1.0))
 
 
+def _confidence_verdict_band(overall_confidence: float | None) -> str:
+    confidence = max(0.0, min(_to_float(overall_confidence, 0.0), 1.0))
+    if confidence < 0.40:
+        return "insufficient_data"
+    if confidence < 0.70:
+        return "needs_human_review"
+    return "normal"
+
+
 def _competency_confidence_sample_cap(sample_count: int) -> float:
     """Avoid 97–100% confidence from a single strong answer."""
     if sample_count <= 0:
@@ -3968,6 +4575,9 @@ def _competency_confidence_sample_cap(sample_count: int) -> float:
 def _compute_confidence_metrics(
     competency_scores: list[dict],
     per_question_analysis: list[dict],
+    *,
+    summary_model: dict | None = None,
+    interview_meta: dict | None = None,
 ) -> dict:
     """Compute confidence envelope for report-level and competency-level signals."""
     competency_evidence: dict[str, list[float]] = {}
@@ -4012,14 +4622,6 @@ def _compute_confidence_metrics(
         weighted_sum += score * weight
         total_weight += weight
 
-    if total_weight > 0:
-        overall_conf = weighted_sum / total_weight
-    elif question_confidences:
-        overall_conf = sum(question_confidences) / len(question_confidences)
-    else:
-        overall_conf = 0.0
-    overall_conf = round(max(0.0, min(overall_conf, 1.0)), 2)
-
     analyzed_questions = len(per_question_analysis)
     high_conf_q = sum(1 for c in question_confidences if c >= 0.7)
     low_conf_q = sum(1 for c in question_confidences if c < 0.5)
@@ -4029,6 +4631,58 @@ def _compute_confidence_metrics(
         if analyzed_questions
         else 0.0
     )
+    if total_weight > 0:
+        overall_conf = weighted_sum / total_weight
+    elif question_confidences:
+        overall_conf = sum(question_confidences) / len(question_confidences)
+    else:
+        overall_conf = 0.0
+
+    core_topics = int((summary_model or {}).get("core_topics", 0) or 0)
+    validated_topics = int((summary_model or {}).get("validated_topics", 0) or 0)
+    validated_ratio = (
+        max(0.0, min(validated_topics / max(1, core_topics), 1.0))
+        if core_topics > 0
+        else 0.0
+    )
+
+    strong_answers_count = int((interview_meta or {}).get("strong_answers_count", 0) or 0)
+    candidate_answers_count = int((interview_meta or {}).get("candidate_answers_count", 0) or 0)
+    inferred_strong_answers = sum(
+        1
+        for q in per_question_analysis
+        if _to_float(q.get("answer_quality"), 0.0) >= 7.0
+        and str(q.get("depth", "surface")).lower() in {"strong", "expert"}
+    )
+    if strong_answers_count <= 0:
+        strong_answers_count = inferred_strong_answers
+    if candidate_answers_count <= 0:
+        candidate_answers_count = analyzed_questions
+    strong_answer_ratio = (
+        max(0.0, min(strong_answers_count / max(1, candidate_answers_count), 1.0))
+        if candidate_answers_count > 0
+        else 0.0
+    )
+
+    depth_scale = {"none": 0.0, "surface": 0.25, "adequate": 0.55, "strong": 0.8, "expert": 1.0}
+    depth_values = [depth_scale.get(str(q.get("depth", "surface")).lower(), 0.25) for q in per_question_analysis]
+    avg_case_depth = sum(depth_values) / len(depth_values) if depth_values else 0.0
+    qa_completed_cases = len(
+        {
+            str(item).strip()
+            for item in (interview_meta or {}).get("qa_completed_scenarios", [])
+            if str(item).strip()
+        }
+    )
+    if qa_completed_cases >= 2:
+        avg_case_depth = min(1.0, avg_case_depth + 0.08)
+    case_depth_ratio = max(0.0, min(avg_case_depth, 1.0))
+
+    structural_components = [coverage_ratio, strong_answer_ratio, case_depth_ratio]
+    if core_topics > 0:
+        structural_components.append(validated_ratio)
+    structural_signal = sum(structural_components) / len(structural_components) if structural_components else 0.0
+    overall_conf = round(max(0.0, min(overall_conf * 0.55 + structural_signal * 0.45, 1.0)), 2)
 
     reasons: list[str] = []
     if analyzed_questions == 0:
@@ -4043,6 +4697,18 @@ def _compute_confidence_metrics(
             reasons.append("Multiple low-confidence answers reduced certainty.")
         elif high_conf_q >= max(2, analyzed_questions // 2):
             reasons.append("Several answers contained high-confidence evidence.")
+        if core_topics > 0 and validated_ratio < 0.5:
+            reasons.append("Low validated-topic coverage reduced confidence.")
+        elif core_topics > 0 and validated_ratio >= 0.7:
+            reasons.append("Validated-topic coverage improved confidence.")
+        if strong_answer_ratio < 0.35:
+            reasons.append("Too few strong answers lowered confidence.")
+        elif strong_answer_ratio >= 0.6:
+            reasons.append("High share of strong answers improved confidence.")
+        if case_depth_ratio < 0.45:
+            reasons.append("Case depth was shallow, lowering confidence.")
+        elif case_depth_ratio >= 0.7:
+            reasons.append("Case depth improved confidence.")
 
     if avg_ai is not None and avg_ai >= 0.6:
         reasons.append("High AI-likelihood signal lowered confidence.")
@@ -4057,11 +4723,17 @@ def _compute_confidence_metrics(
         "high_confidence_questions": high_conf_q,
         "low_confidence_questions": low_conf_q,
         "concrete_evidence_ratio": coverage_ratio,
+        "validated_topics": validated_topics,
+        "validated_topics_ratio": round(validated_ratio, 2),
+        "strong_answers_count": strong_answers_count,
+        "strong_answer_ratio": round(strong_answer_ratio, 2),
+        "case_depth_ratio": round(case_depth_ratio, 2),
         "avg_ai_likelihood": avg_ai,
     }
 
     return {
         "overall_confidence": overall_conf,
+        "confidence_verdict": _confidence_verdict_band(overall_conf),
         "competency_confidence": competency_confidence,
         "confidence_reasons": reasons[:4],
         "evidence_coverage": evidence_coverage,
@@ -4532,6 +5204,13 @@ def _build_mock_question_analysis(
                 "specificity": specificity,
                 "depth": depth,
                 "ai_likelihood": 0.05 if answer_class in {"strong", "partial"} else 0.1,
+                "block": str(target.get("block") or "").strip() or None,
+                "tier": str(target.get("tier") or "").strip() or None,
+                "lead_question": str(target.get("lead_question") or "").strip() or None,
+                "allowed_probes": _to_str_list(target.get("allowed_probes")),
+                "scored_metrics": _to_str_list(target.get("scored_metrics")),
+                "why_asked": _topic_why_asked(target.get("block"), report_language),
+                "what_was_scored": _topic_scoring_focus(_to_str_list(target.get("scored_metrics")), report_language),
             }
         )
 
@@ -4560,7 +5239,7 @@ def _build_mock_competency_scores(
         question_item = question_by_slot.get(idx, {})
         outcome = str(outcome_item.get("outcome", "partial"))
         signal = str(outcome_item.get("signal", "partial"))
-        answer_quality = _to_float(question_item.get("answer_quality"), 5.0)
+        answer_quality = _to_float(question_item.get("answer_quality"), 3.5)
         specificity = str(question_item.get("specificity", "low")).lower()
         depth = str(question_item.get("depth", "surface")).lower()
         for comp_name in topic.get("competencies", []) or []:
@@ -4576,11 +5255,11 @@ def _build_mock_competency_scores(
                 if specificity == "high":
                     score += 0.2
             elif outcome == "partial":
-                score = max(6.0, min(answer_quality, 7.4))
+                score = min(max(answer_quality, 4.2), 7.2)
                 if depth in {"strong", "expert"}:
                     score = max(score, 7.1)
                 if specificity == "high":
-                    score = max(score, 6.9)
+                    score = max(score, 6.5)
             elif outcome == "unverified_claim":
                 score = min(answer_quality, 4.8)
             elif outcome == "evasive":
@@ -4612,7 +5291,7 @@ def _build_mock_competency_scores(
 
     seen = {item["competency"] for item in comp_scores}
     category_fallbacks = {
-        category: round(sum(scores) / len(scores), 1)
+        category: min(round(sum(scores) / len(scores), 1), 5.2)
         for category, scores in category_scores.items()
         if scores
     }
@@ -4623,10 +5302,10 @@ def _build_mock_competency_scores(
             {
                 "competency": comp.name,
                 "category": comp.category,
-                "score": category_fallbacks.get(comp.category, 5.0),
+                "score": category_fallbacks.get(comp.category, 4.5),
                 "weight": comp.weight,
-                "evidence": "Fallback topic coverage",
-                "reasoning": "No direct topic mapping available.",
+                "evidence": "Insufficient direct answer evidence",
+                "reasoning": "No direct candidate answer mapped to this competency.",
             }
         )
     return comp_scores
@@ -4637,28 +5316,77 @@ def _build_mock_competency_scores(
 # ---------------------------------------------------------------------------
 
 class LLMAssessor:
-    """Generates structured assessment reports via Groq API (two-pass)."""
+    """Generates structured assessment reports via configured LLM provider (two-pass)."""
 
-    def __init__(self, client: AsyncGroq) -> None:
-        self._client = client
+    def __init__(self, provider: LLMProvider) -> None:
+        self._provider = provider
+
+    @property
+    def provider_name(self) -> str:
+        return getattr(self._provider, "name", "unknown")
 
     async def _create_completion_with_model_fallback(self, *, model_override: str | None = None, **kwargs):
         resolved_model = resolve_llm_runtime_model(model_override)
+        logger.info(
+            "ai_model_call component=assessor provider=%s model=%s",
+            self.provider_name,
+            resolved_model,
+        )
+        response = await self._provider.chat_completion(
+            messages=kwargs.get("messages", []),
+            model=resolved_model,
+            temperature=float(kwargs.get("temperature", 0.2)),
+            max_tokens=int(kwargs.get("max_tokens", 1024)),
+            response_format=kwargs.get("response_format"),
+            extra_body={
+                key: value
+                for key, value in kwargs.items()
+                if key
+                not in {"messages", "model", "temperature", "max_tokens", "response_format"}
+            },
+        )
+        record_ai_success(
+            component="assessor",
+            provider=self.provider_name,
+            model=response.actual_model_used,
+            note=("fallback_models_used" if response.fallback_used else None),
+        )
+        return response
+
+    @staticmethod
+    def _extract_tool_json_arguments(raw_response: Any) -> str | None:
         try:
-            response = await self._client.chat.completions.create(
-                model=resolved_model,
-                **kwargs,
-            )
-            return response, resolved_model
+            message = raw_response.choices[0].message
+            tool_calls = getattr(message, "tool_calls", None)
+            if tool_calls:
+                return str(tool_calls[0].function.arguments or "").strip()
         except Exception:
-            if resolved_model == DEFAULT_LLM_MODEL:
-                raise
-            logger.exception("Preferred assessor model failed, retrying with default model")
-            response = await self._client.chat.completions.create(
-                model=DEFAULT_LLM_MODEL,
-                **kwargs,
-            )
-            return response, DEFAULT_LLM_MODEL
+            return None
+        return None
+
+    @staticmethod
+    def _extract_json_object_text(raw_text: str) -> str:
+        text = str(raw_text or "").strip()
+        if not text:
+            return ""
+        if "```" in text:
+            text = re.sub(r"```(?:json)?", "", text, flags=re.IGNORECASE).replace("```", "").strip()
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            return text[start:end + 1]
+        return text
+
+    def _load_structured_payload(self, provider_result: Any) -> dict[str, Any]:
+        raw_response = getattr(provider_result, "raw_response", None)
+        tool_json = self._extract_tool_json_arguments(raw_response)
+        candidate = tool_json or self._extract_json_object_text(getattr(provider_result, "text", ""))
+        if not candidate:
+            raise ValueError("empty structured payload")
+        payload = json.loads(candidate)
+        if not isinstance(payload, dict):
+            raise ValueError("structured payload is not an object")
+        return payload
 
     async def assess(
         self,
@@ -4699,6 +5427,13 @@ class LLMAssessor:
             report_language,
             model_override=model_override,
         )
+        topic_plan = list((interview_meta or {}).get("topic_plan", []) or [])
+        pass1_data = _enrich_per_question_analysis_with_topic_plan(
+            pass1_data,
+            topic_plan,
+            report_language=report_language,
+        )
+        summary_model = _build_summary_model(target_role, report_language, interview_meta, pass1_data)
 
         # Pass 2: Competency scoring (message_history needed for word-count penalization)
         result = await self._pass2_competency_scoring(
@@ -4709,11 +5444,12 @@ class LLMAssessor:
             target_role,
             message_history,
             report_language,
+            summary_model=summary_model,
+            interview_meta=interview_meta,
             model_override=model_override,
         )
         result.model_version = resolved_model
 
-        summary_model = _build_summary_model(target_role, report_language, interview_meta, pass1_data)
         adjusted_aggregates, summary_penalties = _apply_summary_penalties(
             {
                 "overall_score": result.overall_score,
@@ -4772,6 +5508,14 @@ class LLMAssessor:
             result.full_report_json["written_communication_evaluation"] = written_communication_evaluation
         result.full_report_json["aggregates"] = adjusted_aggregates
         result.full_report_json["score_penalties"] = result.full_report_json.get("score_penalties", []) + summary_penalties
+        result.full_report_json["calibrated_scoring"] = _build_calibrated_scoring(
+            per_question_analysis=result.per_question_analysis,
+            summary_model=summary_model,
+            report_language=report_language,
+            aggregates_pre_penalty=result.full_report_json.get("aggregates_pre_penalty", adjusted_aggregates),
+            aggregates_final=adjusted_aggregates,
+            penalties=list(result.full_report_json.get("score_penalties", []) or []),
+        )
         final_recommendation, gate_reasons = _apply_recommendation_gates(
             llm_rec=result.hiring_recommendation,
             overall_score=result.overall_score,
@@ -4795,6 +5539,20 @@ class LLMAssessor:
         result.full_report_json["strengths"] = result.strengths
         result.full_report_json["weaknesses"] = result.weaknesses
         result.full_report_json["recommendations"] = result.recommendations
+        result.full_report_json["explainability_report"] = _build_explainability_report(
+            target_role=target_role,
+            report_language=report_language,
+            summary_model=summary_model,
+            per_question_analysis=result.per_question_analysis,
+            strengths=result.strengths,
+            weaknesses=result.weaknesses,
+            recommendations=result.recommendations,
+            hiring_recommendation=result.hiring_recommendation,
+            overall_score=result.overall_score,
+            overall_confidence=result.overall_confidence,
+            calibrated_scoring=result.full_report_json.get("calibrated_scoring", {}),
+            penalties=list(result.full_report_json.get("score_penalties", []) or []),
+        )
         result.interview_summary = _build_interview_summary_text(
             target_role,
             report_language,
@@ -4881,7 +5639,7 @@ class LLMAssessor:
         )
 
         try:
-            response, resolved_model = await self._create_completion_with_model_fallback(
+            response = await self._create_completion_with_model_fallback(
                 model_override=model_override,
                 max_tokens=2048,
                 messages=[
@@ -4891,8 +5649,8 @@ class LLMAssessor:
                 tools=[_QUESTION_ANALYSIS_TOOL],
                 tool_choice={"type": "function", "function": {"name": "submit_question_analysis"}},
             )
-            tool_call = response.choices[0].message.tool_calls[0]
-            data = json.loads(tool_call.function.arguments)
+            data = self._load_structured_payload(response)
+            resolved_model = str(getattr(response, "actual_model_used", "") or resolve_llm_runtime_model(model_override))
             return data.get("questions", []), resolved_model
         except Exception:
             logger.exception("Pass 1 (question analysis) failed, continuing with empty analysis")
@@ -4907,6 +5665,8 @@ class LLMAssessor:
         target_role: str,
         message_history: list[dict] | None = None,
         report_language: str = "ru",
+        summary_model: dict[str, Any] | None = None,
+        interview_meta: dict[str, Any] | None = None,
         model_override: str | None = None,
     ) -> AssessmentResult:
         """Pass 2: Score each competency using Pass 1 evidence + BARS calibration."""
@@ -4962,7 +5722,7 @@ class LLMAssessor:
         )
 
         try:
-            response, resolved_model = await self._create_completion_with_model_fallback(
+            response = await self._create_completion_with_model_fallback(
                 model_override=model_override,
                 max_tokens=2048,
                 messages=[
@@ -4972,8 +5732,8 @@ class LLMAssessor:
                 tools=[_COMPETENCY_ASSESSMENT_TOOL],
                 tool_choice={"type": "function", "function": {"name": "submit_competency_assessment"}},
             )
-            tool_call = response.choices[0].message.tool_calls[0]
-            data: dict = json.loads(tool_call.function.arguments)
+            data: dict = self._load_structured_payload(response)
+            resolved_model = str(getattr(response, "actual_model_used", "") or resolve_llm_runtime_model(model_override))
         except Exception:
             logger.exception("Pass 2 (competency scoring) failed, falling back to legacy assessment")
             try:
@@ -4996,11 +5756,17 @@ class LLMAssessor:
                 )
 
         comp_scores = data.get("competency_scores", [])
-        aggregates = _compute_aggregates(comp_scores, target_role)
+        raw_aggregates = _compute_aggregates(comp_scores, target_role)
 
         # v2-strict: compute answer quality metrics and apply hard score penalties
         answer_metrics = _compute_answer_metrics(pass1_data, message_history or [])
-        aggregates, penalties = _apply_score_penalties(aggregates, answer_metrics, comp_scores)
+        response_consistency = data.get("response_consistency")
+        aggregates, penalties = _apply_score_penalties(
+            raw_aggregates,
+            answer_metrics,
+            comp_scores,
+            _to_float(response_consistency) if response_consistency is not None else None,
+        )
 
         # Merge LLM red flags with Python-generated red flags
         llm_red_flags = data.get("red_flags", [])
@@ -5021,8 +5787,14 @@ class LLMAssessor:
             hiring_rec = llm_rec
 
         skill_tags = _aggregate_skills(pass1_data, message_history=message_history)
-        confidence_metrics = _compute_confidence_metrics(comp_scores, pass1_data)
-        response_consistency = data.get("response_consistency")
+        summary_model_safe = summary_model if isinstance(summary_model, dict) else {}
+        interview_meta_safe = interview_meta if isinstance(interview_meta, dict) else {}
+        confidence_metrics = _compute_confidence_metrics(
+            comp_scores,
+            pass1_data,
+            summary_model=summary_model_safe,
+            interview_meta=interview_meta_safe,
+        )
 
         full_json = {
             "competency_scores": comp_scores,
@@ -5032,10 +5804,12 @@ class LLMAssessor:
             "response_consistency": response_consistency,
             "aggregates": aggregates,
             "overall_confidence": confidence_metrics["overall_confidence"],
+            "confidence_verdict": confidence_metrics["confidence_verdict"],
             "competency_confidence": confidence_metrics["competency_confidence"],
             "confidence_reasons": confidence_metrics["confidence_reasons"],
             "evidence_coverage": confidence_metrics["evidence_coverage"],
             "decision_policy_version": _DECISION_POLICY_VERSION,
+            "aggregates_pre_penalty": raw_aggregates,
             # v2-strict fields
             "answer_quality_score": answer_metrics["answer_quality_score"],
             "depth_score": answer_metrics["depth_score"],
@@ -5092,7 +5866,7 @@ class LLMAssessor:
             f"{'русском' if report_language == 'ru' else 'English'}."
         )
 
-        response, resolved_model = await self._create_completion_with_model_fallback(
+        response = await self._create_completion_with_model_fallback(
             model_override=model_override,
             max_tokens=1024,
             messages=[
@@ -5103,10 +5877,11 @@ class LLMAssessor:
             tool_choice={"type": "function", "function": {"name": "submit_assessment"}},
         )
 
-        tool_call = response.choices[0].message.tool_calls[0]
-        data: dict = json.loads(tool_call.function.arguments)
+        data: dict = self._load_structured_payload(response)
+        resolved_model = str(getattr(response, "actual_model_used", "") or resolve_llm_runtime_model(model_override))
         confidence_metrics = _compute_confidence_metrics([], [])
         data["overall_confidence"] = confidence_metrics["overall_confidence"]
+        data["confidence_verdict"] = confidence_metrics["confidence_verdict"]
         data["competency_confidence"] = confidence_metrics["competency_confidence"]
         data["confidence_reasons"] = confidence_metrics["confidence_reasons"]
         data["evidence_coverage"] = confidence_metrics["evidence_coverage"]
@@ -5158,6 +5933,12 @@ class MockAssessor:
             interview_meta=interview_meta,
             report_language=report_language,
         )
+        topic_plan = list((interview_meta or {}).get("topic_plan", []) or [])
+        per_q = _enrich_per_question_analysis_with_topic_plan(
+            per_q,
+            topic_plan,
+            report_language=report_language,
+        )
         summary_model = _build_summary_model(target_role, report_language, interview_meta, per_q)
         comp_scores = _build_mock_competency_scores(
             target_role=target_role,
@@ -5180,7 +5961,12 @@ class MockAssessor:
 
         response_count = len([m for m in message_history if m["role"] == "candidate"])
 
-        confidence_metrics = _compute_confidence_metrics(comp_scores, per_q)
+        confidence_metrics = _compute_confidence_metrics(
+            comp_scores,
+            per_q,
+            summary_model=summary_model,
+            interview_meta=interview_meta,
+        )
         answer_metrics = _compute_answer_metrics(per_q, message_history or [])
         adjusted_aggregates, summary_penalties = _apply_summary_penalties(
             aggregates,
@@ -5217,6 +6003,7 @@ class MockAssessor:
             "response_consistency": round(min(9.0, max(3.0, overall + 0.4)), 1),
             "aggregates": adjusted_aggregates,
             "overall_confidence": confidence_metrics["overall_confidence"],
+            "confidence_verdict": confidence_metrics["confidence_verdict"],
             "competency_confidence": confidence_metrics["competency_confidence"],
             "confidence_reasons": confidence_metrics["confidence_reasons"],
             "evidence_coverage": confidence_metrics["evidence_coverage"],
@@ -5230,6 +6017,28 @@ class MockAssessor:
             "depth_score": answer_metrics["depth_score"],
             "mock": True,
         }
+        full_json["calibrated_scoring"] = _build_calibrated_scoring(
+            per_question_analysis=per_q,
+            summary_model=summary_model,
+            report_language=report_language,
+            aggregates_pre_penalty=aggregates,
+            aggregates_final=adjusted_aggregates,
+            penalties=summary_penalties,
+        )
+        full_json["explainability_report"] = _build_explainability_report(
+            target_role=target_role,
+            report_language=report_language,
+            summary_model=summary_model,
+            per_question_analysis=per_q,
+            strengths=strengths,
+            weaknesses=weaknesses,
+            recommendations=recommendations,
+            hiring_recommendation=recommendation,
+            overall_score=overall,
+            overall_confidence=confidence_metrics["overall_confidence"],
+            calibrated_scoring=full_json.get("calibrated_scoring", {}),
+            penalties=list(full_json.get("score_penalties", []) or []),
+        )
         system_design_evaluation = _build_system_design_evaluation(interview_meta, per_q)
         if system_design_evaluation:
             full_json["system_design_evaluation"] = system_design_evaluation
@@ -5319,8 +6128,13 @@ class DisabledAssessor:
 # Singleton
 # ---------------------------------------------------------------------------
 
-if settings.GROQ_API_KEY:
-    assessor = LLMAssessor(client=AsyncGroq(api_key=settings.GROQ_API_KEY))
+try:
+    _provider = get_llm_provider(settings)
+except Exception:
+    _provider = None
+
+if _provider and _provider.name not in {"mock"}:
+    assessor = LLMAssessor(provider=_provider)
 elif settings.allow_mock_ai:
     assessor = MockAssessor()  # type: ignore[assignment]
 else:
