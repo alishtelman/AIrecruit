@@ -36,16 +36,26 @@ func TestGatewayRouting(t *testing.T) {
 	}))
 	defer authServer.Close()
 
+	templatesServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Mock-Source", "templates")
+		w.Header().Set("X-Mock-Path", r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("templates-response"))
+	}))
+	defer templatesServer.Close()
+
 	// 2. Parse mock URLs
 	backendURL, _ := url.Parse(backendServer.URL)
 	mediaURL, _ := url.Parse(mediaServer.URL)
 	authURL, _ := url.Parse(authServer.URL)
+	templatesURL, _ := url.Parse(templatesServer.URL)
 
 	// 3. Initialize gateway server
 	srv := &server{
-		backendProxy: httputil.NewSingleHostReverseProxy(backendURL),
-		mediaProxy:   httputil.NewSingleHostReverseProxy(mediaURL),
-		authProxy:    httputil.NewSingleHostReverseProxy(authURL),
+		backendProxy:   httputil.NewSingleHostReverseProxy(backendURL),
+		mediaProxy:     httputil.NewSingleHostReverseProxy(mediaURL),
+		authProxy:      httputil.NewSingleHostReverseProxy(authURL),
+		templatesProxy: httputil.NewSingleHostReverseProxy(templatesURL),
 	}
 
 	tests := []struct {
@@ -119,6 +129,38 @@ func TestGatewayRouting(t *testing.T) {
 			expectedSource: "backend",
 			expectedPath:   "/api/v1/company/candidates",
 			expectedBody:   "backend-response",
+		},
+		{
+			name:           "List Company Templates goes to templates-service",
+			method:         "GET",
+			path:           "/api/v1/company/templates",
+			expectedSource: "templates",
+			expectedPath:   "/api/v1/company/templates",
+			expectedBody:   "templates-response",
+		},
+		{
+			name:           "Create Template goes to templates-service",
+			method:         "POST",
+			path:           "/api/v1/company/templates",
+			expectedSource: "templates",
+			expectedPath:   "/api/v1/company/templates",
+			expectedBody:   "templates-response",
+		},
+		{
+			name:           "Delete Template goes to templates-service",
+			method:         "DELETE",
+			path:           "/api/v1/company/templates/76f0c8e3-057d-4c3e-8e8f-7c604b901a2f",
+			expectedSource: "templates",
+			expectedPath:   "/api/v1/company/templates/76f0c8e3-057d-4c3e-8e8f-7c604b901a2f",
+			expectedBody:   "templates-response",
+		},
+		{
+			name:           "List Public Templates goes to templates-service",
+			method:         "GET",
+			path:           "/api/v1/interviews/templates/public",
+			expectedSource: "templates",
+			expectedPath:   "/api/v1/interviews/templates/public",
+			expectedBody:   "templates-response",
 		},
 	}
 

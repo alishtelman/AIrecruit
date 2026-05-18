@@ -15,9 +15,10 @@ import (
 )
 
 type server struct {
-	backendProxy *httputil.ReverseProxy
-	mediaProxy   *httputil.ReverseProxy
-	authProxy    *httputil.ReverseProxy
+	backendProxy   *httputil.ReverseProxy
+	mediaProxy     *httputil.ReverseProxy
+	authProxy      *httputil.ReverseProxy
+	templatesProxy *httputil.ReverseProxy
 }
 
 func main() {
@@ -27,17 +28,20 @@ func main() {
 	backendURL := parseURL(envOrDefault("BACKEND_URL", "http://backend:8000"))
 	mediaURL := parseURL(envOrDefault("MEDIA_SERVICE_URL", "http://media-service:8080"))
 	authURL := parseURL(envOrDefault("AUTH_SERVICE_URL", "http://auth-service:8080"))
+	templatesURL := parseURL(envOrDefault("TEMPLATES_SERVICE_URL", "http://templates-service:8080"))
 
 	log.Printf("Routing Configured:")
 	log.Printf("  Listen Address: %s", listenAddr)
 	log.Printf("  Backend URL:    %s", backendURL)
 	log.Printf("  Media URL:      %s", mediaURL)
 	log.Printf("  Auth URL:       %s", authURL)
+	log.Printf("  Templates URL:  %s", templatesURL)
 
 	srv := &server{
-		backendProxy: httputil.NewSingleHostReverseProxy(backendURL),
-		mediaProxy:   httputil.NewSingleHostReverseProxy(mediaURL),
-		authProxy:    httputil.NewSingleHostReverseProxy(authURL),
+		backendProxy:   httputil.NewSingleHostReverseProxy(backendURL),
+		mediaProxy:     httputil.NewSingleHostReverseProxy(mediaURL),
+		authProxy:      httputil.NewSingleHostReverseProxy(authURL),
+		templatesProxy: httputil.NewSingleHostReverseProxy(templatesURL),
 	}
 
 	mux := http.NewServeMux()
@@ -100,6 +104,13 @@ func (s *server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(path, "/api/v1/auth") {
 		log.Printf("[PROXY] %s %s -> auth-service %s", method, path, r.URL.Path)
 		s.authProxy.ServeHTTP(w, r)
+		return
+	}
+
+	// Proxy templates operations directly to Go templates-service
+	if strings.HasPrefix(path, "/api/v1/company/templates") || path == "/api/v1/interviews/templates/public" {
+		log.Printf("[PROXY] %s %s -> templates-service %s", method, path, r.URL.Path)
+		s.templatesProxy.ServeHTTP(w, r)
 		return
 	}
 
