@@ -125,7 +125,7 @@ async def get_admin_overview(db: AsyncSession) -> AdminOverviewResponse:
         ),
         runtime=AdminRuntimeStatusResponse(
             app_env=settings.APP_ENV,
-            mock_ai_enabled=settings.allow_mock_ai,
+            mock_ai_enabled=False,
             rate_limit_enabled=settings.rate_limit_enabled,
             platform_admin_bootstrap_enabled=settings.platform_admin_bootstrap_enabled,
         ),

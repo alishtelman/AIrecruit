@@ -20,8 +20,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_INTERVIEW_MESSAGE_PER_MINUTE: int = 240
     RATE_LIMIT_TTS_PER_MINUTE: int = 180
     RATE_LIMIT_STT_PER_MINUTE: int = 90
-    GROQ_API_KEY: str = ""
-    AI_PROVIDER: str = "groq"
+    AI_PROVIDER: str = "gemini"
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.5-flash"
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENROUTER_MODEL: str = ""
@@ -85,9 +86,9 @@ class Settings(BaseSettings):
     @property
     def ai_provider(self) -> str:
         normalized = (self.AI_PROVIDER or "").strip().lower()
-        if normalized in {"groq", "openrouter", "mock"}:
+        if normalized in {"groq", "openrouter", "gemini"}:
             return normalized
-        return "groq"
+        return "gemini"
 
     @property
     def openrouter_fallback_models(self) -> list[str]:

@@ -2316,179 +2316,13 @@ class LLMInterviewer:
                 model=resolved_model,
                 error=str(exc),
             )
-            if settings.allow_mock_ai:
-                logger.exception("Interviewer LLM failed, using deterministic fallback question")
-                return await MockInterviewer().get_next_question(ctx, model_override=model_override)
             logger.exception("Interviewer LLM failed")
             raise RuntimeError("AI interviewer request failed")
 
 
 # ---------------------------------------------------------------------------
-# Mock fallback (no API key)
+# Disabled Fallback (no API key)
 # ---------------------------------------------------------------------------
-
-_QUESTIONS: dict[str, list[str]] = {
-    "frontend_engineer": [
-        "Расскажите о себе и своём опыте в frontend-разработке.",
-        "Как вы подходите к оптимизации производительности веб-приложений?",
-        "Объясните разницу между SSR, SSG и CSR. Когда вы используете каждый подход?",
-        "Как вы организуете состояние в крупном React/Vue/Angular приложении?",
-        "Опишите ваш опыт с accessibility (a11y). Как вы обеспечиваете доступность интерфейсов?",
-        "Как вы подходите к тестированию frontend-кода?",
-        "Расскажите о сложной UI-задаче, которую вам пришлось решить.",
-        "Как вы следите за новинками во frontend и принимаете решения о внедрении новых технологий?",
-    ],
-    "devops_engineer": [
-        "Расскажите о себе и своём опыте в DevOps.",
-        "Опишите CI/CD пайплайн, который вы настраивали. Какие инструменты использовали?",
-        "Как вы подходите к мониторингу и алертингу production-систем?",
-        "Расскажите о вашем опыте с Kubernetes или другими оркестраторами контейнеров.",
-        "Как вы обеспечиваете безопасность инфраструктуры? Приведите конкретные практики.",
-        "Опишите инцидент в production, в котором вы участвовали. Как вы его решали?",
-        "Как вы управляете конфигурацией и секретами в разных окружениях?",
-        "Как вы подходите к disaster recovery и обеспечению высокой доступности?",
-    ],
-    "data_scientist": [
-        "Расскажите о себе и своём опыте в Data Science.",
-        "Опишите проект ML, который вы довели до production. Какие были основные вызовы?",
-        "Как вы выбираете метрики для оценки модели? Приведите пример из практики.",
-        "Как вы обрабатываете пропущенные данные и выбросы в датасете?",
-        "Объясните разницу между underfitting и overfitting. Как вы с ними боретесь?",
-        "Расскажите о вашем опыте с A/B-тестированием.",
-        "Как вы объясняете результаты модели нетехническим стейкхолдерам?",
-        "Как вы следите за качеством модели в production (model drift, data drift)?",
-    ],
-    "mobile_engineer": [
-        "Расскажите о себе и вашем опыте в мобильной разработке.",
-        "Какие платформы вы разрабатывали? Опишите ключевые различия между iOS и Android разработкой.",
-        "Как вы оптимизируете производительность мобильного приложения?",
-        "Расскажите о вашем опыте с React Native, Flutter или другими кроссплатформенными фреймворками.",
-        "Как вы подходите к тестированию мобильных приложений?",
-        "Опишите сложную техническую задачу в мобильной разработке, которую вы решали.",
-        "Как вы обеспечиваете безопасность данных в мобильном приложении?",
-        "Как вы работаете с push-уведомлениями, offline-режимом и синхронизацией данных?",
-    ],
-    "designer": [
-        "Расскажите о себе и вашем опыте в UX/UI дизайне.",
-        "Опишите ваш процесс дизайна — от исследования до финального макета.",
-        "Как вы проводите пользовательские исследования? Какие методы предпочитаете?",
-        "Расскажите о дизайн-решении, которым вы особенно гордитесь. Как вы к нему пришли?",
-        "Как вы работаете с разработчиками при передаче дизайна в разработку?",
-        "Как вы измеряете успех дизайна после запуска?",
-        "Как вы справляетесь с противоречиями между бизнес-требованиями и интересами пользователей?",
-        "Расскажите о случае, когда пользовательское тестирование изменило ваш первоначальный дизайн.",
-    ],
-    "backend_engineer": [
-        "Расскажите о себе и своём опыте в backend-разработке.",
-        "Опишите самую сложную систему, которую вы создавали. Какие ключевые архитектурные решения вы принимали?",
-        "Как вы подходите к проектированию базы данных для высоконагруженного приложения?",
-        "Как вы обрабатываете ошибки, повторные попытки и отказы в production-сервисах?",
-        "Опишите ваш опыт с асинхронными или событийно-ориентированными архитектурами.",
-        "Как вы обеспечиваете безопасность в API и сервисах, которые создаёте?",
-        "Каков ваш подход к профилированию и оптимизации производительности?",
-        "Как вы балансируете технический долг и разработку новых функций?",
-    ],
-    "qa_engineer": [
-        "Расскажите о себе и вашем опыте в обеспечении качества.",
-        "Опишите ваш подход к построению стратегии тестирования для нового функционала.",
-        "Каков ваш опыт с автоматизацией тестирования? Какие фреймворки использовали?",
-        "Как вы решаете, что автоматизировать, а что тестировать вручную?",
-        "Опишите критичный баг, который вы нашли и который предотвратил инцидент в production.",
-        "Как вы поступаете, когда разработчики отклоняют ваши баг-репорты?",
-        "Каков ваш опыт с нагрузочным и производительностным тестированием?",
-        "Как вы поддерживаете качество в agile-среде с короткими циклами релизов?",
-    ],
-    "product_manager": [
-        "Расскажите о себе и вашем опыте в роли продакт-менеджера.",
-        "Объясните, как вы формируете и приоритизируете продуктовый роадмап.",
-        "Опишите продукт, который вы довели от идеи до запуска.",
-        "Как вы собираете и валидируете требования пользователей?",
-        "Как вы измеряете успех фичи после запуска?",
-        "Приведите пример, когда вам пришлось отказать стейкхолдеру.",
-        "Как вы взаимодействуете с инженерами для обеспечения качественной разработки?",
-        "Приведите пример продуктового решения, основанного на данных.",
-    ],
-}
-
-_DEFAULT_ROLE = "backend_engineer"
-
-
-class MockInterviewer:
-    async def get_next_question(self, ctx: InterviewContext, model_override: str | None = None) -> str:
-        match ctx.question_type:
-            case "followup":
-                return get_fallback_followup(ctx.shallow_reason or "no_depth_indicators", ctx.language)
-            case "structured_reframe":
-                return _structured_reframe_question(ctx)
-            case "clarification":
-                return _clarification_rephrase_question(ctx)
-            case "claim_verification":
-                q = _resume_claim_probe_question(ctx)
-                return q or get_fallback_followup("no_depth_indicators", ctx.language)
-            case "verification":
-                tech = ctx.pending_verification or ""
-                q = get_verification_question(tech, ctx.language)
-                return q or get_fallback_followup("no_depth_indicators", ctx.language)
-            case "deep_technical" | "edge_cases":
-                if ctx.module_type == "system_design":
-                    system_design_depth = _system_design_depth_question(ctx)
-                    if system_design_depth:
-                        return system_design_depth
-                if ctx.module_type == "behavioral_interview":
-                    behavioral_depth = _behavioral_interview_depth_question(ctx)
-                    if behavioral_depth:
-                        return behavioral_depth
-                if ctx.module_type == "coding_task":
-                    coding_task_depth = _coding_task_depth_question(ctx)
-                    if coding_task_depth:
-                        return coding_task_depth
-                if ctx.module_type == "sql_live":
-                    sql_live_depth = _sql_live_depth_question(ctx)
-                    if sql_live_depth:
-                        return sql_live_depth
-                if ctx.module_type == "written_communication":
-                    written_depth = _written_communication_depth_question(ctx)
-                    if written_depth:
-                        return written_depth
-                return get_depth_escalation_question(ctx.language)
-            case _:
-                if ctx.module_type == "system_design":
-                    system_design_main = _system_design_main_question(ctx)
-                    if system_design_main:
-                        return system_design_main
-                if ctx.module_type == "behavioral_interview":
-                    behavioral_main = _behavioral_interview_main_question(ctx)
-                    if behavioral_main:
-                        return behavioral_main
-                if ctx.module_type == "coding_task":
-                    coding_task_main = _coding_task_main_question(ctx)
-                    if coding_task_main:
-                        return coding_task_main
-                if ctx.module_type == "sql_live":
-                    sql_live_main = _sql_live_main_question(ctx)
-                    if sql_live_main:
-                        return sql_live_main
-                if ctx.module_type == "written_communication":
-                    written_main = _written_communication_main_question(ctx)
-                    if written_main:
-                        return written_main
-                if ctx.topic_phase == "intro":
-                    return _resume_anchored_first_question(ctx)
-                if ctx.topic_phase == "behavioral_closing":
-                    return _behavioral_closing_question(ctx)
-                if ctx.topic_phase == "resume_followup" and ctx.resume_anchor:
-                    anchored = _resume_anchored_main_question(ctx)
-                    if anchored:
-                        return anchored
-                anchored_main = _competency_anchored_main_question(ctx)
-                if anchored_main:
-                    return anchored_main
-                questions = _QUESTIONS.get(ctx.target_role, _QUESTIONS[_DEFAULT_ROLE])
-                idx = ctx.question_number - 1
-                if 0 <= idx < len(questions):
-                    return questions[idx]
-                return "Хотите добавить что-то ещё о своём опыте?"
-
 
 class DisabledInterviewer:
     async def get_next_question(self, ctx: InterviewContext, model_override: str | None = None) -> str:
@@ -2506,7 +2340,5 @@ except Exception:
 
 if _provider and _provider.name not in {"mock"}:
     interviewer = LLMInterviewer(provider=_provider)
-elif settings.allow_mock_ai:
-    interviewer = MockInterviewer()  # type: ignore[assignment]
 else:
     interviewer = DisabledInterviewer()  # type: ignore[assignment]

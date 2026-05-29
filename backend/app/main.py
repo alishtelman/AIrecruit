@@ -6,8 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.v1.router import api_router
-from app.ai.assessor import LLMAssessor, MockAssessor, assessor
-from app.ai.interviewer import LLMInterviewer, MockInterviewer, interviewer
+from app.ai.assessor import LLMAssessor, assessor
+from app.ai.interviewer import LLMInterviewer, interviewer
 from app.ai.model_preferences import resolve_llm_runtime_model
 from app.ai.runtime_status import get_ai_runtime_status, set_runtime_identity
 from app.core.config import settings
@@ -110,20 +110,17 @@ async def startup_event():
             await ensure_platform_admin(db)
 
     interviewer_provider = (
-        getattr(interviewer, "provider_name", "groq")
+        getattr(interviewer, "provider_name", "gemini")
         if isinstance(interviewer, LLMInterviewer)
-        else "mock" if isinstance(interviewer, MockInterviewer) else "disabled"
+        else "disabled"
     )
     assessor_provider = (
-        getattr(assessor, "provider_name", "groq")
+        getattr(assessor, "provider_name", "gemini")
         if isinstance(assessor, LLMAssessor)
-        else "mock" if isinstance(assessor, MockAssessor) else "disabled"
+        else "disabled"
     )
 
-    mock_mode_enabled = interviewer_provider == "mock" or assessor_provider == "mock"
-    app_env = (settings.APP_ENV or "").strip().lower()
-    if app_env == "production" and mock_mode_enabled:
-        raise RuntimeError("Mock AI provider is forbidden when APP_ENV=production")
+    mock_mode_enabled = False
 
     if interviewer_provider == assessor_provider:
         active_provider = interviewer_provider
@@ -133,8 +130,8 @@ async def startup_event():
     model_name = resolve_llm_runtime_model(None) if active_provider not in {"mock", "disabled"} else "disabled"
     if settings.ai_provider == "openrouter":
         api_key_present = bool(settings.OPENROUTER_API_KEY)
-    elif settings.ai_provider == "groq":
-        api_key_present = bool(settings.GROQ_API_KEY)
+    elif settings.ai_provider == "gemini":
+        api_key_present = bool(settings.GEMINI_API_KEY)
     else:
         api_key_present = False
     set_runtime_identity(

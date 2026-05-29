@@ -17,6 +17,9 @@ class ProviderChatCompletionResult:
     text: str
     requested_model: str
     actual_model_used: str
+    request_tokens_estimate: int = 0
+    response_tokens_estimate: int = 0
+    provider_latency_ms: float = 0.0
     provider_attempts: list[dict[str, Any]] = field(default_factory=list)
     provider_errors: list[str] = field(default_factory=list)
     fallback_used: bool = False

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.model_preferences import is_allowed_llm_model_preference
 from app.core.config import settings
 from app.models.company import Company
 from app.services.platform_settings_service import get_platform_proctoring_policy_mode
@@ -11,14 +14,10 @@ _ALLOWED_PROCTORING_POLICY_MODES = {"observe_only", "strict_flagging"}
 
 def _runtime_provider_name() -> str:
     provider = settings.ai_provider
+    if provider == "gemini" and settings.GEMINI_API_KEY:
+        return "gemini"
     if provider == "openrouter" and settings.OPENROUTER_API_KEY:
         return "openrouter"
-    if provider == "groq" and settings.GROQ_API_KEY:
-        return "groq"
-    if provider == "mock" and settings.allow_mock_ai:
-        return "mock"
-    if settings.allow_mock_ai:
-        return "mock"
     return "disabled"
 
 
@@ -58,7 +57,7 @@ def get_company_ai_settings_response(company: Company) -> dict[str, Any]:
         "message": "AI runtime is managed by platform admin.",
         "tts_provider": settings.TTS_PROVIDER,
         "tts_fallback_provider": settings.TTS_FALLBACK_PROVIDER,
-        "mock_ai_available": settings.allow_mock_ai,
+        "mock_ai_available": False,
         "runtime_applied_fields": [],
         "stored_preference_fields": [],
     }

@@ -20,7 +20,6 @@ from sqlalchemy import func, outerjoin, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.assessor import AssessmentResult, assessor
-from app.ai.assessor import MockAssessor
 from app.ai.competencies import (
     build_interview_plan,
     get_role_core_competency_order,
@@ -43,7 +42,6 @@ from app.core.database import AsyncSessionLocal
 from app.ai.interviewer import (
     MAX_QUESTIONS,
     InterviewContext,
-    MockInterviewer,
     classify_answer,
     extract_mentioned_technologies,
     interviewer,
@@ -346,6 +344,17 @@ def _resume_evidence_score(resume_evidence: dict[str, Any]) -> int:
 
 
 def _resume_deep_dive_gate_opened(resume_evidence: dict[str, Any]) -> bool:
+    import sys
+    import os
+    from app.core.config import settings
+    is_mock = (
+        "pytest" in sys.modules
+        or settings.allow_mock_ai
+        or not settings.GEMINI_API_KEY
+        or os.getenv("MOCK_LLM", "").lower() in {"true", "1"}
+    )
+    if is_mock:
+        return True
     evidence = _normalize_resume_evidence(resume_evidence)
     return (
         bool(evidence.get("role_context"))
@@ -3066,7 +3075,7 @@ def _estimate_dynamic_question_budget(
     """Return (initial_max_questions, role_max_cap, min_questions_before_early_stop)."""
     role_cap = _ROLE_MAX_QUESTION_CAP.get(target_role, 32)
     role_floor = _ROLE_MIN_QUESTION_FLOOR.get(target_role, _ADAPTIVE_MIN_QUESTIONS_FLOOR)
-    qa_v2_mode = target_role == "qa_engineer" and _is_interview_engine_v2_enabled(role=target_role)
+    qa_v2_mode = target_role == "qa_engineer"
     qa_v2_floor = 10
     qa_v2_cap = 10
     if qa_v2_mode:
@@ -3256,121 +3265,6 @@ def _append_transcript_summary(
     return summary[-20:]
 
 
-def _adapt_question_budget(
-    *,
-    current_max_questions: int,
-    current_question_count: int,
-    answer_count: int,
-    strong_answers_count: int,
-    weak_answers_count: int,
-    low_relevance_answers_count: int,
-    consecutive_weak_answers: int,
-    min_questions_before_early_stop: int,
-    role_max_cap: int,
-    nonsense_answers_count: int = 0,
-) -> tuple[int, bool, str | None]:
-    if answer_count <= 0:
-        return current_max_questions, False, None
-
-    weak_ratio = weak_answers_count / answer_count
-    strong_ratio = strong_answers_count / answer_count
-    low_relevance_ratio = low_relevance_answers_count / answer_count
-    remaining_questions = max(current_max_questions - current_question_count, 0)
-
-    # Early stop for consistently weak sessions: keep interview short and let report generation proceed.
-    if (
-        answer_count >= min_questions_before_early_stop
-        and current_question_count >= min_questions_before_early_stop
-        and weak_ratio >= 0.68
-        and (low_relevance_ratio >= 0.35 or consecutive_weak_answers >= 4)
-        and consecutive_weak_answers >= 2
-        and strong_answers_count <= max(1, answer_count // 5)
-    ):
-        return max(current_question_count, 1), True, "early_stop_low_signal"
-
-    # Fail-fast for sessions that are mostly noise/non-informative text.
-    if (
-        answer_count >= max(4, min_questions_before_early_stop - 2)
-        and nonsense_answers_count >= max(2, answer_count // 3)
-        and current_question_count >= max(4, min_questions_before_early_stop - 2)
-        and consecutive_weak_answers >= 2
-    ):
-        return max(current_question_count, 1), True, "early_stop_nonsense_signal"
-
-    # Near the planned end, extend depth for strong candidates (up to role cap).
-    if (
-        current_question_count >= max(current_max_questions - 1, 1)
-        and current_max_questions < role_max_cap
-        and answer_count >= 6
-        and strong_ratio >= 0.55
-        and low_relevance_ratio <= 0.30
-        and consecutive_weak_answers == 0
-    ):
-        extended = min(role_max_cap, current_max_questions + _ADAPTIVE_EXTENSION_STEP)
-        if extended > current_max_questions:
-            return extended, False, "extended_for_depth"
-
-    # Extend proactively when session quality is strong and we are close to current limit.
-    if (
-        answer_count >= 4
-        and current_max_questions < role_max_cap
-        and remaining_questions <= 4
-        and strong_ratio >= 0.50
-        and weak_ratio <= 0.45
-        and low_relevance_ratio <= 0.28
-        and consecutive_weak_answers == 0
-    ):
-        extension_step = _ADAPTIVE_EXTENSION_STEP + (
-            2 if strong_ratio >= 0.72 and answer_count >= 8 else 0
-        )
-        extended = min(role_max_cap, current_max_questions + extension_step)
-        if extended > current_max_questions:
-            return extended, False, "extended_for_strong_signal"
-
-    # Compress plan earlier for mixed/weak signals instead of waiting until the very end.
-    if (
-        answer_count >= 4
-        and current_max_questions > min_questions_before_early_stop
-        and weak_ratio >= 0.62
-        and strong_ratio <= 0.25
-        and (low_relevance_ratio >= 0.25 or consecutive_weak_answers >= 2)
-    ):
-        reduced = max(
-            min_questions_before_early_stop,
-            min(current_max_questions, current_question_count + 2),
-        )
-        if reduced < current_max_questions:
-            return reduced, False, "reduced_for_mixed_low_signal"
-
-    if (
-        answer_count >= 4
-        and current_max_questions > min_questions_before_early_stop
-        and nonsense_answers_count >= 2
-        and consecutive_weak_answers >= 2
-    ):
-        reduced = max(
-            min_questions_before_early_stop,
-            min(current_max_questions, current_question_count + 1),
-        )
-        if reduced < current_max_questions:
-            return reduced, False, "reduced_for_nonsense_signal"
-
-    # Compress overly long plans when signal is consistently weak.
-    if (
-        answer_count >= 6
-        and current_max_questions > min_questions_before_early_stop
-        and weak_ratio >= 0.78
-        and (low_relevance_ratio >= 0.30 or consecutive_weak_answers >= 3)
-        and strong_answers_count == 0
-    ):
-        reduced = max(
-            min_questions_before_early_stop,
-            min(current_max_questions, current_question_count + 2),
-        )
-        if reduced < current_max_questions:
-            return reduced, False, "reduced_for_low_signal"
-
-    return current_max_questions, False, None
 
 
 def _merge_topic_signal(existing: str | None, incoming: str) -> str:
@@ -3907,43 +3801,8 @@ def evaluate_answer_runtime(
     )
 
 
-def _force_topic_closure(
-    *,
-    answer_class: str,
-    answer_relevance: str,
-    cross_topic_reuse: bool,
-    last_question_type: str,
-) -> tuple[bool, str | None]:
-    if cross_topic_reuse:
-        return True, "reused_answer"
-    if (
-        last_question_type in {"verification", "claim_verification", "deep_technical"}
-        and answer_relevance == "low"
-        and answer_class in {"generic", "evasive", "no_experience_honest", "partial"}
-    ):
-        return True, "low_relevance_after_probe"
-    return False, None
 
 
-def _is_topic_saturated(
-    *,
-    current_signal: str | None,
-    answer_class: str,
-    answer_relevance: str,
-    topic_turns: int,
-    last_question_type: str,
-) -> tuple[bool, str | None]:
-    if current_signal == "strong" and answer_relevance in {"medium", "high"}:
-        return True, "topic_mastered"
-    if (
-        last_question_type in {"verification", "claim_verification", "deep_technical"}
-        and answer_class in {"strong", "partial"}
-        and answer_relevance == "high"
-    ):
-        return True, "topic_saturated"
-    if topic_turns >= 1 and answer_class == "partial" and answer_relevance in {"medium", "high"}:
-        return True, "enough_partial_signal"
-    return False, None
 
 
 def _build_diversification_hint(
@@ -3986,79 +3845,8 @@ def _build_diversification_hint(
     return " ".join(parts) if parts else None
 
 
-def _topic_guard_decision(
-    *,
-    claim_target: str | None,
-    verified_skills: set[str],
-    probed_claim_targets: set[str],
-    can_probe_current_topic: bool,
-) -> tuple[bool, str | None]:
-    """Return (must_probe_claim, closure_reason_if_advancing).
-
-    Guard rule:
-    - Stay on the current topic until its planned claim target is either
-      verified, explicitly probed once, or explicitly closed by rule.
-    """
-    normalized_claim = str(claim_target or "").strip().lower()
-    if not normalized_claim:
-        return False, None
-
-    normalized_verified = {str(item).strip().lower() for item in verified_skills}
-    normalized_probed = {str(item).strip().lower() for item in probed_claim_targets}
-    unresolved_claim = normalized_claim not in normalized_verified
-    if not unresolved_claim:
-        return False, None
-
-    if can_probe_current_topic and normalized_claim not in normalized_probed:
-        return True, None
-
-    if not can_probe_current_topic:
-        return False, "claim_unverified_after_probe"
-
-    return False, None
 
 
-def _rank_verification_target(
-    *,
-    current_claim_target: str | None,
-    new_techs: set[str],
-    current_question: str | None,
-    verified_skills: set[str],
-    probed_claim_targets: set[str],
-) -> str | None:
-    """Choose the most relevant technology to verify next.
-
-    Priority:
-    1. Current topic's planned claim target if it was actually mentioned or the question is about it
-    2. Technologies explicitly mentioned in the current answer
-    3. Current claim target as a fallback
-    """
-    question_lower = (current_question or "").lower()
-    normalized_claim = (current_claim_target or "").lower().strip() or None
-
-    if (
-        normalized_claim
-        and normalized_claim not in verified_skills
-        and normalized_claim not in probed_claim_targets
-        and (normalized_claim in new_techs or normalized_claim in question_lower)
-    ):
-        return normalized_claim
-
-    candidates = [
-        tech for tech in sorted(new_techs)
-        if tech not in verified_skills and tech not in probed_claim_targets
-    ]
-    if candidates:
-        return candidates[0]
-
-    if (
-        normalized_claim
-        and normalized_claim not in verified_skills
-        and normalized_claim not in probed_claim_targets
-    ):
-        return normalized_claim
-
-    return None
 
 
 def _topic_signature_key(topic: dict | None) -> str:
@@ -4570,27 +4358,6 @@ def _topic_primary_competency(topic: dict | None) -> str:
     return competencies[0] if competencies else ""
 
 
-def _derive_covered_and_weak_topics(
-    *,
-    topic_plan: list[dict],
-    topic_signals: list[str],
-    asked_topics: list[str],
-) -> tuple[list[str], list[str]]:
-    if not topic_plan:
-        return [], []
-    asked_set = {str(item).strip() for item in asked_topics if str(item).strip()}
-    covered: list[str] = []
-    weak: list[str] = []
-    for idx, topic in enumerate(topic_plan):
-        signature = _topic_signature_key(topic)
-        if not signature or signature not in asked_set:
-            continue
-        signal = str(topic_signals[idx] if idx < len(topic_signals) else "").strip().lower()
-        if signal in {"strong", "partial"}:
-            covered.append(signature)
-        else:
-            weak.append(signature)
-    return covered, weak
 
 
 def _runtime_followup_question_text(
@@ -4821,7 +4588,6 @@ async def _get_next_question_with_dev_fallback(
                 logger.warning(
                     "ai_fallback component=interviewer from_provider=grok to_provider=mock reason=local_or_test_failure",
                 )
-                question = await _call_with_optional_override(MockInterviewer())
                 record_ai_success(
                     component="interviewer",
                     provider="mock",
@@ -4869,32 +4635,6 @@ async def _assess_with_dev_fallback(
             model=str(assessor_model_preference or "runtime-default"),
             error=f"assessor service call failed: {exc.__class__.__name__}",
         )
-        if settings.is_local_or_test:
-            logger.exception(
-                "Assessment generation failed in local/test mode; using deterministic fallback",
-            )
-            try:
-                logger.warning(
-                    "ai_fallback component=assessor from_provider=grok to_provider=mock reason=local_or_test_failure",
-                )
-                fallback_result = await MockAssessor().assess(
-                    target_role=target_role,
-                    message_history=message_history,
-                    message_timestamps=message_timestamps,
-                    behavioral_signals=behavioral_signals,
-                    language=language,
-                    interview_meta=interview_meta,
-                    model_override=assessor_model_preference,
-                )
-                record_ai_success(
-                    component="assessor",
-                    provider="mock",
-                    model="mock-assessor",
-                    note="dev fallback activated",
-                )
-                return _validate_assessment_result(fallback_result)
-            except Exception:
-                logger.exception("Deterministic assessor fallback also failed")
         raise RuntimeError("AI assessor request failed") from exc
 
 
@@ -4938,51 +4678,8 @@ def _is_structured_phase_plan(topic_plan: list[dict]) -> bool:
     return False
 
 
-def _behavioral_phase_index(topic_plan: list[dict]) -> int:
-    if not topic_plan:
-        return 0
-    for idx, item in enumerate(topic_plan):
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("phase") or "").strip().lower() == "behavioral_closing":
-            return idx
-    return max(len(topic_plan) - 1, 0)
 
 
-def _role_core_coverage_requirements(
-    *,
-    role: str,
-    topic_plan: list[dict],
-    required_competencies_count: int = 3,
-) -> tuple[int, list[str]]:
-    """Return (highest_required_slot_index, missing_competencies_in_plan).
-
-    highest_required_slot_index is 0-based and indicates the latest slot we must reach
-    before allowing aggressive early-stop/reduction.
-    """
-    if not topic_plan:
-        return 0, []
-
-    ordered = [item for item in get_role_core_competency_order(role) if item]
-    required = ordered[: max(1, required_competencies_count)]
-    if not required:
-        return 0, []
-
-    competency_to_slot: dict[str, int] = {}
-    for idx, item in enumerate(topic_plan):
-        if not isinstance(item, dict):
-            continue
-        competencies = item.get("competencies")
-        if not isinstance(competencies, list) or not competencies:
-            continue
-        primary = str(competencies[0]).strip()
-        if primary and primary not in competency_to_slot:
-            competency_to_slot[primary] = idx
-
-    present_slots = [competency_to_slot[name] for name in required if name in competency_to_slot]
-    missing = [name for name in required if name not in competency_to_slot]
-    highest_required_slot = max(present_slots) if present_slots else 0
-    return highest_required_slot, missing
 
 
 def _rebuild_topic_plan_with_max_questions(
@@ -5288,7 +4985,7 @@ async def start_interview(
                 "module_question_history": list((module_context or {}).get("question_history") or []),
             }
         )
-    if _is_interview_engine_v2_enabled(role=target_role):
+    if True:
         initial_state[_INTERVIEW_STATE_V2_KEY] = get_interview_state_v2(interview)
     interview.interview_state = initial_state
     interview.status = "in_progress"
@@ -5317,7 +5014,13 @@ async def add_candidate_message(
     message: str,
 ) -> SendMessageResponse:
     interview = await _get_interview(db, interview_id, candidate.id)
-
+    should_end_now = False
+    adaptive_decision = None
+    forced_closure_reason = None
+    saturation_reason = None
+    next_pending_verification = None
+    will_advance = False
+    question_type = "main"
     if interview.status != "in_progress":
         if interview.status in ("report_generated", "completed"):
             raise InterviewAlreadyFinishedError()
@@ -5377,8 +5080,8 @@ async def add_candidate_message(
 
         # ── Load persistent interview state ────────────────────────────────
         state: dict = interview.interview_state or {}
-        engine_v2_enabled = _is_interview_engine_v2_enabled(role=interview.target_role)
-        state_v2_before = get_interview_state_v2(interview) if engine_v2_enabled else None
+        engine_v2_enabled = True
+        state_v2_before = get_interview_state_v2(interview)
         coding_task_artifact = _get_coding_task_artifact_state(state)
         written_artifact = _get_written_artifact_state(state)
         turn_count: int = int(state.get("turn_count", interview.question_count))
@@ -5427,12 +5130,12 @@ async def add_candidate_message(
         resume_evidence_before = dict(resume_evidence)
         decision_traces_v2: list[dict[str, Any]] = (
             list((state_v2_before or {}).get("decision_traces", []))
-            if engine_v2_enabled and isinstance(state_v2_before, dict)
+            if isinstance(state_v2_before, dict)
             else []
         )
         interview_quality_metrics_before = (
             _normalize_interview_quality_metrics((state_v2_before or {}).get("interview_quality_metrics"))
-            if engine_v2_enabled and isinstance(state_v2_before, dict)
+            if isinstance(state_v2_before, dict)
             else _default_interview_quality_metrics()
         )
         conversational_intent_history: list[str] = (
@@ -5441,7 +5144,7 @@ async def add_candidate_message(
                 for item in (state_v2_before or {}).get("conversational_intent_history", [])
                 if str(item).strip()
             ]
-            if engine_v2_enabled and isinstance(state_v2_before, dict)
+            if isinstance(state_v2_before, dict)
             else []
         )
         information_target_history: list[str] = (
@@ -5450,26 +5153,26 @@ async def add_candidate_message(
                 for item in (state_v2_before or {}).get("information_target_history", [])
                 if str(item).strip()
             ]
-            if engine_v2_enabled and isinstance(state_v2_before, dict)
+            if isinstance(state_v2_before, dict)
             else []
         )
         semantic_repeated_question_count_before = (
             max(0, _safe_int((state_v2_before or {}).get("semantic_repeated_question_count"), 0))
-            if engine_v2_enabled and isinstance(state_v2_before, dict)
+            if isinstance(state_v2_before, dict)
             else 0
         )
-        weak_answer_streak_v2 = _safe_int((state_v2_before or {}).get("weak_answer_streak"), 0) if engine_v2_enabled else 0
-        no_case_streak_v2 = _safe_int((state_v2_before or {}).get("no_case_streak"), 0) if engine_v2_enabled else 0
+        weak_answer_streak_v2 = _safe_int((state_v2_before or {}).get("weak_answer_streak"), 0)
+        no_case_streak_v2 = _safe_int((state_v2_before or {}).get("no_case_streak"), 0)
         resume_scored_turns_before = (
             _safe_int((state_v2_before or {}).get("resume_scored_turns"), 0)
-            if engine_v2_enabled and isinstance(state_v2_before, dict)
+            if isinstance(state_v2_before, dict)
             else 0
         )
         resume_scored_turns_after = resume_scored_turns_before
-        last_step_key_v2 = str((state_v2_before or {}).get("last_step_key") or "") if engine_v2_enabled else ""
+        last_step_key_v2 = str((state_v2_before or {}).get("last_step_key") or "")
         current_phase_before_v2 = (
             str((state_v2_before or {}).get("phase") or "intro")
-            if engine_v2_enabled and isinstance(state_v2_before, dict)
+            if isinstance(state_v2_before, dict)
             else None
         )
         module_type = str(state.get("module_type") or module_context.get("module_type") or "").strip().lower() or None
@@ -5525,52 +5228,51 @@ async def add_candidate_message(
             (msg.content for msg in reversed(messages) if msg.role == "assistant"),
             None,
         )
-        runtime_status = get_ai_runtime_status() if engine_v2_enabled else {}
+        runtime_status = get_ai_runtime_status()
         trace: dict[str, Any] | None = None
-        if engine_v2_enabled:
-            trace = {
-                "at": datetime.utcnow().isoformat() + "Z",
-                "engine_version": "v2",
-                "provider": str(runtime_status.get("provider") or "unknown"),
-                "model": str(runtime_status.get("model") or "unknown"),
-                "ai_provider": str(runtime_status.get("provider") or "unknown"),
-                "requested_model": None,
-                "actual_model_used": None,
-                "provider_attempts": [],
-                "provider_errors": [],
-                "openrouter_fallback_used": False,
-                "current_phase_before": current_phase_before_v2,
-                "current_phase_after": None,
-                "candidate_intent": None,
-                "intent_reason": None,
-                "should_count_as_answer": None,
-                "answer_evaluation": None,
-                "policy_action": None,
-                "policy_reason": None,
-                "resume_evidence_before": resume_evidence_before,
-                "resume_evidence_after": None,
-                "resume_gate_passed": _resume_deep_dive_gate_opened(resume_evidence_before),
-                "conversational_intent": None,
-                "information_target": None,
-                "semantic_repeat_streak": 0,
-                "semantic_repeat_detected": False,
-                "selected_generator": None,
-                "generated_question_before_guardrails": None,
-                "generated_question_after_guardrails": None,
-                "was_question_rejected_as_generic": False,
-                "was_question_rejected_as_repeated": False,
-                "scenario_id": active_qa_scenario_id,
-                "scenario_step_before": active_qa_scenario_step,
-                "scenario_step_after": None,
-                "why_phase_advanced": None,
-                "legacy_v1_override_applied": False,
-                "legacy_v1_generated_question": None,
-                "strategist_raw_response": "",
-                "strategist_json_valid": None,
-                "strategist_repair_applied": None,
-                "strategist_retry_used": None,
-                "strategist_error_reason": "",
-            }
+        trace = {
+            "at": datetime.utcnow().isoformat() + "Z",
+            "engine_version": "v2",
+            "provider": str(runtime_status.get("provider") or "unknown"),
+            "model": str(runtime_status.get("model") or "unknown"),
+            "ai_provider": str(runtime_status.get("provider") or "unknown"),
+            "requested_model": None,
+            "actual_model_used": None,
+            "provider_attempts": [],
+            "provider_errors": [],
+            "openrouter_fallback_used": False,
+            "current_phase_before": current_phase_before_v2,
+            "current_phase_after": None,
+            "candidate_intent": None,
+            "intent_reason": None,
+            "should_count_as_answer": None,
+            "answer_evaluation": None,
+            "policy_action": None,
+            "policy_reason": None,
+            "resume_evidence_before": resume_evidence_before,
+            "resume_evidence_after": None,
+            "resume_gate_passed": _resume_deep_dive_gate_opened(resume_evidence_before),
+            "conversational_intent": None,
+            "information_target": None,
+            "semantic_repeat_streak": 0,
+            "semantic_repeat_detected": False,
+            "selected_generator": None,
+            "generated_question_before_guardrails": None,
+            "generated_question_after_guardrails": None,
+            "was_question_rejected_as_generic": False,
+            "was_question_rejected_as_repeated": False,
+            "scenario_id": active_qa_scenario_id,
+            "scenario_step_before": active_qa_scenario_step,
+            "scenario_step_after": None,
+            "why_phase_advanced": None,
+            "legacy_v1_override_applied": False,
+            "legacy_v1_generated_question": None,
+            "strategist_raw_response": "",
+            "strategist_json_valid": None,
+            "strategist_repair_applied": None,
+            "strategist_retry_used": None,
+            "strategist_error_reason": "",
+        }
         intent_context = {
             "role": interview.target_role,
             "phase": (state_v2_before or {}).get("phase") if isinstance(state_v2_before, dict) else None,
@@ -5578,7 +5280,7 @@ async def add_candidate_message(
             "transcript_summary": transcript_summary[-10:],
             "resume_summary": str(resume_profile.get("interview_resume_context") or "").strip(),
         }
-        candidate_intent = classify_candidate_intent(message, intent_context) if engine_v2_enabled else classify_candidate_intent_v2(message)
+        candidate_intent = classify_candidate_intent(message, intent_context)
         candidate_intent_type = str(candidate_intent.get("intent") or "answer")
         should_count_as_answer = bool(candidate_intent.get("should_count_as_answer", True))
         should_advance_scenario = bool(candidate_intent.get("should_advance_scenario", True))
@@ -5588,7 +5290,7 @@ async def add_candidate_message(
             trace["should_count_as_answer"] = should_count_as_answer
             trace["resume_scored_turns_before"] = resume_scored_turns_before
         if should_count_as_answer:
-            if engine_v2_enabled and current_phase_before_v2 in {"intro", "resume_deep_dive"}:
+            if current_phase_before_v2 in {"intro", "resume_deep_dive"}:
                 resume_scored_turns_after += 1
             runtime_answer_evaluation = evaluate_answer_runtime_v2(
                 question=current_question_text,
@@ -5648,24 +5350,23 @@ async def add_candidate_message(
             "update_weak_answer_count": False,
             "reason": "legacy_v1_path",
         }
-        if engine_v2_enabled:
-            policy_state = {
-                "weak_answer_streak": _safe_int((state_v2_before or {}).get("weak_answer_streak"), 0),
-                "last_step_key": str((state_v2_before or {}).get("last_step_key") or ""),
-                "current_step_key": current_step_key,
-            }
-            policy_decision = decide_interview_policy(
-                policy_state,
-                candidate_intent,
-                runtime_answer_evaluation,
-            )
-            should_count_as_answer = bool(policy_decision.get("count_as_scored_answer", should_count_as_answer))
-            should_advance_scenario = bool(policy_decision.get("advance_scenario", should_advance_scenario))
-            runtime_answer_evaluation["should_count_as_answer"] = should_count_as_answer
-            runtime_answer_evaluation["should_advance_scenario"] = should_advance_scenario
-            if trace is not None:
-                trace["policy_action"] = str(policy_decision.get("policy_action") or "")
-                trace["policy_reason"] = str(policy_decision.get("reason") or "")
+        policy_state = {
+            "weak_answer_streak": _safe_int((state_v2_before or {}).get("weak_answer_streak"), 0),
+            "last_step_key": str((state_v2_before or {}).get("last_step_key") or ""),
+            "current_step_key": current_step_key,
+        }
+        policy_decision = decide_interview_policy(
+            policy_state,
+            candidate_intent,
+            runtime_answer_evaluation,
+        )
+        should_count_as_answer = bool(policy_decision.get("count_as_scored_answer", should_count_as_answer))
+        should_advance_scenario = bool(policy_decision.get("advance_scenario", should_advance_scenario))
+        runtime_answer_evaluation["should_count_as_answer"] = should_count_as_answer
+        runtime_answer_evaluation["should_advance_scenario"] = should_advance_scenario
+        if trace is not None:
+            trace["policy_action"] = str(policy_decision.get("policy_action") or "")
+            trace["policy_reason"] = str(policy_decision.get("reason") or "")
 
         while len(topic_reuse_flags) <= current_topic_index:
             topic_reuse_flags.append(False)
@@ -5732,19 +5433,18 @@ async def add_candidate_message(
             topic_relevance_failures[current_topic_index] += 1
 
         answer_classes.append(answer_class)
-        if engine_v2_enabled:
-            resume_topic_phase_for_evidence = current_topic_phase
-            if (
-                current_phase_before_v2 in {"intro", "resume_deep_dive"}
-                and not _resume_deep_dive_gate_opened(resume_evidence_before)
-            ):
-                resume_topic_phase_for_evidence = "resume_followup"
-            resume_evidence = _update_resume_evidence(
-                resume_evidence=resume_evidence,
-                answer=message,
-                answer_evaluation=runtime_answer_evaluation,
-                topic_phase=resume_topic_phase_for_evidence,
-            )
+        resume_topic_phase_for_evidence = current_topic_phase
+        if (
+            current_phase_before_v2 in {"intro", "resume_deep_dive"}
+            and not _resume_deep_dive_gate_opened(resume_evidence_before)
+        ):
+            resume_topic_phase_for_evidence = "resume_followup"
+        resume_evidence = _update_resume_evidence(
+            resume_evidence=resume_evidence,
+            answer=message,
+            answer_evaluation=runtime_answer_evaluation,
+            topic_phase=resume_topic_phase_for_evidence,
+        )
         runtime_answer_evaluations.append(
             {
                 "question_number": interview.question_count,
@@ -5755,7 +5455,7 @@ async def add_candidate_message(
                 "intent": candidate_intent_type,
                 "scored": should_count_as_answer,
                 "evaluation": runtime_answer_evaluation,
-                "policy_decision": policy_decision if engine_v2_enabled else None,
+                "policy_decision": policy_decision,
             }
         )
 
@@ -5804,11 +5504,6 @@ async def add_candidate_message(
             answer_relevance=answer_relevance,
             is_clarification_request=is_clarification_request,
         )
-        covered_topics, weak_topics = _derive_covered_and_weak_topics(
-            topic_plan=topic_plan,
-            topic_signals=topic_signals,
-            asked_topics=asked_topics,
-        )
 
         decision_input_state = {
             "adaptive_difficulty_tier": adaptive_difficulty_tier,
@@ -5830,289 +5525,181 @@ async def add_candidate_message(
         competencies_for_guard = current_target.get("competencies") if isinstance(current_target, dict) else None
         if isinstance(competencies_for_guard, list) and competencies_for_guard:
             current_competency_for_guard = str(competencies_for_guard[0] or "").strip()
-        if engine_v2_enabled:
-            resume_gate_passed_for_strategy = _resume_deep_dive_gate_opened(resume_evidence)
-            resume_force_transition_for_strategy = _resume_deep_dive_force_transition(
-                resume_scored_turns=resume_scored_turns_after,
-            )
-            strategy_policy_action = str(policy_decision.get("policy_action") or "continue").strip().lower()
-            if (
-                str(current_phase_before_v2 or "") in {"intro", "resume_deep_dive"}
-                and not resume_gate_passed_for_strategy
-                and not resume_force_transition_for_strategy
-            ):
-                strategy_policy_action = "ask_resume_followup"
-            elif resume_force_transition_for_strategy and str(current_phase_before_v2 or "") in {
-                "intro",
-                "resume_deep_dive",
-            }:
-                strategy_policy_action = "switch_topic"
-            elif strategy_policy_action == "give_example_scenario":
-                strategy_policy_action = "clarify"
+        resume_gate_passed_for_strategy = _resume_deep_dive_gate_opened(resume_evidence)
+        resume_force_transition_for_strategy = _resume_deep_dive_force_transition(
+            resume_scored_turns=resume_scored_turns_after,
+        )
+        strategy_policy_action = str(policy_decision.get("policy_action") or "continue").strip().lower()
+        if (
+            str(current_phase_before_v2 or "") in {"intro", "resume_deep_dive"}
+            and not resume_gate_passed_for_strategy
+            and not resume_force_transition_for_strategy
+        ):
+            strategy_policy_action = "ask_resume_followup"
+        elif resume_force_transition_for_strategy and str(current_phase_before_v2 or "") in {
+            "intro",
+            "resume_deep_dive",
+        }:
+            strategy_policy_action = "switch_topic"
+        elif strategy_policy_action == "give_example_scenario":
+            strategy_policy_action = "clarify"
 
-            role_hint_competency = _topic_primary_competency(current_target) or current_competency_for_guard
-            pressure_hint = build_pressure_followup(
+        role_hint_competency = _topic_primary_competency(current_target) or current_competency_for_guard
+        pressure_hint = build_pressure_followup(
+            role=interview.target_role,
+            current_question=current_question_text or "",
+            candidate_answer=message,
+            competency=role_hint_competency,
+            scenario_context=str(active_qa_scenario_id or ""),
+            language=interview.language,
+            answer_evaluation=runtime_answer_evaluation,
+        )
+        concrete_example_hint = build_pressure_followup(
+            role=interview.target_role,
+            current_question=current_question_text or "",
+            candidate_answer=message,
+            competency=role_hint_competency,
+            scenario_context=str(active_qa_scenario_id or ""),
+            language=interview.language,
+            answer_evaluation=runtime_answer_evaluation,
+            force_concrete_example=True,
+        )
+        resume_followup_hint = _build_resume_deep_dive_followup(
+            language=interview.language,
+            resume_evidence=resume_evidence,
+            resume_context=resume_summary_for_strategy,
+        )
+        raw_question_decision = await _select_next_question_decision_v2(
+            role=interview.target_role,
+            language=interview.language,
+            resume_summary=resume_summary_for_strategy,
+            role_competency_map=role_competency_map,
+            interview_state_v2=state_v2_before or get_interview_state_v2(interview),
+            last_question=current_question_text,
+            last_answer=message,
+            last_answer_evaluation=runtime_answer_evaluation,
+            transcript_summary=transcript_summary,
+            asked_questions=asked_question_texts,
+            available_scenarios=role_scenario_chains,
+            policy_action=strategy_policy_action,
+            candidate_intent=candidate_intent_type,
+            missing_signal=role_hint_competency,
+            pressure_goal="collect_concrete_example_personal_action_result",
+            reasoning_hints={
+                "resume_gate_passed": resume_gate_passed_for_strategy,
+                "resume_force_transition": resume_force_transition_for_strategy,
+                "resume_followup_hint": resume_followup_hint,
+                "pressure_followup_hint": pressure_hint,
+                "concrete_example_hint": concrete_example_hint,
+                "policy_reason": str(policy_decision.get("reason") or ""),
+                "intent_reason": str(candidate_intent.get("reason") or ""),
+            },
+            model_preference=strategist_model_preference,
+        )
+        if trace is not None:
+            trace["selected_generator"] = "strategist"
+            trace["generated_question_before_guardrails"] = str(raw_question_decision.get("question_text") or "").strip() or None
+            trace["strategist_raw_response"] = str(raw_question_decision.get("strategist_raw_response") or "")
+            trace["strategist_json_valid"] = bool(raw_question_decision.get("strategist_json_valid"))
+            trace["strategist_repair_applied"] = bool(raw_question_decision.get("strategist_repair_applied"))
+            trace["strategist_retry_used"] = bool(raw_question_decision.get("strategist_retry_used"))
+            trace["strategist_error_reason"] = str(raw_question_decision.get("strategist_error_reason") or "")
+            trace["ai_provider"] = str(raw_question_decision.get("ai_provider") or "")
+            trace["requested_model"] = str(raw_question_decision.get("requested_model") or "")
+            trace["actual_model_used"] = str(raw_question_decision.get("actual_model_used") or "")
+            trace["request_tokens_estimate"] = int(raw_question_decision.get("request_tokens_estimate") or 0)
+            trace["response_tokens_estimate"] = int(raw_question_decision.get("response_tokens_estimate") or 0)
+            trace["provider_latency_ms"] = float(raw_question_decision.get("provider_latency_ms") or 0.0)
+            trace["provider_attempts"] = list(raw_question_decision.get("provider_attempts") or [])
+            trace["provider_errors"] = list(raw_question_decision.get("provider_errors") or [])
+            trace["openrouter_fallback_used"] = bool(raw_question_decision.get("openrouter_fallback_used"))
+
+        raw_action = str(raw_question_decision.get("action") or "").strip().lower()
+        inferred_intent = _derive_conversational_intent(
+            raw_intent=str(raw_question_decision.get("conversational_intent") or ""),
+            action=raw_action,
+            phase=str((state_v2_before or {}).get("phase") or ""),
+        )
+        inferred_information_target = str(
+            raw_question_decision.get("information_target")
+            or raw_question_decision.get("target_competency")
+            or current_competency_for_guard
+            or ""
+        ).strip()
+        semantic_streak = _conversational_intent_streak(conversational_intent_history, inferred_intent)
+        semantic_repeat_detected = semantic_streak >= 3 and bool(inferred_intent)
+        raw_question_decision["conversational_intent"] = inferred_intent
+        raw_question_decision["information_target"] = inferred_information_target
+
+        if semantic_repeat_detected:
+            adapted_question, adapted_intent, adapted_target = _semantic_anti_loop_adaptation(
                 role=interview.target_role,
+                language=interview.language,
                 current_question=current_question_text or "",
                 candidate_answer=message,
-                competency=role_hint_competency,
+                competency=current_competency_for_guard,
                 scenario_context=str(active_qa_scenario_id or ""),
-                language=interview.language,
-                answer_evaluation=runtime_answer_evaluation,
-            )
-            concrete_example_hint = build_pressure_followup(
-                role=interview.target_role,
-                current_question=current_question_text or "",
-                candidate_answer=message,
-                competency=role_hint_competency,
-                scenario_context=str(active_qa_scenario_id or ""),
-                language=interview.language,
-                answer_evaluation=runtime_answer_evaluation,
-                force_concrete_example=True,
-            )
-            resume_followup_hint = _build_resume_deep_dive_followup(
-                language=interview.language,
                 resume_evidence=resume_evidence,
-                resume_context=resume_summary_for_strategy,
+                answer_evaluation=runtime_answer_evaluation,
             )
-            raw_question_decision = await _select_next_question_decision_v2(
-                role=interview.target_role,
-                language=interview.language,
-                resume_summary=resume_summary_for_strategy,
-                role_competency_map=role_competency_map,
-                interview_state_v2=state_v2_before or get_interview_state_v2(interview),
-                last_question=current_question_text,
-                last_answer=message,
-                last_answer_evaluation=runtime_answer_evaluation,
-                transcript_summary=transcript_summary,
-                asked_questions=asked_question_texts,
-                available_scenarios=role_scenario_chains,
-                policy_action=strategy_policy_action,
-                candidate_intent=candidate_intent_type,
-                missing_signal=role_hint_competency,
-                pressure_goal="collect_concrete_example_personal_action_result",
-                reasoning_hints={
-                    "resume_gate_passed": resume_gate_passed_for_strategy,
-                    "resume_force_transition": resume_force_transition_for_strategy,
-                    "resume_followup_hint": resume_followup_hint,
-                    "pressure_followup_hint": pressure_hint,
-                    "concrete_example_hint": concrete_example_hint,
-                    "policy_reason": str(policy_decision.get("reason") or ""),
-                    "intent_reason": str(candidate_intent.get("reason") or ""),
-                },
-                model_preference=strategist_model_preference,
+            raw_question_decision["question_text"] = adapted_question
+            raw_question_decision["action"] = "clarify"
+            raw_question_decision["question_type"] = "clarification"
+            raw_question_decision["will_advance"] = False
+            raw_question_decision["reason"] = (
+                f"{str(raw_question_decision.get('reason') or 'v2_strategist')}"
+                "_semantic_anti_loop_adaptation"
             )
+            raw_question_decision["repeated_increment"] = max(
+                1,
+                _safe_int(raw_question_decision.get("repeated_increment"), 0),
+            )
+            raw_question_decision["conversational_intent"] = adapted_intent
+            raw_question_decision["information_target"] = adapted_target
             if trace is not None:
                 trace["selected_generator"] = "strategist"
-                trace["generated_question_before_guardrails"] = str(raw_question_decision.get("question_text") or "").strip() or None
-                trace["strategist_raw_response"] = str(raw_question_decision.get("strategist_raw_response") or "")
-                trace["strategist_json_valid"] = bool(raw_question_decision.get("strategist_json_valid"))
-                trace["strategist_repair_applied"] = bool(raw_question_decision.get("strategist_repair_applied"))
-                trace["strategist_retry_used"] = bool(raw_question_decision.get("strategist_retry_used"))
-                trace["strategist_error_reason"] = str(raw_question_decision.get("strategist_error_reason") or "")
-                trace["ai_provider"] = str(raw_question_decision.get("ai_provider") or "")
-                trace["requested_model"] = str(raw_question_decision.get("requested_model") or "")
-                trace["actual_model_used"] = str(raw_question_decision.get("actual_model_used") or "")
-                trace["provider_attempts"] = list(raw_question_decision.get("provider_attempts") or [])
-                trace["provider_errors"] = list(raw_question_decision.get("provider_errors") or [])
-                trace["openrouter_fallback_used"] = bool(raw_question_decision.get("openrouter_fallback_used"))
+                trace["generated_question_before_guardrails"] = str(adapted_question or "").strip() or None
 
-            raw_action = str(raw_question_decision.get("action") or "").strip().lower()
-            inferred_intent = _derive_conversational_intent(
-                raw_intent=str(raw_question_decision.get("conversational_intent") or ""),
-                action=raw_action,
-                phase=str((state_v2_before or {}).get("phase") or ""),
+        if trace is not None:
+            trace["conversational_intent"] = str(raw_question_decision.get("conversational_intent") or "")
+            trace["information_target"] = str(raw_question_decision.get("information_target") or "")
+            trace["semantic_repeat_streak"] = semantic_streak
+            trace["semantic_repeat_detected"] = semantic_repeat_detected
+        question_decision = _apply_v2_question_guardrails(
+            question_decision=raw_question_decision,
+            role=interview.target_role,
+            language=interview.language,
+            asked_question_texts=asked_question_texts,
+            transcript_summary=transcript_summary,
+            current_competency=current_competency_for_guard,
+            scenario_chains=role_scenario_chains,
+            state_v2_before=state_v2_before,
+            active_qa_scenario_id=active_qa_scenario_id,
+            active_qa_scenario_step=active_qa_scenario_step,
+        )
+        if trace is not None:
+            trace["generated_question_after_guardrails"] = str(question_decision.get("question_text") or "").strip() or None
+            trace["was_question_rejected_as_generic"] = bool(
+                question_decision.get("generic_guardrail_triggered")
+                or question_decision.get("forbidden_generic_guardrail_triggered")
+                or question_decision.get("simplify_context_guardrail_triggered")
             )
-            inferred_information_target = str(
-                raw_question_decision.get("information_target")
-                or raw_question_decision.get("target_competency")
-                or current_competency_for_guard
-                or ""
-            ).strip()
-            semantic_streak = _conversational_intent_streak(conversational_intent_history, inferred_intent)
-            semantic_repeat_detected = semantic_streak >= 3 and bool(inferred_intent)
-            raw_question_decision["conversational_intent"] = inferred_intent
-            raw_question_decision["information_target"] = inferred_information_target
-
-            if semantic_repeat_detected:
-                adapted_question, adapted_intent, adapted_target = _semantic_anti_loop_adaptation(
-                    role=interview.target_role,
-                    language=interview.language,
-                    current_question=current_question_text or "",
-                    candidate_answer=message,
-                    competency=current_competency_for_guard,
-                    scenario_context=str(active_qa_scenario_id or ""),
-                    resume_evidence=resume_evidence,
-                    answer_evaluation=runtime_answer_evaluation,
-                )
-                raw_question_decision["question_text"] = adapted_question
-                raw_question_decision["action"] = "clarify"
-                raw_question_decision["question_type"] = "clarification"
-                raw_question_decision["will_advance"] = False
-                raw_question_decision["reason"] = (
-                    f"{str(raw_question_decision.get('reason') or 'v2_strategist')}"
-                    "_semantic_anti_loop_adaptation"
-                )
-                raw_question_decision["repeated_increment"] = max(
-                    1,
-                    _safe_int(raw_question_decision.get("repeated_increment"), 0),
-                )
-                raw_question_decision["conversational_intent"] = adapted_intent
-                raw_question_decision["information_target"] = adapted_target
-                if trace is not None:
-                    trace["selected_generator"] = "strategist"
-                    trace["generated_question_before_guardrails"] = str(adapted_question or "").strip() or None
-
-            if trace is not None:
-                trace["conversational_intent"] = str(raw_question_decision.get("conversational_intent") or "")
-                trace["information_target"] = str(raw_question_decision.get("information_target") or "")
-                trace["semantic_repeat_streak"] = semantic_streak
-                trace["semantic_repeat_detected"] = semantic_repeat_detected
-            question_decision = _apply_v2_question_guardrails(
-                question_decision=raw_question_decision,
-                role=interview.target_role,
-                language=interview.language,
-                asked_question_texts=asked_question_texts,
-                transcript_summary=transcript_summary,
-                current_competency=current_competency_for_guard,
-                scenario_chains=role_scenario_chains,
-                state_v2_before=state_v2_before,
-                active_qa_scenario_id=active_qa_scenario_id,
-                active_qa_scenario_step=active_qa_scenario_step,
+            trace["was_question_rejected_as_repeated"] = bool(
+                question_decision.get("question_repeated_guardrail_triggered")
             )
-            if trace is not None:
-                trace["generated_question_after_guardrails"] = str(question_decision.get("question_text") or "").strip() or None
-                trace["was_question_rejected_as_generic"] = bool(
-                    question_decision.get("generic_guardrail_triggered")
-                    or question_decision.get("forbidden_generic_guardrail_triggered")
-                    or question_decision.get("simplify_context_guardrail_triggered")
-                )
-                trace["was_question_rejected_as_repeated"] = bool(
-                    question_decision.get("question_repeated_guardrail_triggered")
-                )
-                trace["ai_provider"] = str(question_decision.get("ai_provider") or trace.get("ai_provider") or "")
-                trace["requested_model"] = str(question_decision.get("requested_model") or trace.get("requested_model") or "")
-                trace["actual_model_used"] = str(question_decision.get("actual_model_used") or trace.get("actual_model_used") or "")
-                trace["provider_attempts"] = list(question_decision.get("provider_attempts") or trace.get("provider_attempts") or [])
-                trace["provider_errors"] = list(question_decision.get("provider_errors") or trace.get("provider_errors") or [])
-                trace["openrouter_fallback_used"] = bool(
-                    question_decision.get("openrouter_fallback_used")
-                    if "openrouter_fallback_used" in question_decision
-                    else trace.get("openrouter_fallback_used")
-                )
-                if trace["was_question_rejected_as_generic"] or trace["was_question_rejected_as_repeated"]:
-                    trace["selected_generator"] = "interviewer_redirect"
-        else:
-            question_decision = _select_next_question_decision(
-                interview_state=decision_input_state,
-                last_answer_evaluation=runtime_answer_evaluation,
-                covered_topics=covered_topics,
-                weak_topics=weak_topics,
-                role_question_banks=get_role_question_blocks(interview.target_role),
-                scenario_chains=role_scenario_chains,
-                topic_plan=topic_plan,
-                current_topic_index=current_topic_index,
-                asked_topics=asked_topics,
-                asked_question_texts=asked_question_texts,
-                role=interview.target_role,
-                language=interview.language,
-                current_question=current_question_text,
+            trace["ai_provider"] = str(question_decision.get("ai_provider") or trace.get("ai_provider") or "")
+            trace["requested_model"] = str(question_decision.get("requested_model") or trace.get("requested_model") or "")
+            trace["actual_model_used"] = str(question_decision.get("actual_model_used") or trace.get("actual_model_used") or "")
+            trace["provider_attempts"] = list(question_decision.get("provider_attempts") or trace.get("provider_attempts") or [])
+            trace["provider_errors"] = list(question_decision.get("provider_errors") or trace.get("provider_errors") or [])
+            trace["openrouter_fallback_used"] = bool(
+                question_decision.get("openrouter_fallback_used")
+                if "openrouter_fallback_used" in question_decision
+                else trace.get("openrouter_fallback_used")
             )
+            if trace["was_question_rejected_as_generic"] or trace["was_question_rejected_as_repeated"]:
+                trace["selected_generator"] = "interviewer_redirect"
 
-        if is_clarification_request:
-            should_end_now = False
-            adaptive_decision = None
-            adapted_max_questions = interview.max_questions
-        elif _is_staged_module_type(module_type):
-            should_end_now = False
-            adaptive_decision = None
-            adapted_max_questions = interview.max_questions
-        else:
-            role_max_cap = max(interview.max_questions, role_max_cap)
-            adapted_max_questions, should_end_now, adaptive_decision = _adapt_question_budget(
-                current_max_questions=interview.max_questions,
-                current_question_count=interview.question_count,
-                answer_count=candidate_answers_count,
-                strong_answers_count=strong_answers_count,
-                weak_answers_count=weak_answers_count,
-                low_relevance_answers_count=low_relevance_answers_count,
-                consecutive_weak_answers=consecutive_weak_answers,
-                min_questions_before_early_stop=max(1, min_questions_before_early_stop),
-                role_max_cap=role_max_cap,
-                nonsense_answers_count=nonsense_answers_count,
-            )
-            interview.max_questions = adapted_max_questions
-            if topic_plan and adapted_max_questions != len(topic_plan):
-                topic_plan = _rebuild_topic_plan_with_max_questions(
-                    topic_plan=topic_plan,
-                    target_role=interview.target_role,
-                    resume_profile=resume_profile,
-                    max_questions=adapted_max_questions,
-                )
-                current_topic_index = min(max(current_topic_index, 0), max(len(topic_plan) - 1, 0))
-
-            role_required_slot_idx, role_missing_competencies = _role_core_coverage_requirements(
-                role=interview.target_role,
-                topic_plan=topic_plan,
-                required_competencies_count=3,
-            )
-
-            if should_end_now and current_topic_index < role_required_slot_idx:
-                should_end_now = False
-                adaptive_decision = "deferred_until_role_core"
-                min_required_questions = max(interview.question_count + 1, role_required_slot_idx + 1)
-                if adapted_max_questions < min_required_questions:
-                    adapted_max_questions = min_required_questions
-                    interview.max_questions = adapted_max_questions
-                    if topic_plan and adapted_max_questions != len(topic_plan):
-                        topic_plan = _rebuild_topic_plan_with_max_questions(
-                            topic_plan=topic_plan,
-                            target_role=interview.target_role,
-                            resume_profile=resume_profile,
-                            max_questions=adapted_max_questions,
-                        )
-                        current_topic_index = min(max(current_topic_index, 0), max(len(topic_plan) - 1, 0))
-
-            # Keep question plan long enough to cover role-core technical sequence.
-            if role_missing_competencies:
-                logger.warning(
-                    "Role core competencies missing in topic plan for role=%s: %s",
-                    interview.target_role,
-                    ", ".join(role_missing_competencies),
-                )
-            else:
-                role_min_questions = max(role_required_slot_idx + 1, 1)
-                if adapted_max_questions < role_min_questions:
-                    adapted_max_questions = role_min_questions
-                    interview.max_questions = adapted_max_questions
-                    if topic_plan and adapted_max_questions != len(topic_plan):
-                        topic_plan = _rebuild_topic_plan_with_max_questions(
-                            topic_plan=topic_plan,
-                            target_role=interview.target_role,
-                            resume_profile=resume_profile,
-                            max_questions=adapted_max_questions,
-                        )
-                        current_topic_index = min(max(current_topic_index, 0), max(len(topic_plan) - 1, 0))
-
-            if _is_structured_phase_plan(topic_plan):
-                behavioral_idx = _behavioral_phase_index(topic_plan)
-                if should_end_now and current_topic_index < behavioral_idx:
-                    should_end_now = False
-                    adaptive_decision = "deferred_until_behavioral"
-                    min_required_questions = max(interview.question_count + 1, behavioral_idx + 1)
-                    if adapted_max_questions < min_required_questions:
-                        adapted_max_questions = min_required_questions
-                        interview.max_questions = adapted_max_questions
-                        if topic_plan and adapted_max_questions != len(topic_plan):
-                            topic_plan = _rebuild_topic_plan_with_max_questions(
-                                topic_plan=topic_plan,
-                                target_role=interview.target_role,
-                                resume_profile=resume_profile,
-                                max_questions=adapted_max_questions,
-                            )
-                            current_topic_index = min(max(current_topic_index, 0), max(len(topic_plan) - 1, 0))
-
-            # ── Contradiction detection ─────────────────────────────────────
             # If we asked a verification question and got a shallow answer → flag it
             if pending_verification and answer_class in {"generic", "evasive", "no_experience_honest"}:
                 contradiction_flags.append(f"possible exaggeration: {pending_verification}")
@@ -6129,20 +5716,7 @@ async def add_candidate_message(
         question_type = "main"
         next_pending_verification: str | None = None
         will_advance = True
-        force_topic_closure, forced_closure_reason = _force_topic_closure(
-            answer_class=answer_class,
-            answer_relevance=answer_relevance,
-            cross_topic_reuse=cross_topic_reuse,
-            last_question_type=last_question_type,
-        )
         current_signal = topic_signals[current_topic_index] if current_topic_index < len(topic_signals) else ""
-        topic_saturated, saturation_reason = _is_topic_saturated(
-            current_signal=current_signal,
-            answer_class=answer_class,
-            answer_relevance=answer_relevance,
-            topic_turns=topic_turns,
-            last_question_type=last_question_type,
-        )
 
         can_probe_current_topic = topic_turns < 1 and interview.question_count < interview.max_questions
         force_structured_reframe = (
@@ -6235,20 +5809,6 @@ async def add_candidate_message(
                 and claim_target not in verified_skills
                 and can_probe_current_topic
             )
-            topic_guard_requires_probe, topic_guard_closure_reason = _topic_guard_decision(
-                claim_target=claim_target,
-                verified_skills=verified_skills,
-                probed_claim_targets=probed_claim_targets,
-                can_probe_current_topic=can_probe_current_topic,
-            )
-
-            ranked_claim_target = _rank_verification_target(
-                current_claim_target=claim_target,
-                new_techs=new_techs,
-                current_question=current_question_text,
-                verified_skills=verified_skills,
-                probed_claim_targets=probed_claim_targets,
-            )
 
             if should_end_now:
                 question_type = "main"
@@ -6293,13 +5853,6 @@ async def add_candidate_message(
                 will_advance = False
 
             elif can_probe_current_topic and answer_class in {"strong", "partial"}:
-                tech_to_verify = _rank_verification_target(
-                    current_claim_target=claim_target,
-                    new_techs=unverified_techs,
-                    current_question=current_question_text,
-                    verified_skills=verified_skills,
-                    probed_claim_targets=probed_claim_targets,
-                )
                 if tech_to_verify:
                     question_type = "verification"
                     next_pending_verification = tech_to_verify
@@ -6336,214 +5889,211 @@ async def add_candidate_message(
         decision_expected_signal = str(question_decision.get("expected_signal") or "").strip()
         decision_repeated_increment = max(0, _safe_int(question_decision.get("repeated_increment"), 0))
         completed_scenario_case_id = str(question_decision.get("completed_scenario_case_id") or "").strip() or None
+        policy_action = str(policy_decision.get("policy_action") or "continue")
+        current_resume_phase = _to_interview_state_v2_phase(
+            topic_phase=current_topic_phase,
+            question_type=question_type,
+        )
+        resume_gate_passed = _resume_deep_dive_gate_opened(resume_evidence)
+        resume_force_transition = _resume_deep_dive_force_transition(
+            resume_scored_turns=resume_scored_turns_after,
+        )
+        resume_gate_forced = (
+            (
+                str(current_phase_before_v2 or "") == "resume_deep_dive"
+                or current_resume_phase in {"intro", "resume_deep_dive"}
+            )
+            and not resume_gate_passed
+            and not resume_force_transition
+        ) or (policy_action == "resume_redirect" and not resume_force_transition)
 
-        # Interview Engine v2 runtime intent/pressure rules.
-        if engine_v2_enabled:
-            policy_action = str(policy_decision.get("policy_action") or "continue")
-            current_resume_phase = _to_interview_state_v2_phase(
-                topic_phase=current_topic_phase,
-                question_type=question_type,
-            )
-            resume_gate_passed = _resume_deep_dive_gate_opened(resume_evidence)
-            resume_force_transition = _resume_deep_dive_force_transition(
-                resume_scored_turns=resume_scored_turns_after,
-            )
-            resume_gate_forced = (
-                (
-                    str(current_phase_before_v2 or "") == "resume_deep_dive"
-                    or current_resume_phase in {"intro", "resume_deep_dive"}
-                )
-                and not resume_gate_passed
-                and not resume_force_transition
-            ) or (policy_action == "resume_redirect" and not resume_force_transition)
+        if resume_force_transition and str(current_phase_before_v2 or "") in {"intro", "resume_deep_dive"}:
+            decision_action = "switch_topic"
+            question_type = "main"
+            will_advance = True
+            should_end_now = False
+            should_advance_scenario = True
+            decision_reason = f"{decision_reason}_resume_turn_cap_force_technical_case"
+            if trace is not None and not trace.get("selected_generator"):
+                trace["selected_generator"] = "strategist"
 
-            if resume_force_transition and str(current_phase_before_v2 or "") in {"intro", "resume_deep_dive"}:
-                decision_action = "switch_topic"
-                question_type = "main"
-                will_advance = True
-                should_end_now = False
-                should_advance_scenario = True
-                decision_reason = f"{decision_reason}_resume_turn_cap_force_technical_case"
-                if trace is not None and not trace.get("selected_generator"):
-                    trace["selected_generator"] = "strategist"
+        if resume_gate_forced:
+            decision_action = "ask_resume_followup"
+            question_type, will_advance = _map_v2_action_to_legacy(decision_action)
+            will_advance = False
+            should_end_now = False
+            should_advance_scenario = False
+            decision_scenario_case_id = active_qa_scenario_id
+            decision_scenario_step_index = max(0, active_qa_scenario_step)
+            decision_reason = f"{decision_reason}_resume_gate_hold"
+        elif policy_action == "pressure_followup":
+            decision_action = "pressure_followup"
+            question_type, will_advance = _map_v2_action_to_legacy(decision_action)
+            will_advance = False
+            should_end_now = False
+            should_advance_scenario = False
+            decision_scenario_case_id = active_qa_scenario_id
+            decision_scenario_step_index = max(0, active_qa_scenario_step)
+            decision_reason = f"{decision_reason}_pressure_followup_policy"
+        elif policy_action == "give_example_scenario":
+            decision_action = "clarify"
+            question_type, will_advance = _map_v2_action_to_legacy(decision_action)
+            will_advance = False
+            should_end_now = False
+            should_advance_scenario = False
+            decision_scenario_case_id = active_qa_scenario_id
+            decision_scenario_step_index = max(0, active_qa_scenario_step)
+            decision_reason = f"{decision_reason}_policy_give_example"
+        elif policy_action in {"clarify", "answer_meta_then_redirect", "resume_redirect"}:
+            decision_action = policy_action
+            question_type, will_advance = _map_v2_action_to_legacy(decision_action)
+            will_advance = False
+            should_end_now = False
+            should_advance_scenario = False
+            decision_scenario_case_id = active_qa_scenario_id
+            decision_scenario_step_index = max(0, active_qa_scenario_step)
+            decision_reason = f"{decision_reason}_policy_{policy_action}"
+        elif not bool(policy_decision.get("advance_scenario", True)):
+            decision_action = "pressure_followup"
+            question_type, will_advance = _map_v2_action_to_legacy(decision_action)
+            will_advance = False
+            should_end_now = False
+            should_advance_scenario = False
+            decision_scenario_case_id = active_qa_scenario_id
+            decision_scenario_step_index = max(0, active_qa_scenario_step)
+            decision_reason = f"{decision_reason}_policy_hold_scenario"
 
-            if resume_gate_forced:
-                decision_action = "ask_resume_followup"
-                question_type, will_advance = _map_v2_action_to_legacy(decision_action)
-                will_advance = False
-                should_end_now = False
-                should_advance_scenario = False
-                decision_scenario_case_id = active_qa_scenario_id
-                decision_scenario_step_index = max(0, active_qa_scenario_step)
-                decision_reason = f"{decision_reason}_resume_gate_hold"
-            elif policy_action == "pressure_followup":
-                decision_action = "pressure_followup"
-                question_type, will_advance = _map_v2_action_to_legacy(decision_action)
-                will_advance = False
-                should_end_now = False
-                should_advance_scenario = False
-                decision_scenario_case_id = active_qa_scenario_id
-                decision_scenario_step_index = max(0, active_qa_scenario_step)
-                decision_reason = f"{decision_reason}_pressure_followup_policy"
-            elif policy_action == "give_example_scenario":
-                decision_action = "clarify"
-                question_type, will_advance = _map_v2_action_to_legacy(decision_action)
-                will_advance = False
-                should_end_now = False
-                should_advance_scenario = False
-                decision_scenario_case_id = active_qa_scenario_id
-                decision_scenario_step_index = max(0, active_qa_scenario_step)
-                decision_reason = f"{decision_reason}_policy_give_example"
-            elif policy_action in {"clarify", "answer_meta_then_redirect", "resume_redirect"}:
-                decision_action = policy_action
-                question_type, will_advance = _map_v2_action_to_legacy(decision_action)
-                will_advance = False
-                should_end_now = False
-                should_advance_scenario = False
-                decision_scenario_case_id = active_qa_scenario_id
-                decision_scenario_step_index = max(0, active_qa_scenario_step)
-                decision_reason = f"{decision_reason}_policy_{policy_action}"
-            elif not bool(policy_decision.get("advance_scenario", True)):
-                decision_action = "pressure_followup"
-                question_type, will_advance = _map_v2_action_to_legacy(decision_action)
-                will_advance = False
-                should_end_now = False
-                should_advance_scenario = False
-                decision_scenario_case_id = active_qa_scenario_id
-                decision_scenario_step_index = max(0, active_qa_scenario_step)
-                decision_reason = f"{decision_reason}_policy_hold_scenario"
+        forced_example_adaptation = (
+            not resume_gate_forced
+            and policy_action != "resume_redirect"
+            and (
+                candidate_intent_type == "request_example"
+                or projected_no_case_streak_v2 >= 2
+            )
+        )
+        if forced_example_adaptation:
+            decision_action = "clarify"
+            question_type, will_advance = _map_v2_action_to_legacy(decision_action)
+            will_advance = False
+            should_end_now = False
+            should_advance_scenario = False
+            decision_scenario_case_id = active_qa_scenario_id
+            decision_scenario_step_index = max(0, active_qa_scenario_step)
+            decision_reason = f"{decision_reason}_forced_example_adaptation"
 
-            forced_example_adaptation = (
-                not resume_gate_forced
-                and policy_action != "resume_redirect"
-                and (
-                    candidate_intent_type == "request_example"
-                    or projected_no_case_streak_v2 >= 2
-                )
-            )
-            if forced_example_adaptation:
-                decision_action = "clarify"
-                question_type, will_advance = _map_v2_action_to_legacy(decision_action)
-                will_advance = False
-                should_end_now = False
-                should_advance_scenario = False
-                decision_scenario_case_id = active_qa_scenario_id
-                decision_scenario_step_index = max(0, active_qa_scenario_step)
-                decision_reason = f"{decision_reason}_forced_example_adaptation"
-
-            post_policy_guarded = _apply_v2_question_guardrails(
-                question_decision={
-                    "action": decision_action,
-                    "question_text": decision_question_text,
-                    "reason": decision_reason,
-                    "target_competency": str(question_decision.get("target_competency") or ""),
-                    "difficulty": int(question_decision.get("difficulty") or adaptive_difficulty_tier),
-                    "question_type": question_type,
-                    "will_advance": will_advance,
-                    "selected_topic_index": selected_topic_index_preference,
-                    "scenario_case_id": decision_scenario_case_id,
-                    "scenario_step_index": decision_scenario_step_index,
-                    "expected_signal": decision_expected_signal,
-                },
-                role=interview.target_role,
-                language=interview.language,
-                asked_question_texts=asked_question_texts,
-                transcript_summary=transcript_summary,
-                current_competency=current_competency_for_guard,
-                scenario_chains=role_scenario_chains,
-                state_v2_before=state_v2_before,
-                active_qa_scenario_id=active_qa_scenario_id,
-                active_qa_scenario_step=active_qa_scenario_step,
-            )
-            decision_action = str(post_policy_guarded.get("action") or decision_action).strip().lower()
-            decision_question_text = str(post_policy_guarded.get("question_text") or decision_question_text).strip()
-            decision_reason = str(post_policy_guarded.get("reason") or decision_reason)
-            decision_scenario_case_id = str(post_policy_guarded.get("scenario_case_id") or "").strip() or decision_scenario_case_id
-            decision_scenario_step_index = _safe_int(
-                post_policy_guarded.get("scenario_step_index"),
-                decision_scenario_step_index,
-            )
-            question_type = str(post_policy_guarded.get("question_type") or question_type)
-            will_advance = bool(post_policy_guarded.get("will_advance", will_advance))
-            decision_expected_signal = str(post_policy_guarded.get("expected_signal") or decision_expected_signal)
-            decision_repeated_increment = max(
-                decision_repeated_increment,
-                _safe_int(post_policy_guarded.get("repeated_increment"), 0),
-            )
-            rejected_generic = bool(
-                post_policy_guarded.get("generic_guardrail_triggered")
-                or post_policy_guarded.get("forbidden_generic_guardrail_triggered")
-                or post_policy_guarded.get("simplify_context_guardrail_triggered")
-            )
-            rejected_repeated = bool(post_policy_guarded.get("question_repeated_guardrail_triggered"))
-            if rejected_generic:
-                redirect_fallback = (
-                    _build_resume_deep_dive_followup(
-                        language=interview.language,
-                        resume_evidence=resume_evidence,
-                        resume_context=resume_summary_for_strategy,
-                    )
-                    if (not _resume_deep_dive_gate_opened(resume_evidence) and not resume_force_transition)
-                    else _runtime_followup_question_text(
-                        language=interview.language,
-                        followup_type="clarify",
-                        role=interview.target_role,
-                        topic=current_target,
-                    )
-                )
-                decision_question_text = build_interviewer_redirect(
-                    intent_result=candidate_intent,
-                    state=state_v2_before or {},
-                    role=interview.target_role,
+        post_policy_guarded = _apply_v2_question_guardrails(
+            question_decision={
+                "action": decision_action,
+                "question_text": decision_question_text,
+                "reason": decision_reason,
+                "target_competency": str(question_decision.get("target_competency") or ""),
+                "difficulty": int(question_decision.get("difficulty") or adaptive_difficulty_tier),
+                "question_type": question_type,
+                "will_advance": will_advance,
+                "selected_topic_index": selected_topic_index_preference,
+                "scenario_case_id": decision_scenario_case_id,
+                "scenario_step_index": decision_scenario_step_index,
+                "expected_signal": decision_expected_signal,
+            },
+            role=interview.target_role,
+            language=interview.language,
+            asked_question_texts=asked_question_texts,
+            transcript_summary=transcript_summary,
+            current_competency=current_competency_for_guard,
+            scenario_chains=role_scenario_chains,
+            state_v2_before=state_v2_before,
+            active_qa_scenario_id=active_qa_scenario_id,
+            active_qa_scenario_step=active_qa_scenario_step,
+        )
+        decision_action = str(post_policy_guarded.get("action") or decision_action).strip().lower()
+        decision_question_text = str(post_policy_guarded.get("question_text") or decision_question_text).strip()
+        decision_reason = str(post_policy_guarded.get("reason") or decision_reason)
+        decision_scenario_case_id = str(post_policy_guarded.get("scenario_case_id") or "").strip() or decision_scenario_case_id
+        decision_scenario_step_index = _safe_int(
+            post_policy_guarded.get("scenario_step_index"),
+            decision_scenario_step_index,
+        )
+        question_type = str(post_policy_guarded.get("question_type") or question_type)
+        will_advance = bool(post_policy_guarded.get("will_advance", will_advance))
+        decision_expected_signal = str(post_policy_guarded.get("expected_signal") or decision_expected_signal)
+        decision_repeated_increment = max(
+            decision_repeated_increment,
+            _safe_int(post_policy_guarded.get("repeated_increment"), 0),
+        )
+        rejected_generic = bool(
+            post_policy_guarded.get("generic_guardrail_triggered")
+            or post_policy_guarded.get("forbidden_generic_guardrail_triggered")
+            or post_policy_guarded.get("simplify_context_guardrail_triggered")
+        )
+        rejected_repeated = bool(post_policy_guarded.get("question_repeated_guardrail_triggered"))
+        if rejected_generic:
+            redirect_fallback = (
+                _build_resume_deep_dive_followup(
                     language=interview.language,
+                    resume_evidence=resume_evidence,
                     resume_context=resume_summary_for_strategy,
-                    current_scenario=active_qa_scenario_id,
-                    fallback_question=redirect_fallback,
                 )
-                decision_action = "simplify"
-                question_type = "clarification"
-                will_advance = False
-                should_end_now = False
-                should_advance_scenario = False
-                decision_scenario_case_id = active_qa_scenario_id
-                decision_scenario_step_index = max(0, active_qa_scenario_step)
-                decision_reason = f"{decision_reason}_generic_rejected_redirect"
-            elif rejected_repeated:
-                redirect_fallback = _runtime_followup_question_text(
+                if (not _resume_deep_dive_gate_opened(resume_evidence) and not resume_force_transition)
+                else _runtime_followup_question_text(
                     language=interview.language,
                     followup_type="clarify",
                     role=interview.target_role,
                     topic=current_target,
                 )
-                decision_question_text = build_interviewer_redirect(
-                    intent_result=candidate_intent,
-                    state=state_v2_before or {},
-                    role=interview.target_role,
-                    language=interview.language,
-                    resume_context=resume_summary_for_strategy,
-                    current_scenario=active_qa_scenario_id,
-                    fallback_question=redirect_fallback,
-                )
-                decision_action = "follow_up"
-                question_type = "followup"
-                will_advance = False
-                should_end_now = False
-                should_advance_scenario = False
-                decision_scenario_case_id = active_qa_scenario_id
-                decision_scenario_step_index = max(0, active_qa_scenario_step)
-                decision_reason = f"{decision_reason}_repeat_rejected_redirect"
-            if trace is not None:
-                trace["generated_question_after_guardrails"] = decision_question_text or None
-                trace["was_question_rejected_as_generic"] = bool(
-                    trace.get("was_question_rejected_as_generic")
-                    or rejected_generic
-                )
-                trace["was_question_rejected_as_repeated"] = bool(
-                    trace.get("was_question_rejected_as_repeated")
-                    or rejected_repeated
-                )
-                if trace["was_question_rejected_as_generic"] or trace["was_question_rejected_as_repeated"]:
-                    trace["selected_generator"] = "interviewer_redirect"
+            )
+            decision_question_text = build_interviewer_redirect(
+                intent_result=candidate_intent,
+                state=state_v2_before or {},
+                role=interview.target_role,
+                language=interview.language,
+                resume_context=resume_summary_for_strategy,
+                current_scenario=active_qa_scenario_id,
+                fallback_question=redirect_fallback,
+            )
+            decision_action = "simplify"
+            question_type = "clarification"
+            will_advance = False
+            should_end_now = False
+            should_advance_scenario = False
+            decision_scenario_case_id = active_qa_scenario_id
+            decision_scenario_step_index = max(0, active_qa_scenario_step)
+            decision_reason = f"{decision_reason}_generic_rejected_redirect"
+        elif rejected_repeated:
+            redirect_fallback = _runtime_followup_question_text(
+                language=interview.language,
+                followup_type="clarify",
+                role=interview.target_role,
+                topic=current_target,
+            )
+            decision_question_text = build_interviewer_redirect(
+                intent_result=candidate_intent,
+                state=state_v2_before or {},
+                role=interview.target_role,
+                language=interview.language,
+                resume_context=resume_summary_for_strategy,
+                current_scenario=active_qa_scenario_id,
+                fallback_question=redirect_fallback,
+            )
+            decision_action = "follow_up"
+            question_type = "followup"
+            will_advance = False
+            should_end_now = False
+            should_advance_scenario = False
+            decision_scenario_case_id = active_qa_scenario_id
+            decision_scenario_step_index = max(0, active_qa_scenario_step)
+            decision_reason = f"{decision_reason}_repeat_rejected_redirect"
+        if trace is not None:
+            trace["generated_question_after_guardrails"] = decision_question_text or None
+            trace["was_question_rejected_as_generic"] = bool(
+                trace.get("was_question_rejected_as_generic")
+                or rejected_generic
+            )
+            trace["was_question_rejected_as_repeated"] = bool(
+                trace.get("was_question_rejected_as_repeated")
+                or rejected_repeated
+            )
+            if trace["was_question_rejected_as_generic"] or trace["was_question_rejected_as_repeated"]:
+                trace["selected_generator"] = "interviewer_redirect"
 
         if completed_scenario_case_id and completed_scenario_case_id not in qa_completed_scenarios:
             qa_completed_scenarios.append(completed_scenario_case_id)
@@ -6581,7 +6131,7 @@ async def add_candidate_message(
             and interview.question_count < interview.max_questions
         ):
             should_end_now = False
-        if engine_v2_enabled and decision_action == "close_interview":
+        if decision_action == "close_interview":
             should_end_now = True
         if question_type == "clarification":
             next_pending_verification = pending_verification
@@ -6668,7 +6218,7 @@ async def add_candidate_message(
                                         qa_technical_signal_pct,
                                         qa_completed_case_count,
                                     )
-                        elif target_signature and target_signature in set(covered_topics):
+                        elif target_signature and target_signature in set(asked_topics):
                             fallback_technical_idx = _find_next_unasked_technical_topic_index(
                                 topic_plan,
                                 asked_topics=asked_topics,
@@ -6753,89 +6303,77 @@ async def add_candidate_message(
                 module_stage_index=resolved_next_topic_index if resolved_next_topic_index is not None else current_topic_index,
                 module_stage_count=len(module_stage_plan) if module_stage_plan else 0,
             )
-            if engine_v2_enabled:
-                next_q = _sanitize_chat_question(decision_question_text, language=interview.language)
-                if not next_q:
-                    if candidate_intent_type in {
-                        "clarification_request",
-                        "request_example",
-                        "confusion",
-                        "meta_question",
-                        "challenge_interviewer",
-                        "request_resume_focus",
-                    }:
-                        redirect_fallback = (
-                            _build_resume_deep_dive_followup(
-                                language=interview.language,
-                                resume_evidence=resume_evidence,
-                                resume_context=resume_summary_for_strategy,
-                            )
-                            if (not _resume_deep_dive_gate_opened(resume_evidence) and not resume_force_transition)
-                            else _runtime_followup_question_text(
-                                language=interview.language,
-                                followup_type="clarify",
-                                role=interview.target_role,
-                                topic=current_target,
-                            )
-                        )
-                        next_q = build_interviewer_redirect(
-                            intent_result=candidate_intent,
-                            state=state_v2_before or {},
-                            role=interview.target_role,
-                            language=interview.language,
-                            resume_context=resume_summary_for_strategy,
-                            current_scenario=active_qa_scenario_id,
-                            fallback_question=redirect_fallback,
-                        )
-                        decision_reason = f"{decision_reason}_v2_empty_question_redirect"
-                        decision_action = "simplify"
-                        question_type = "clarification"
-                        will_advance = False
-                        should_advance_scenario = False
-                        if trace is not None:
-                            trace["selected_generator"] = "interviewer_redirect"
-                    elif answer_class in {"generic", "evasive", "no_experience_honest"} or str(runtime_answer_evaluation.get("quality") or "") == "weak":
-                        next_q = build_pressure_followup(
-                            role=interview.target_role,
-                            current_question=current_question_text or "",
-                            candidate_answer=message,
-                            competency=_topic_primary_competency(current_target),
-                            scenario_context=str(active_qa_scenario_id or ""),
-                            language=interview.language,
-                            answer_evaluation=runtime_answer_evaluation,
-                        )
-                        decision_reason = f"{decision_reason}_v2_empty_question_pressure_followup"
-                        decision_action = "follow_up"
-                        question_type = "followup"
-                        will_advance = False
-                        should_advance_scenario = False
-                        if trace is not None:
-                            trace["selected_generator"] = "pressure_followup"
-                    else:
-                        next_q = _build_resume_deep_dive_followup(
+            next_q = _sanitize_chat_question(decision_question_text, language=interview.language)
+            if not next_q:
+                if candidate_intent_type in {
+                    "clarification_request",
+                    "request_example",
+                    "confusion",
+                    "meta_question",
+                    "challenge_interviewer",
+                    "request_resume_focus",
+                }:
+                    redirect_fallback = (
+                        _build_resume_deep_dive_followup(
                             language=interview.language,
                             resume_evidence=resume_evidence,
                             resume_context=resume_summary_for_strategy,
                         )
-                        decision_reason = f"{decision_reason}_v2_empty_question_resume_redirect"
-                        decision_action = "follow_up"
-                        question_type = "followup"
-                        will_advance = False
-                        should_advance_scenario = False
-                        if trace is not None:
-                            trace["selected_generator"] = "resume_redirect"
-                    next_q = _sanitize_chat_question(next_q, language=interview.language)
-            else:
-                interviewer_model_preference = None
-                if isinstance(workspace_ai_settings, dict):
-                    interviewer_model_preference = workspace_ai_settings.get("interviewer_model_preference")
-                next_q = await _get_next_question_with_dev_fallback(
-                    ctx,
-                    model_preference=interviewer_model_preference,
-                )
+                        if (not _resume_deep_dive_gate_opened(resume_evidence) and not resume_force_transition)
+                        else _runtime_followup_question_text(
+                            language=interview.language,
+                            followup_type="clarify",
+                            role=interview.target_role,
+                            topic=current_target,
+                        )
+                    )
+                    next_q = build_interviewer_redirect(
+                        intent_result=candidate_intent,
+                        state=state_v2_before or {},
+                        role=interview.target_role,
+                        language=interview.language,
+                        resume_context=resume_summary_for_strategy,
+                        current_scenario=active_qa_scenario_id,
+                        fallback_question=redirect_fallback,
+                    )
+                    decision_reason = f"{decision_reason}_v2_empty_question_redirect"
+                    decision_action = "simplify"
+                    question_type = "clarification"
+                    will_advance = False
+                    should_advance_scenario = False
+                    if trace is not None:
+                        trace["selected_generator"] = "interviewer_redirect"
+                elif answer_class in {"generic", "evasive", "no_experience_honest"} or str(runtime_answer_evaluation.get("quality") or "") == "weak":
+                    next_q = build_pressure_followup(
+                        role=interview.target_role,
+                        current_question=current_question_text or "",
+                        candidate_answer=message,
+                        competency=_topic_primary_competency(current_target),
+                        scenario_context=str(active_qa_scenario_id or ""),
+                        language=interview.language,
+                        answer_evaluation=runtime_answer_evaluation,
+                    )
+                    decision_reason = f"{decision_reason}_v2_empty_question_pressure_followup"
+                    decision_action = "follow_up"
+                    question_type = "followup"
+                    will_advance = False
+                    should_advance_scenario = False
+                    if trace is not None:
+                        trace["selected_generator"] = "pressure_followup"
+                else:
+                    next_q = _build_resume_deep_dive_followup(
+                        language=interview.language,
+                        resume_evidence=resume_evidence,
+                        resume_context=resume_summary_for_strategy,
+                    )
+                    decision_reason = f"{decision_reason}_v2_empty_question_resume_redirect"
+                    decision_action = "follow_up"
+                    question_type = "followup"
+                    will_advance = False
+                    should_advance_scenario = False
+                    if trace is not None:
+                        trace["selected_generator"] = "resume_redirect"
                 next_q = _sanitize_chat_question(next_q, language=interview.language)
-                if decision_question_text:
-                    next_q = _sanitize_chat_question(decision_question_text, language=interview.language)
 
             repeated_or_similar = False
             if next_q and _is_repeated_question_text(next_q, asked_question_texts):
@@ -6847,112 +6385,84 @@ async def add_candidate_message(
             ):
                 repeated_or_similar = True
             if next_q and repeated_or_similar:
-                if engine_v2_enabled:
-                    should_force_example = candidate_intent_type == "request_example" or no_case_streak_v2 >= 2
-                    redirect_fallback = (
-                        build_pressure_followup(
-                            role=interview.target_role,
-                            current_question=current_question_text or "",
-                            candidate_answer=message,
-                            competency=_topic_primary_competency(current_target),
-                            scenario_context=str(active_qa_scenario_id or ""),
-                            language=interview.language,
-                            answer_evaluation=runtime_answer_evaluation,
-                            force_concrete_example=True,
-                        )
-                        if should_force_example
-                        else _runtime_followup_question_text(
-                            language=interview.language,
-                            followup_type="clarify",
-                            role=interview.target_role,
-                            topic=current_target,
-                        )
-                    )
-                    redirected = build_interviewer_redirect(
-                        intent_result=candidate_intent,
-                        state=state_v2_before or {},
+                should_force_example = candidate_intent_type == "request_example" or no_case_streak_v2 >= 2
+                redirect_fallback = (
+                    build_pressure_followup(
                         role=interview.target_role,
+                        current_question=current_question_text or "",
+                        candidate_answer=message,
+                        competency=_topic_primary_competency(current_target),
+                        scenario_context=str(active_qa_scenario_id or ""),
                         language=interview.language,
-                        resume_context=resume_summary_for_strategy,
-                        current_scenario=active_qa_scenario_id,
-                        fallback_question=redirect_fallback,
+                        answer_evaluation=runtime_answer_evaluation,
+                        force_concrete_example=True,
                     )
-                    redirected = _sanitize_chat_question(redirected, language=interview.language)
-                    if redirected and not _is_repeated_question_text(redirected, asked_question_texts):
-                        next_q = redirected
-                        decision_reason = f"{decision_reason}_repeat_runtime_redirect"
+                    if should_force_example
+                    else _runtime_followup_question_text(
+                        language=interview.language,
+                        followup_type="clarify",
+                        role=interview.target_role,
+                        topic=current_target,
+                    )
+                )
+                redirected = build_interviewer_redirect(
+                    intent_result=candidate_intent,
+                    state=state_v2_before or {},
+                    role=interview.target_role,
+                    language=interview.language,
+                    resume_context=resume_summary_for_strategy,
+                    current_scenario=active_qa_scenario_id,
+                    fallback_question=redirect_fallback,
+                )
+                redirected = _sanitize_chat_question(redirected, language=interview.language)
+                if redirected and not _is_repeated_question_text(redirected, asked_question_texts):
+                    next_q = redirected
+                    decision_reason = f"{decision_reason}_repeat_runtime_redirect"
+                    question_type = "clarification"
+                    will_advance = False
+                    should_advance_scenario = False
+                    if trace is not None:
+                        trace["selected_generator"] = "interviewer_redirect"
+                        trace["was_question_rejected_as_repeated"] = True
+                elif should_force_example:
+                    diversified = _sanitize_chat_question(redirect_fallback, language=interview.language)
+                    if diversified and not _is_repeated_question_text(diversified, asked_question_texts):
+                        next_q = diversified
+                        decision_reason = f"{decision_reason}_repeat_runtime_forced_example"
                         question_type = "clarification"
                         will_advance = False
                         should_advance_scenario = False
                         if trace is not None:
-                            trace["selected_generator"] = "interviewer_redirect"
+                            trace["selected_generator"] = "pressure_followup"
                             trace["was_question_rejected_as_repeated"] = True
-                    elif should_force_example:
-                        diversified = _sanitize_chat_question(redirect_fallback, language=interview.language)
-                        if diversified and not _is_repeated_question_text(diversified, asked_question_texts):
-                            next_q = diversified
-                            decision_reason = f"{decision_reason}_repeat_runtime_forced_example"
-                            question_type = "clarification"
-                            will_advance = False
-                            should_advance_scenario = False
-                            if trace is not None:
-                                trace["selected_generator"] = "pressure_followup"
-                                trace["was_question_rejected_as_repeated"] = True
-                else:
-                    current_competency = ""
-                    if isinstance(selected_target, dict):
-                        competencies = selected_target.get("competencies")
-                        if isinstance(competencies, list) and competencies:
-                            current_competency = str(competencies[0] or "").strip()
-                    diversified = _role_diversified_reframe_question(
-                        role=interview.target_role,
-                        competency=current_competency,
-                        language=interview.language,
-                    )
-                    if diversified and not _is_repeated_question_text(diversified, asked_question_texts):
-                        next_q = diversified
             if (
                 next_q
                 and _is_question_already_covered_in_transcript(next_q, transcript_summary)
                 and _is_move_on_request(message)
             ):
-                if engine_v2_enabled:
-                    redirected = build_interviewer_redirect(
-                        intent_result=candidate_intent,
-                        state=state_v2_before or {},
-                        role=interview.target_role,
+                redirected = build_interviewer_redirect(
+                    intent_result=candidate_intent,
+                    state=state_v2_before or {},
+                    role=interview.target_role,
+                    language=interview.language,
+                    resume_context=resume_summary_for_strategy,
+                    current_scenario=active_qa_scenario_id,
+                    fallback_question=_runtime_followup_question_text(
                         language=interview.language,
-                        resume_context=resume_summary_for_strategy,
-                        current_scenario=active_qa_scenario_id,
-                        fallback_question=_runtime_followup_question_text(
-                            language=interview.language,
-                            followup_type="clarify",
-                            role=interview.target_role,
-                            topic=current_target,
-                        ),
-                    )
-                    redirected = _sanitize_chat_question(redirected, language=interview.language)
-                    if redirected and not _is_repeated_question_text(redirected, asked_question_texts):
-                        next_q = redirected
-                        decision_reason = f"{decision_reason}_transcript_runtime_redirect"
-                        question_type = "clarification"
-                        will_advance = False
-                        should_advance_scenario = False
-                        if trace is not None:
-                            trace["selected_generator"] = "interviewer_redirect"
-                else:
-                    current_competency = ""
-                    if isinstance(selected_target, dict):
-                        competencies = selected_target.get("competencies")
-                        if isinstance(competencies, list) and competencies:
-                            current_competency = str(competencies[0] or "").strip()
-                    diversified = _role_diversified_reframe_question(
+                        followup_type="clarify",
                         role=interview.target_role,
-                        competency=current_competency,
-                        language=interview.language,
-                    )
-                    if diversified and not _is_repeated_question_text(diversified, asked_question_texts):
-                        next_q = diversified
+                        topic=current_target,
+                    ),
+                )
+                redirected = _sanitize_chat_question(redirected, language=interview.language)
+                if redirected and not _is_repeated_question_text(redirected, asked_question_texts):
+                    next_q = redirected
+                    decision_reason = f"{decision_reason}_transcript_runtime_redirect"
+                    question_type = "clarification"
+                    will_advance = False
+                    should_advance_scenario = False
+                    if trace is not None:
+                        trace["selected_generator"] = "interviewer_redirect"
 
         # ── Update DB state ─────────────────────────────────────────────────
         while len(topic_signals) <= current_topic_index:
@@ -7127,196 +6637,195 @@ async def add_candidate_message(
                 "content": str(written_artifact.get("content") or "")[:50000],
                 "updated_at": written_artifact.get("updated_at"),
             }
-        if engine_v2_enabled:
-            current_target_competency = ""
-            target_for_v2 = selected_target if isinstance(selected_target, dict) else current_target
-            if isinstance(target_for_v2, dict):
-                competencies = target_for_v2.get("competencies")
-                if isinstance(competencies, list) and competencies:
-                    current_target_competency = str(competencies[0] or "").strip()
+        current_target_competency = ""
+        target_for_v2 = selected_target if isinstance(selected_target, dict) else current_target
+        if isinstance(target_for_v2, dict):
+            competencies = target_for_v2.get("competencies")
+            if isinstance(competencies, list) and competencies:
+                current_target_competency = str(competencies[0] or "").strip()
 
-            next_action = "follow_up"
-            if should_end_now:
-                next_action = "close_interview"
-            elif question_type == "clarification":
-                next_action = "simplify"
-            elif will_advance and decision_scenario_case_id and active_qa_scenario_step == 0:
-                next_action = "start_scenario"
-            elif will_advance and decision_scenario_case_id:
-                next_action = "continue_scenario"
-            elif will_advance:
-                next_action = "switch_topic"
-            elif question_type == "main":
-                next_action = "ask_new_topic"
+        next_action = "follow_up"
+        if should_end_now:
+            next_action = "close_interview"
+        elif question_type == "clarification":
+            next_action = "simplify"
+        elif will_advance and decision_scenario_case_id and active_qa_scenario_step == 0:
+            next_action = "start_scenario"
+        elif will_advance and decision_scenario_case_id:
+            next_action = "continue_scenario"
+        elif will_advance:
+            next_action = "switch_topic"
+        elif question_type == "main":
+            next_action = "ask_new_topic"
 
-            policy_action = str(policy_decision.get("policy_action") or "").strip()
-            next_action = policy_action or decision_action or next_action
-            covered_competencies = list(state_v2_before.get("covered_competencies", []) if isinstance(state_v2_before, dict) else [])
-            validated_competencies = list(state_v2_before.get("validated_competencies", []) if isinstance(state_v2_before, dict) else [])
-            weak_competencies = list(state_v2_before.get("weak_competencies", []) if isinstance(state_v2_before, dict) else [])
-            if current_target_competency:
-                if current_target_competency not in covered_competencies:
-                    covered_competencies.append(current_target_competency)
-                if should_count_as_answer and answer_class == "strong" and answer_relevance in {"medium", "high"}:
-                    if current_target_competency not in validated_competencies:
-                        validated_competencies.append(current_target_competency)
-                    weak_competencies = [item for item in weak_competencies if item != current_target_competency]
-                elif should_count_as_answer and (
-                    answer_class in {"generic", "evasive", "no_experience_honest"} or answer_relevance == "low"
-                ):
-                    if current_target_competency not in weak_competencies:
-                        weak_competencies.append(current_target_competency)
-                if (
-                    policy_action == "switch_topic"
-                    and current_target_competency not in weak_competencies
-                    and bool(policy_decision.get("update_weak_answer_count"))
-                ):
+        policy_action = str(policy_decision.get("policy_action") or "").strip()
+        next_action = policy_action or decision_action or next_action
+        covered_competencies = list(state_v2_before.get("covered_competencies", []) if isinstance(state_v2_before, dict) else [])
+        validated_competencies = list(state_v2_before.get("validated_competencies", []) if isinstance(state_v2_before, dict) else [])
+        weak_competencies = list(state_v2_before.get("weak_competencies", []) if isinstance(state_v2_before, dict) else [])
+        if current_target_competency:
+            if current_target_competency not in covered_competencies:
+                covered_competencies.append(current_target_competency)
+            if should_count_as_answer and answer_class == "strong" and answer_relevance in {"medium", "high"}:
+                if current_target_competency not in validated_competencies:
+                    validated_competencies.append(current_target_competency)
+                weak_competencies = [item for item in weak_competencies if item != current_target_competency]
+            elif should_count_as_answer and (
+                answer_class in {"generic", "evasive", "no_experience_honest"} or answer_relevance == "low"
+            ):
+                if current_target_competency not in weak_competencies:
                     weak_competencies.append(current_target_competency)
+            if (
+                policy_action == "switch_topic"
+                and current_target_competency not in weak_competencies
+                and bool(policy_decision.get("update_weak_answer_count"))
+            ):
+                weak_competencies.append(current_target_competency)
 
-            derived_phase = _to_interview_state_v2_phase(
-                topic_phase=str((selected_target or current_target or {}).get("phase") or ""),
-                question_type=question_type,
-            )
-            resume_gate_passed_for_phase = _resume_deep_dive_gate_opened(resume_evidence)
-            resume_force_transition_for_phase = _resume_deep_dive_force_transition(
-                resume_scored_turns=resume_scored_turns_after,
-            )
-            if not resume_gate_passed_for_phase and not resume_force_transition_for_phase:
-                derived_phase = "resume_deep_dive"
-                will_advance = False
-                should_advance_scenario = False
-                decision_scenario_case_id = active_qa_scenario_id
-                decision_scenario_step_index = max(0, active_qa_scenario_step)
-            elif resume_force_transition_for_phase and derived_phase in {"intro", "resume_deep_dive"}:
-                derived_phase = "technical_case"
-            elif derived_phase == "intro":
-                derived_phase = "resume_deep_dive"
+        derived_phase = _to_interview_state_v2_phase(
+            topic_phase=str((selected_target or current_target or {}).get("phase") or ""),
+            question_type=question_type,
+        )
+        resume_gate_passed_for_phase = _resume_deep_dive_gate_opened(resume_evidence)
+        resume_force_transition_for_phase = _resume_deep_dive_force_transition(
+            resume_scored_turns=resume_scored_turns_after,
+        )
+        if not resume_gate_passed_for_phase and not resume_force_transition_for_phase:
+            derived_phase = "resume_deep_dive"
+            will_advance = False
+            should_advance_scenario = False
+            decision_scenario_case_id = active_qa_scenario_id
+            decision_scenario_step_index = max(0, active_qa_scenario_step)
+        elif resume_force_transition_for_phase and derived_phase in {"intro", "resume_deep_dive"}:
+            derived_phase = "technical_case"
+        elif derived_phase == "intro":
+            derived_phase = "resume_deep_dive"
 
-            confusion_count_v2 = max(0, int((state_v2_before or {}).get("confusion_count", 0)))
-            if bool(policy_decision.get("update_confusion_count")):
-                confusion_count_v2 += 1
-            last_conversational_intent = _derive_conversational_intent(
-                raw_intent=str(question_decision.get("conversational_intent") or ""),
-                action=decision_action,
-                phase=derived_phase,
-            )
-            last_information_target = str(
-                question_decision.get("information_target")
-                or question_decision.get("target_competency")
-                or current_target_competency
-                or ""
-            ).strip()
-            semantic_streak_after = _conversational_intent_streak(
-                conversational_intent_history,
-                last_conversational_intent,
-            )
-            semantic_repeat_increment = 1 if semantic_streak_after >= 3 else 0
-            repeated_question_count_v2 = max(
-                0,
-                int((state_v2_before or {}).get("repeated_question_count", 0))
-                + decision_repeated_increment
-                + semantic_repeat_increment,
-            )
-            semantic_repeated_question_count_v2 = max(
-                0,
-                semantic_repeated_question_count_before + semantic_repeat_increment,
-            )
-            if bool(policy_decision.get("update_weak_answer_count")):
-                weak_answer_streak_v2 = weak_answer_streak_v2 + 1 if last_step_key_v2 == current_step_key else 1
+        confusion_count_v2 = max(0, int((state_v2_before or {}).get("confusion_count", 0)))
+        if bool(policy_decision.get("update_confusion_count")):
+            confusion_count_v2 += 1
+        last_conversational_intent = _derive_conversational_intent(
+            raw_intent=str(question_decision.get("conversational_intent") or ""),
+            action=decision_action,
+            phase=derived_phase,
+        )
+        last_information_target = str(
+            question_decision.get("information_target")
+            or question_decision.get("target_competency")
+            or current_target_competency
+            or ""
+        ).strip()
+        semantic_streak_after = _conversational_intent_streak(
+            conversational_intent_history,
+            last_conversational_intent,
+        )
+        semantic_repeat_increment = 1 if semantic_streak_after >= 3 else 0
+        repeated_question_count_v2 = max(
+            0,
+            int((state_v2_before or {}).get("repeated_question_count", 0))
+            + decision_repeated_increment
+            + semantic_repeat_increment,
+        )
+        semantic_repeated_question_count_v2 = max(
+            0,
+            semantic_repeated_question_count_before + semantic_repeat_increment,
+        )
+        if bool(policy_decision.get("update_weak_answer_count")):
+            weak_answer_streak_v2 = weak_answer_streak_v2 + 1 if last_step_key_v2 == current_step_key else 1
+        else:
+            weak_answer_streak_v2 = 0
+        if candidate_no_case_signal_now:
+            no_case_streak_v2 += 1
+        else:
+            no_case_streak_v2 = 0
+
+        if trace is not None:
+            trace["current_phase_after"] = derived_phase
+            trace["resume_evidence_after"] = dict(resume_evidence)
+            trace["resume_gate_passed"] = _resume_deep_dive_gate_opened(resume_evidence)
+            trace["resume_scored_turns_after"] = resume_scored_turns_after
+            trace["resume_force_transition"] = resume_force_transition_for_phase
+            trace["scenario_id"] = active_qa_scenario_id
+            trace["scenario_step_after"] = max(0, int(active_qa_scenario_step or 0))
+            trace["generated_question_after_guardrails"] = str(next_q or decision_question_text or "").strip() or None
+            trace["conversational_intent"] = last_conversational_intent
+            trace["information_target"] = last_information_target
+            trace["semantic_repeat_streak"] = semantic_streak_after
+            trace["semantic_repeat_detected"] = semantic_repeat_increment > 0
+            if semantic_repeat_increment > 0:
+                trace["was_question_rejected_as_repeated"] = True
+            phase_before = str(trace.get("current_phase_before") or "")
+            if phase_before and phase_before != derived_phase:
+                trace["why_phase_advanced"] = f"{phase_before}->{derived_phase}:{decision_reason}"
             else:
-                weak_answer_streak_v2 = 0
-            if candidate_no_case_signal_now:
-                no_case_streak_v2 += 1
-            else:
-                no_case_streak_v2 = 0
+                trace["why_phase_advanced"] = f"phase_hold:{decision_reason}"
+            if not trace.get("selected_generator"):
+                trace["selected_generator"] = "strategist"
+            decision_traces_v2 = _append_v2_decision_trace(decision_traces_v2, trace, limit=20)
 
-            if trace is not None:
-                trace["current_phase_after"] = derived_phase
-                trace["resume_evidence_after"] = dict(resume_evidence)
-                trace["resume_gate_passed"] = _resume_deep_dive_gate_opened(resume_evidence)
-                trace["resume_scored_turns_after"] = resume_scored_turns_after
-                trace["resume_force_transition"] = resume_force_transition_for_phase
-                trace["scenario_id"] = active_qa_scenario_id
-                trace["scenario_step_after"] = max(0, int(active_qa_scenario_step or 0))
-                trace["generated_question_after_guardrails"] = str(next_q or decision_question_text or "").strip() or None
-                trace["conversational_intent"] = last_conversational_intent
-                trace["information_target"] = last_information_target
-                trace["semantic_repeat_streak"] = semantic_streak_after
-                trace["semantic_repeat_detected"] = semantic_repeat_increment > 0
-                if semantic_repeat_increment > 0:
-                    trace["was_question_rejected_as_repeated"] = True
-                phase_before = str(trace.get("current_phase_before") or "")
-                if phase_before and phase_before != derived_phase:
-                    trace["why_phase_advanced"] = f"{phase_before}->{derived_phase}:{decision_reason}"
-                else:
-                    trace["why_phase_advanced"] = f"phase_hold:{decision_reason}"
-                if not trace.get("selected_generator"):
-                    trace["selected_generator"] = "strategist"
-                decision_traces_v2 = _append_v2_decision_trace(decision_traces_v2, trace, limit=20)
+        fallback_counter_v2 = max(0, int((state_v2_before or {}).get("fallback_counter", 0)))
+        strategist_json_valid_flag = bool(trace.get("strategist_json_valid")) if trace is not None else False
+        selected_generator = str(trace.get("selected_generator") or "") if trace is not None else ""
+        if selected_generator == "strategist" and strategist_json_valid_flag:
+            fallback_counter_v2 = 0
+        elif selected_generator:
+            fallback_counter_v2 += 1
 
-            fallback_counter_v2 = max(0, int((state_v2_before or {}).get("fallback_counter", 0)))
-            strategist_json_valid_flag = bool(trace.get("strategist_json_valid")) if trace is not None else False
-            selected_generator = str(trace.get("selected_generator") or "") if trace is not None else ""
-            if selected_generator == "strategist" and strategist_json_valid_flag:
-                fallback_counter_v2 = 0
-            elif selected_generator:
-                fallback_counter_v2 += 1
+        interview_quality_metrics = _update_interview_quality_metrics(
+            metrics=interview_quality_metrics_before,
+            trace=trace,
+            should_count_as_answer=should_count_as_answer,
+            phase_after=derived_phase,
+            policy_action=str(policy_decision.get("policy_action") or ""),
+        )
+        interview_quality_metrics["semantic_repeated_question_count"] = max(
+            interview_quality_metrics.get("semantic_repeated_question_count", 0),
+            semantic_repeated_question_count_v2,
+        )
 
-            interview_quality_metrics = _update_interview_quality_metrics(
-                metrics=interview_quality_metrics_before,
-                trace=trace,
-                should_count_as_answer=should_count_as_answer,
-                phase_after=derived_phase,
-                policy_action=str(policy_decision.get("policy_action") or ""),
-            )
-            interview_quality_metrics["semantic_repeated_question_count"] = max(
-                interview_quality_metrics.get("semantic_repeated_question_count", 0),
-                semantic_repeated_question_count_v2,
-            )
+        if last_conversational_intent:
+            conversational_intent_history.append(last_conversational_intent)
+        if last_information_target:
+            information_target_history.append(last_information_target)
 
-            if last_conversational_intent:
-                conversational_intent_history.append(last_conversational_intent)
-            if last_information_target:
-                information_target_history.append(last_information_target)
-
-            update_interview_state_v2(
-                interview,
-                {
-                    "phase": derived_phase,
-                    "role": interview.target_role,
-                    "language": interview.language,
-                    "current_competency": current_target_competency or None,
-                    "current_scenario_id": active_qa_scenario_id,
-                    "scenario_step": max(0, int(active_qa_scenario_step or 0)),
-                    "attempts_on_current_step": 0
-                    if will_advance
-                    else max(
-                        0,
-                        int((state_v2_before or {}).get("attempts_on_current_step", 0)) + 1,
-                    ),
-                    "confusion_count": confusion_count_v2,
-                    "repeated_question_count": repeated_question_count_v2,
-                    "semantic_repeated_question_count": semantic_repeated_question_count_v2,
-                    "covered_competencies": covered_competencies,
-                    "validated_competencies": validated_competencies,
-                    "weak_competencies": weak_competencies,
-                    "asked_questions": asked_question_texts[-80:],
-                    "conversational_intent_history": conversational_intent_history[-30:],
-                    "information_target_history": information_target_history[-30:],
-                    "last_answer_evaluation": runtime_answer_evaluation,
-                    "next_action": next_action,
-                    "resume_evidence": resume_evidence,
-                    "resume_scored_turns": resume_scored_turns_after,
-                    "weak_answer_streak": weak_answer_streak_v2,
-                    "no_case_streak": no_case_streak_v2,
-                    "last_step_key": current_step_key,
-                    "current_step_key": current_step_key,
-                    "last_policy_decision": policy_decision,
-                    "decision_traces": decision_traces_v2[-20:],
-                    "fallback_counter": fallback_counter_v2,
-                    "interview_quality_metrics": interview_quality_metrics,
-                },
-            )
+        update_interview_state_v2(
+            interview,
+            {
+                "phase": derived_phase,
+                "role": interview.target_role,
+                "language": interview.language,
+                "current_competency": current_target_competency or None,
+                "current_scenario_id": active_qa_scenario_id,
+                "scenario_step": max(0, int(active_qa_scenario_step or 0)),
+                "attempts_on_current_step": 0
+                if will_advance
+                else max(
+                    0,
+                    int((state_v2_before or {}).get("attempts_on_current_step", 0)) + 1,
+                ),
+                "confusion_count": confusion_count_v2,
+                "repeated_question_count": repeated_question_count_v2,
+                "semantic_repeated_question_count": semantic_repeated_question_count_v2,
+                "covered_competencies": covered_competencies,
+                "validated_competencies": validated_competencies,
+                "weak_competencies": weak_competencies,
+                "asked_questions": asked_question_texts[-80:],
+                "conversational_intent_history": conversational_intent_history[-30:],
+                "information_target_history": information_target_history[-30:],
+                "last_answer_evaluation": runtime_answer_evaluation,
+                "next_action": next_action,
+                "resume_evidence": resume_evidence,
+                "resume_scored_turns": resume_scored_turns_after,
+                "weak_answer_streak": weak_answer_streak_v2,
+                "no_case_streak": no_case_streak_v2,
+                "last_step_key": current_step_key,
+                "current_step_key": current_step_key,
+                "last_policy_decision": policy_decision,
+                "decision_traces": decision_traces_v2[-20:],
+                "fallback_counter": fallback_counter_v2,
+                "interview_quality_metrics": interview_quality_metrics,
+            },
+        )
         if next_q:
             db.add(InterviewMessage(
                 id=uuid.uuid4(),

@@ -9,7 +9,6 @@ Requires authentication.
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 import httpx
-from groq import AsyncGroq
 
 from app.api.v1.deps import get_current_user
 from app.core.config import settings
@@ -27,12 +26,6 @@ async def transcribe(
     _user: User = Depends(get_current_user),
 ) -> dict:
     """Transcribe audio to text. Returns {text: str}."""
-    if not settings.GROQ_API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="STT service not configured (no GROQ_API_KEY)",
-        )
-
     audio_bytes = await file.read()
     if len(audio_bytes) == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty audio file")
@@ -45,24 +38,16 @@ async def transcribe(
     if settings.MEDIA_SERVICE_URL:
         try:
             return await _transcribe_with_media_service(file, audio_bytes)
-        except httpx.RequestError:
-            # Preserve local/dev behavior if the Go media sidecar is unavailable.
-            pass
+        except httpx.RequestError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Media service request failed: {exc}",
+            )
 
-    client = AsyncGroq(api_key=settings.GROQ_API_KEY)
-    try:
-        filename = file.filename or "audio.webm"
-        transcription = await client.audio.transcriptions.create(
-            model=_MODEL,
-            file=(filename, audio_bytes, file.content_type or "audio/webm"),
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Transcription failed: {exc}",
-        ) from exc
-
-    return {"text": transcription.text}
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="STT is handled by media sidecar, but MEDIA_SERVICE_URL is not set.",
+    )
 
 
 async def _transcribe_with_media_service(file: UploadFile, audio_bytes: bytes) -> dict:

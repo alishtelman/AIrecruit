@@ -771,7 +771,11 @@ def build_interview_plan(
             entry["resume_anchor"] = anchors[anchor_idx]
             anchor_idx += 1
 
-        if verification_idx < len(verification_targets):
+        use_verification_slot = True
+        if structured_flow and idx == 0:
+            use_verification_slot = False
+
+        if use_verification_slot and verification_idx < len(verification_targets):
             entry["verification_target"] = verification_targets[verification_idx]
             verification_idx += 1
 

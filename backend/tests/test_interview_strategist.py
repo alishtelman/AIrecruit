@@ -29,6 +29,27 @@ async def test_decide_next_interview_action_returns_valid_decision_with_non_empt
         ],
     )
 
+    class _FakeStrategist:
+        async def decide_next_interview_action(self, ctx, model_override=None):
+            return QuestionDecision(
+                action="start_scenario",
+                question_text="Кейс: деньги списались, но статус ошибки. Что проверите первым?",
+                target_competency="Root Cause Analysis",
+                phase="technical_case",
+                scenario_id="qa_payment_failed_money_deducted",
+                scenario_step=0,
+                difficulty_tier=3,
+                reason="start scenario",
+                expected_signal="concrete_steps",
+                ai_provider="gemini",
+                requested_model="gemini-2.5-flash",
+                actual_model_used="gemini-2.5-flash",
+                provider_attempts=[],
+                provider_errors=[],
+                openrouter_fallback_used=False,
+            )
+    monkeypatch.setattr("app.ai.interview_strategist.strategist", _FakeStrategist())
+
     decision = await decide_next_interview_action(ctx)
 
     assert isinstance(decision, QuestionDecision)
@@ -285,7 +306,7 @@ def test_parse_or_repair_returns_none_for_completely_invalid_text():
 
 @pytest.mark.asyncio
 async def test_llm_strategist_retries_invalid_json_then_returns_valid_decision(monkeypatch: pytest.MonkeyPatch):
-    strategist = LLMInterviewStrategist(client=object())  # type: ignore[arg-type]
+    strategist = LLMInterviewStrategist(provider=object())  # type: ignore[arg-type]
     ctx = InterviewStrategistContext(
         role="qa_engineer",
         language="ru",
@@ -308,7 +329,7 @@ async def test_llm_strategist_retries_invalid_json_then_returns_valid_decision(m
     )
 
     async def _fake_invoke(**_kwargs):
-        return next(responses)
+        return next(responses), {}
 
     monkeypatch.setattr(strategist, "_invoke_strategist", _fake_invoke)
 
@@ -321,7 +342,7 @@ async def test_llm_strategist_retries_invalid_json_then_returns_valid_decision(m
 
 @pytest.mark.asyncio
 async def test_llm_strategist_smoke_json_stability_and_low_fallback(monkeypatch: pytest.MonkeyPatch):
-    strategist = LLMInterviewStrategist(client=object())  # type: ignore[arg-type]
+    strategist = LLMInterviewStrategist(provider=object())  # type: ignore[arg-type]
     state_v2 = {"phase": "resume_deep_dive", "fallback_counter": 0}
     asked_questions: list[str] = []
     ctx = InterviewStrategistContext(
@@ -379,7 +400,7 @@ async def test_llm_strategist_smoke_json_stability_and_low_fallback(monkeypatch:
     )
 
     async def _fake_invoke(**_kwargs):
-        return next(scripted_responses)
+        return next(scripted_responses), {}
 
     monkeypatch.setattr(strategist, "_invoke_strategist", _fake_invoke)
 

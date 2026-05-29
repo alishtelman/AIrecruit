@@ -124,6 +124,7 @@ class SendMessageResponse(BaseModel):
     question_type: str = "main"  # main | followup | structured_reframe | clarification | verification | deep_technical | edge_cases
     interview_stage: InterviewStageResponse | None = None
     module_session: InterviewModuleSessionResponse | None = None
+    closing_message: str | None = None
 
 
 class ReportSummary(BaseModel):

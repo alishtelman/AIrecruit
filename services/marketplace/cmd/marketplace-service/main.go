@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"sort"
@@ -13,6 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -79,9 +83,34 @@ func (e providerError) Error() string {
 	return e.detail
 }
 
+type Config struct {
+	SecretKey         string
+	SessionCookieName string
+}
+
 type server struct {
 	db     *pgxpool.Pool
 	search func(context.Context, searchRequest) ([]candidateItem, error)
+	config Config
+}
+
+type User struct {
+	ID        uuid.UUID
+	Email     string
+	Role      string
+	IsActive  bool
+	CompanyID *uuid.UUID
+}
+
+type ShortlistSummaryResponse struct {
+	ShortlistID uuid.UUID `json:"shortlist_id"`
+	Name        string    `json:"name"`
+	CandidateCount int    `json:"candidate_count"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type ShortlistCreateRequest struct {
+	Name string `json:"name"`
 }
 
 func main() {
@@ -96,13 +125,45 @@ func main() {
 		defer pool.Close()
 	}
 
-	srv := &server{db: pool}
+	config := Config{
+		SecretKey:         envOrDefault("SECRET_KEY", "dev-secret-key-change-me"),
+		SessionCookieName: envOrDefault("SESSION_COOKIE_NAME", "airecruit_session"),
+	}
+
+	srv := &server{
+		db:     pool,
+		config: config,
+	}
 	srv.search = srv.searchCandidates
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", srv.handleHealth)
 	mux.HandleFunc("GET /v1/status", srv.handleStatus)
 	mux.HandleFunc("POST /v1/company-candidates/search", srv.handleSearch)
+
+	// Shortlist Management Routes
+	mux.HandleFunc("GET /v1/company/shortlists", srv.handleListShortlists)
+	mux.HandleFunc("POST /v1/company/shortlists", srv.handleCreateShortlist)
+	mux.HandleFunc("DELETE /v1/company/shortlists/{shortlist_id}", srv.handleDeleteShortlist)
+	mux.HandleFunc("POST /v1/company/shortlists/{shortlist_id}/candidates/{candidate_id}", srv.handleAddCandidate)
+	mux.HandleFunc("DELETE /v1/company/shortlists/{shortlist_id}/candidates/{candidate_id}", srv.handleRemoveCandidate)
+
+	// Candidate Profile & Privacy Routes
+	mux.HandleFunc("GET /v1/candidate/salary", srv.handleGetSalary)
+	mux.HandleFunc("PATCH /v1/candidate/salary", srv.handleUpdateSalary)
+	mux.HandleFunc("GET /v1/candidate/salary/benchmark", srv.handleSalaryBenchmark)
+	mux.HandleFunc("GET /v1/candidate/privacy", srv.handleGetPrivacy)
+	mux.HandleFunc("PATCH /v1/candidate/privacy", srv.handleUpdatePrivacy)
+	mux.HandleFunc("GET /v1/candidate/share/{share_token}", srv.handleGetSharedCandidateProfile)
+
+	// Candidate Access Request Routes
+	mux.HandleFunc("GET /v1/candidate/access-requests", srv.handleGetCandidateAccessRequests)
+	mux.HandleFunc("POST /v1/candidate/access-requests/{request_id}/approve", srv.handleApproveAccessRequest)
+	mux.HandleFunc("POST /v1/candidate/access-requests/{request_id}/deny", srv.handleDenyAccessRequest)
+
+	// Company Access Request Routes
+	mux.HandleFunc("GET /v1/company/share-links/{share_token}", srv.handleGetShareLinkStatus)
+	mux.HandleFunc("POST /v1/company/share-links/{share_token}/request-access", srv.handleRequestShareLinkAccess)
 
 	addr := envOrDefault("MARKETPLACE_SERVICE_ADDR", defaultListenAddr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
@@ -648,4 +709,486 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+// Shortlist HTTP Handlers
+
+func (srv *server) handleListShortlists(w http.ResponseWriter, r *http.Request) {
+	user, err := srv.authenticateUser(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "Could not validate credentials")
+		return
+	}
+	if user.CompanyID == nil {
+		writeError(w, http.StatusForbidden, "Company access required")
+		return
+	}
+
+	query := `
+		SELECT s.id, s.name, s.created_at, COUNT(c.id) AS candidate_count
+		FROM company_shortlists s
+		LEFT JOIN company_shortlist_candidates c ON c.shortlist_id = s.id
+		WHERE s.company_id = $1
+		GROUP BY s.id
+		ORDER BY s.created_at DESC
+	`
+	rows, err := srv.db.Query(r.Context(), query, *user.CompanyID)
+	if err != nil {
+		log.Printf("[SHORTLISTS] Failed to list shortlists: %v", err)
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+	defer rows.Close()
+
+	shortlists := []ShortlistSummaryResponse{}
+	for rows.Next() {
+		var s ShortlistSummaryResponse
+		err := rows.Scan(&s.ShortlistID, &s.Name, &s.CreatedAt, &s.CandidateCount)
+		if err != nil {
+			log.Printf("[SHORTLISTS] Failed to scan shortlist row: %v", err)
+			writeError(w, http.StatusInternalServerError, "Internal server error")
+			return
+		}
+		shortlists = append(shortlists, s)
+	}
+
+	writeJSON(w, http.StatusOK, shortlists)
+}
+
+func (srv *server) handleCreateShortlist(w http.ResponseWriter, r *http.Request) {
+	user, err := srv.authenticateUser(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "Could not validate credentials")
+		return
+	}
+	if user.CompanyID == nil {
+		writeError(w, http.StatusForbidden, "Company access required")
+		return
+	}
+
+	role, err := srv.getCompanyContextRole(r.Context(), user)
+	if err != nil || (role != "admin" && role != "recruiter") {
+		writeError(w, http.StatusForbidden, "Recruiter or admin access required")
+		return
+	}
+
+	var req ShortlistCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		writeError(w, http.StatusUnprocessableEntity, "name cannot be empty")
+		return
+	}
+
+	// Check duplicate name
+	var exists bool
+	dupQuery := `SELECT EXISTS(SELECT 1 FROM company_shortlists WHERE company_id = $1 AND name = $2)`
+	err = srv.db.QueryRow(r.Context(), dupQuery, *user.CompanyID, req.Name).Scan(&exists)
+	if err != nil {
+		log.Printf("[SHORTLISTS] Failed to check duplicate shortlist name: %v", err)
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+	if exists {
+		writeError(w, http.StatusConflict, "Shortlist name already exists")
+		return
+	}
+
+	shortlistID := uuid.New()
+	now := time.Now().UTC()
+
+	insertQuery := `
+		INSERT INTO company_shortlists (id, company_id, created_by_user_id, name, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`
+	_, err = srv.db.Exec(r.Context(), insertQuery, shortlistID, *user.CompanyID, user.ID, req.Name, now)
+	if err != nil {
+		log.Printf("[SHORTLISTS] Failed to create shortlist: %v", err)
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, ShortlistSummaryResponse{
+		ShortlistID:    shortlistID,
+		Name:           req.Name,
+		CandidateCount: 0,
+		CreatedAt:      now,
+	})
+}
+
+func (srv *server) handleDeleteShortlist(w http.ResponseWriter, r *http.Request) {
+	user, err := srv.authenticateUser(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "Could not validate credentials")
+		return
+	}
+	if user.CompanyID == nil {
+		writeError(w, http.StatusForbidden, "Company access required")
+		return
+	}
+
+	role, err := srv.getCompanyContextRole(r.Context(), user)
+	if err != nil || (role != "admin" && role != "recruiter") {
+		writeError(w, http.StatusForbidden, "Recruiter or admin access required")
+		return
+	}
+
+	shortlistIDStr := r.PathValue("shortlist_id")
+	shortlistID, err := uuid.Parse(shortlistIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid shortlist ID format")
+		return
+	}
+
+	// Verify ownership
+	var companyID uuid.UUID
+	err = srv.db.QueryRow(r.Context(), "SELECT company_id FROM company_shortlists WHERE id = $1", shortlistID).Scan(&companyID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "Shortlist not found")
+			return
+		}
+		log.Printf("[SHORTLISTS] Failed to verify shortlist ownership: %v", err)
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	if companyID != *user.CompanyID {
+		writeError(w, http.StatusForbidden, "Not your shortlist")
+		return
+	}
+
+	_, err = srv.db.Exec(r.Context(), "DELETE FROM company_shortlists WHERE id = $1", shortlistID)
+	if err != nil {
+		log.Printf("[SHORTLISTS] Failed to delete shortlist: %v", err)
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (srv *server) handleAddCandidate(w http.ResponseWriter, r *http.Request) {
+	user, err := srv.authenticateUser(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "Could not validate credentials")
+		return
+	}
+	if user.CompanyID == nil {
+		writeError(w, http.StatusForbidden, "Company access required")
+		return
+	}
+
+	role, err := srv.getCompanyContextRole(r.Context(), user)
+	if err != nil || (role != "admin" && role != "recruiter") {
+		writeError(w, http.StatusForbidden, "Recruiter or admin access required")
+		return
+	}
+
+	shortlistIDStr := r.PathValue("shortlist_id")
+	shortlistID, err := uuid.Parse(shortlistIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid shortlist ID format")
+		return
+	}
+
+	candidateIDStr := r.PathValue("candidate_id")
+	candidateID, err := uuid.Parse(candidateIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid candidate ID format")
+		return
+	}
+
+	// 1. Verify shortlist exists and belongs to this company
+	var companyID uuid.UUID
+	var shortlistName string
+	err = srv.db.QueryRow(r.Context(), "SELECT company_id, name FROM company_shortlists WHERE id = $1", shortlistID).Scan(&companyID, &shortlistName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "Shortlist not found")
+			return
+		}
+		log.Printf("[SHORTLISTS] Failed to get shortlist details: %v", err)
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	if companyID != *user.CompanyID {
+		writeError(w, http.StatusForbidden, "Not your shortlist")
+		return
+	}
+
+	// 2. Verify candidate exists, has public reports, and company has workspace access
+	var profileVisibility string
+	err = srv.db.QueryRow(r.Context(), "SELECT profile_visibility FROM candidates WHERE id = $1", candidateID).Scan(&profileVisibility)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "Candidate not found")
+			return
+		}
+		log.Printf("[SHORTLISTS] Failed to verify candidate existence: %v", err)
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	var hasPublicReports bool
+	reportsQuery := `
+		SELECT EXISTS(
+			SELECT 1 FROM assessment_reports ar 
+			JOIN interviews i ON ar.interview_id = i.id 
+			WHERE ar.candidate_id = $1 AND i.company_assessment_id IS NULL
+		)
+	`
+	err = srv.db.QueryRow(r.Context(), reportsQuery, candidateID).Scan(&hasPublicReports)
+	if err != nil || !hasPublicReports {
+		writeError(w, http.StatusNotFound, "Candidate not found")
+		return
+	}
+
+	hasWorkspaceAccess := profileVisibility == "marketplace"
+	if !hasWorkspaceAccess {
+		var isApproved bool
+		accessQuery := `SELECT EXISTS(SELECT 1 FROM candidate_access_requests WHERE company_id = $1 AND candidate_id = $2 AND status = 'approved')`
+		err = srv.db.QueryRow(r.Context(), accessQuery, *user.CompanyID, candidateID).Scan(&isApproved)
+		if err == nil && isApproved {
+			hasWorkspaceAccess = true
+		}
+	}
+
+	if !hasWorkspaceAccess {
+		writeError(w, http.StatusNotFound, "Candidate not found")
+		return
+	}
+
+	// 3. Add Candidate Shortlist Membership if not already added
+	var alreadyMember bool
+	err = srv.db.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM company_shortlist_candidates WHERE shortlist_id = $1 AND candidate_id = $2)", shortlistID, candidateID).Scan(&alreadyMember)
+	if err != nil {
+		log.Printf("[SHORTLISTS] Failed to check candidate shortlist membership: %v", err)
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	if !alreadyMember {
+		membershipID := uuid.New()
+		now := time.Now().UTC()
+		_, err = srv.db.Exec(r.Context(), "INSERT INTO company_shortlist_candidates (id, shortlist_id, candidate_id, created_at) VALUES ($1, $2, $3, $4)", membershipID, shortlistID, candidateID, now)
+		if err != nil {
+			log.Printf("[SHORTLISTS] Failed to insert candidate shortlist membership: %v", err)
+			writeError(w, http.StatusInternalServerError, "Internal server error")
+			return
+		}
+
+		// Log candidate activity
+		activityID := uuid.New()
+		summary := fmt.Sprintf("Added candidate to shortlist '%s'", shortlistName)
+		metaJSON, _ := json.Marshal(map[string]string{
+			"shortlist_id":   shortlistID.String(),
+			"shortlist_name": shortlistName,
+		})
+
+		activityQuery := `
+			INSERT INTO company_candidate_activities (id, company_id, candidate_id, actor_user_id, activity_type, summary, metadata, created_at)
+			VALUES ($1, $2, $3, $4, 'shortlist_added', $5, $6, $7)
+		`
+		_, err = srv.db.Exec(r.Context(), activityQuery, activityID, *user.CompanyID, candidateID, user.ID, summary, metaJSON, now)
+		if err != nil {
+			log.Printf("[SHORTLISTS] Failed to log candidate shortlist activity: %v", err)
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (srv *server) handleRemoveCandidate(w http.ResponseWriter, r *http.Request) {
+	user, err := srv.authenticateUser(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "Could not validate credentials")
+		return
+	}
+	if user.CompanyID == nil {
+		writeError(w, http.StatusForbidden, "Company access required")
+		return
+	}
+
+	role, err := srv.getCompanyContextRole(r.Context(), user)
+	if err != nil || (role != "admin" && role != "recruiter") {
+		writeError(w, http.StatusForbidden, "Recruiter or admin access required")
+		return
+	}
+
+	shortlistIDStr := r.PathValue("shortlist_id")
+	shortlistID, err := uuid.Parse(shortlistIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid shortlist ID format")
+		return
+	}
+
+	candidateIDStr := r.PathValue("candidate_id")
+	candidateID, err := uuid.Parse(candidateIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid candidate ID format")
+		return
+	}
+
+	// 1. Verify shortlist exists and belongs to this company
+	var companyID uuid.UUID
+	var shortlistName string
+	err = srv.db.QueryRow(r.Context(), "SELECT company_id, name FROM company_shortlists WHERE id = $1", shortlistID).Scan(&companyID, &shortlistName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "Shortlist not found")
+			return
+		}
+		log.Printf("[SHORTLISTS] Failed to get shortlist details: %v", err)
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	if companyID != *user.CompanyID {
+		writeError(w, http.StatusForbidden, "Not your shortlist")
+		return
+	}
+
+	// 2. Remove Membership if exists
+	var membershipID uuid.UUID
+	err = srv.db.QueryRow(r.Context(), "SELECT id FROM company_shortlist_candidates WHERE shortlist_id = $1 AND candidate_id = $2", shortlistID, candidateID).Scan(&membershipID)
+	if err == nil {
+		_, err = srv.db.Exec(r.Context(), "DELETE FROM company_shortlist_candidates WHERE id = $1", membershipID)
+		if err != nil {
+			log.Printf("[SHORTLISTS] Failed to delete candidate shortlist membership: %v", err)
+			writeError(w, http.StatusInternalServerError, "Internal server error")
+			return
+		}
+
+		// Log candidate activity
+		activityID := uuid.New()
+		now := time.Now().UTC()
+		summary := fmt.Sprintf("Removed candidate from shortlist '%s'", shortlistName)
+		metaJSON, _ := json.Marshal(map[string]string{
+			"shortlist_id":   shortlistID.String(),
+			"shortlist_name": shortlistName,
+		})
+
+		activityQuery := `
+			INSERT INTO company_candidate_activities (id, company_id, candidate_id, actor_user_id, activity_type, summary, metadata, created_at)
+			VALUES ($1, $2, $3, $4, 'shortlist_removed', $5, $6, $7)
+		`
+		_, err = srv.db.Exec(r.Context(), activityQuery, activityID, *user.CompanyID, candidateID, user.ID, summary, metaJSON, now)
+		if err != nil {
+			log.Printf("[SHORTLISTS] Failed to log candidate shortlist activity: %v", err)
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// User Authentication & Context Helpers
+
+func (srv *server) authenticateUser(r *http.Request) (User, error) {
+	var tokenStr string
+
+	// 1. Try Authorization Bearer header first
+	authHeader := r.Header.Get("Authorization")
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		tStr := strings.TrimPrefix(authHeader, "Bearer ")
+		token, err := jwt.Parse(tStr, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return []byte(srv.config.SecretKey), nil
+		})
+		if err == nil && token.Valid {
+			tokenStr = tStr
+		}
+	}
+
+	// 2. Try Cookie if Bearer was missing or invalid
+	if tokenStr == "" {
+		cookie, err := r.Cookie(srv.config.SessionCookieName)
+		if err == nil {
+			tokenStr = cookie.Value
+		}
+	}
+
+	if tokenStr == "" {
+		return User{}, fmt.Errorf("no credentials found")
+	}
+
+	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(srv.config.SecretKey), nil
+	})
+
+	if err != nil || !token.Valid {
+		return User{}, fmt.Errorf("invalid token: %v", err)
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return User{}, fmt.Errorf("invalid claims")
+	}
+
+	sub, ok := claims["sub"].(string)
+	if !ok {
+		return User{}, fmt.Errorf("missing sub claim")
+	}
+
+	userID, err := uuid.Parse(sub)
+	if err != nil {
+		return User{}, fmt.Errorf("invalid sub uuid: %v", err)
+	}
+
+	var u User
+	err = srv.db.QueryRow(r.Context(), "SELECT id, email, role, is_active FROM users WHERE id = $1", userID).Scan(
+		&u.ID, &u.Email, &u.Role, &u.IsActive,
+	)
+	if err != nil {
+		return User{}, err
+	}
+
+	if !u.IsActive {
+		return User{}, fmt.Errorf("user is inactive")
+	}
+
+	// Evaluate User Company ID
+	if u.Role == "company_admin" {
+		var cID uuid.UUID
+		err = srv.db.QueryRow(r.Context(), "SELECT id FROM companies WHERE owner_user_id = $1", u.ID).Scan(&cID)
+		if err == nil {
+			u.CompanyID = &cID
+		}
+	} else if u.Role == "company_member" {
+		var cID uuid.UUID
+		err = srv.db.QueryRow(r.Context(), "SELECT company_id FROM company_members WHERE user_id = $1", u.ID).Scan(&cID)
+		if err == nil {
+			u.CompanyID = &cID
+		}
+	}
+
+	return u, nil
+}
+
+func (srv *server) getCompanyContextRole(ctx context.Context, u User) (string, error) {
+	if u.Role == "company_admin" {
+		return "admin", nil
+	}
+	if u.Role == "company_member" && u.CompanyID != nil {
+		var role string
+		err := srv.db.QueryRow(ctx, "SELECT role FROM company_members WHERE user_id = $1 AND company_id = $2", u.ID, *u.CompanyID).Scan(&role)
+		if err != nil {
+			return "", err
+		}
+		if role == "member" {
+			return "recruiter", nil
+		}
+		return role, nil
+	}
+	return "", fmt.Errorf("forbidden")
 }

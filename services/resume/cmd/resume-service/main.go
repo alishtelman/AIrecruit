@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,8 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -106,14 +109,42 @@ type statusResponse struct {
 	Upload              endpointSnapshot `json:"upload"`
 }
 
+type Config struct {
+	SecretKey         string
+	SessionCookieName string
+	MediaServiceURL   string
+}
+
 type server struct {
+	db         *pgxpool.Pool
+	config     Config
 	storageDir string
 	maxBytes   int64
 	upload     endpointMetrics
 }
 
 func main() {
+	databaseURL := envOrDefault("DATABASE_URL", "")
+	databaseURL = strings.Replace(databaseURL, "postgresql+asyncpg://", "postgresql://", 1)
+	var pool *pgxpool.Pool
+	if databaseURL != "" {
+		var err error
+		pool, err = pgxpool.New(context.Background(), databaseURL)
+		if err != nil {
+			panic(err)
+		}
+		defer pool.Close()
+	}
+
+	config := Config{
+		SecretKey:         envOrDefault("SECRET_KEY", "dev-secret-key-change-me"),
+		SessionCookieName: envOrDefault("SESSION_COOKIE_NAME", "airecruit_session"),
+		MediaServiceURL:   envOrDefault("MEDIA_SERVICE_URL", "http://media-service:8080"),
+	}
+
 	srv := &server{
+		db:         pool,
+		config:     config,
 		storageDir: envOrDefault("RESUME_STORAGE_DIR", "/app/storage/resumes"),
 		maxBytes:   int64(envIntOrDefault("MAX_RESUME_SIZE_MB", defaultMaxResumeSizeMB)) * 1024 * 1024,
 	}
@@ -121,7 +152,15 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", srv.handleHealth)
 	mux.HandleFunc("GET /v1/status", srv.handleStatus)
-	mux.HandleFunc("POST /v1/resumes", srv.handleUpload)
+	mux.HandleFunc("POST /v1/resumes", srv.handleInternalUpload) // keep internal endpoint
+	
+	// Candidate endpoints
+	mux.HandleFunc("GET /v1/candidate/stats", srv.handleGetStats)
+	mux.HandleFunc("GET /v1/candidate/resume", srv.handleGetResume)
+	mux.HandleFunc("GET /v1/candidate/resume/text", srv.handleGetResumeText)
+	mux.HandleFunc("POST /v1/candidate/resume/upload", srv.handleCandidateUpload)
+	mux.HandleFunc("POST /v1/interviews/{interview_id}/signals", srv.handlePostSignals)
+	mux.HandleFunc("POST /v1/interviews/{interview_id}/recording", srv.handlePostRecording)
 
 	addr := envOrDefault("RESUME_SERVICE_ADDR", ":8080")
 	if err := http.ListenAndServe(addr, mux); err != nil {
@@ -141,7 +180,7 @@ func (s *server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.status())
 }
 
-func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleInternalUpload(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(s.maxBytes); err != nil {
 		writeError(w, http.StatusRequestEntityTooLarge, "file exceeds maximum allowed size")
 		return

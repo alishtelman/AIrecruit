@@ -15,10 +15,13 @@ import (
 )
 
 type server struct {
-	backendProxy   *httputil.ReverseProxy
-	mediaProxy     *httputil.ReverseProxy
-	authProxy      *httputil.ReverseProxy
-	templatesProxy *httputil.ReverseProxy
+	backendProxy     *httputil.ReverseProxy
+	mediaProxy       *httputil.ReverseProxy
+	authProxy        *httputil.ReverseProxy
+	templatesProxy   *httputil.ReverseProxy
+	marketplaceProxy *httputil.ReverseProxy
+	resumeProxy      *httputil.ReverseProxy
+	dialogProxy      *httputil.ReverseProxy
 }
 
 func main() {
@@ -29,6 +32,9 @@ func main() {
 	mediaURL := parseURL(envOrDefault("MEDIA_SERVICE_URL", "http://media-service:8080"))
 	authURL := parseURL(envOrDefault("AUTH_SERVICE_URL", "http://auth-service:8080"))
 	templatesURL := parseURL(envOrDefault("TEMPLATES_SERVICE_URL", "http://templates-service:8080"))
+	marketplaceURL := parseURL(envOrDefault("MARKETPLACE_SERVICE_URL", "http://marketplace-service:8080"))
+	resumeURL := parseURL(envOrDefault("RESUME_SERVICE_URL", "http://resume-service:8080"))
+	dialogURL := parseURL(envOrDefault("DIALOG_SERVICE_URL", "http://dialog-service:8080"))
 
 	log.Printf("Routing Configured:")
 	log.Printf("  Listen Address: %s", listenAddr)
@@ -36,12 +42,18 @@ func main() {
 	log.Printf("  Media URL:      %s", mediaURL)
 	log.Printf("  Auth URL:       %s", authURL)
 	log.Printf("  Templates URL:  %s", templatesURL)
+	log.Printf("  Marketplace URL: %s", marketplaceURL)
+	log.Printf("  Resume URL:     %s", resumeURL)
+	log.Printf("  Dialog URL:     %s", dialogURL)
 
 	srv := &server{
-		backendProxy:   httputil.NewSingleHostReverseProxy(backendURL),
-		mediaProxy:     httputil.NewSingleHostReverseProxy(mediaURL),
-		authProxy:      httputil.NewSingleHostReverseProxy(authURL),
-		templatesProxy: httputil.NewSingleHostReverseProxy(templatesURL),
+		backendProxy:     httputil.NewSingleHostReverseProxy(backendURL),
+		mediaProxy:       httputil.NewSingleHostReverseProxy(mediaURL),
+		authProxy:        httputil.NewSingleHostReverseProxy(authURL),
+		templatesProxy:   httputil.NewSingleHostReverseProxy(templatesURL),
+		marketplaceProxy: httputil.NewSingleHostReverseProxy(marketplaceURL),
+		resumeProxy:      httputil.NewSingleHostReverseProxy(resumeURL),
+		dialogProxy:      httputil.NewSingleHostReverseProxy(dialogURL),
 	}
 
 	mux := http.NewServeMux()
@@ -111,6 +123,49 @@ func (s *server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(path, "/api/v1/company/templates") || path == "/api/v1/interviews/templates/public" {
 		log.Printf("[PROXY] %s %s -> templates-service %s", method, path, r.URL.Path)
 		s.templatesProxy.ServeHTTP(w, r)
+		return
+	}
+
+	// Proxy shortlist operations directly to Go marketplace-service
+	if strings.HasPrefix(path, "/api/v1/company/shortlists") {
+		r.URL.Path = strings.Replace(path, "/api", "", 1)
+		log.Printf("[PROXY] %s %s -> marketplace-service %s", method, path, r.URL.Path)
+		s.marketplaceProxy.ServeHTTP(w, r)
+		return
+	}
+
+	// Proxy candidate privacy, salary, and access-request operations directly to Go marketplace-service
+	if strings.HasPrefix(path, "/api/v1/candidate/salary") || 
+	   strings.HasPrefix(path, "/api/v1/candidate/privacy") || 
+	   strings.HasPrefix(path, "/api/v1/candidate/access-requests") || 
+	   strings.HasPrefix(path, "/api/v1/candidate/share/") || 
+	   strings.HasPrefix(path, "/api/v1/company/share-links/") {
+		r.URL.Path = strings.Replace(path, "/api", "", 1)
+		log.Printf("[PROXY] %s %s -> marketplace-service %s", method, path, r.URL.Path)
+		s.marketplaceProxy.ServeHTTP(w, r)
+		return
+	}
+
+	// Proxy candidate resume operations and stats directly to Go resume-service
+	if strings.HasPrefix(path, "/api/v1/candidate/resume") || path == "/api/v1/candidate/stats" {
+		r.URL.Path = strings.Replace(path, "/api", "", 1)
+		log.Printf("[PROXY] %s %s -> resume-service %s", method, path, r.URL.Path)
+		s.resumeProxy.ServeHTTP(w, r)
+		return
+	}
+
+	// Proxy behavioral proctoring signals & recording uploads directly to resume-service in Go
+	if method == "POST" && strings.HasPrefix(path, "/api/v1/interviews/") && (strings.HasSuffix(path, "/signals") || strings.HasSuffix(path, "/recording")) {
+		r.URL.Path = strings.Replace(path, "/api", "", 1)
+		log.Printf("[PROXY] %s %s -> resume-service %s", method, path, r.URL.Path)
+		s.resumeProxy.ServeHTTP(w, r)
+		return
+	}
+
+	// Proxy interview/dialog engine operations directly to Go dialog-service
+	if strings.HasPrefix(path, "/api/v1/interviews") {
+		log.Printf("[PROXY] %s %s -> dialog-service %s", method, path, r.URL.Path)
+		s.dialogProxy.ServeHTTP(w, r)
 		return
 	}
 

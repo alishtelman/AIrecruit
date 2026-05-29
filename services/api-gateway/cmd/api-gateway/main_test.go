@@ -44,18 +44,28 @@ func TestGatewayRouting(t *testing.T) {
 	}))
 	defer templatesServer.Close()
 
+	marketplaceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Mock-Source", "marketplace")
+		w.Header().Set("X-Mock-Path", r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("marketplace-response"))
+	}))
+	defer marketplaceServer.Close()
+
 	// 2. Parse mock URLs
 	backendURL, _ := url.Parse(backendServer.URL)
 	mediaURL, _ := url.Parse(mediaServer.URL)
 	authURL, _ := url.Parse(authServer.URL)
 	templatesURL, _ := url.Parse(templatesServer.URL)
+	marketplaceURL, _ := url.Parse(marketplaceServer.URL)
 
 	// 3. Initialize gateway server
 	srv := &server{
-		backendProxy:   httputil.NewSingleHostReverseProxy(backendURL),
-		mediaProxy:     httputil.NewSingleHostReverseProxy(mediaURL),
-		authProxy:      httputil.NewSingleHostReverseProxy(authURL),
-		templatesProxy: httputil.NewSingleHostReverseProxy(templatesURL),
+		backendProxy:     httputil.NewSingleHostReverseProxy(backendURL),
+		mediaProxy:       httputil.NewSingleHostReverseProxy(mediaURL),
+		authProxy:        httputil.NewSingleHostReverseProxy(authURL),
+		templatesProxy:   httputil.NewSingleHostReverseProxy(templatesURL),
+		marketplaceProxy: httputil.NewSingleHostReverseProxy(marketplaceURL),
 	}
 
 	tests := []struct {
@@ -161,6 +171,30 @@ func TestGatewayRouting(t *testing.T) {
 			expectedSource: "templates",
 			expectedPath:   "/api/v1/interviews/templates/public",
 			expectedBody:   "templates-response",
+		},
+		{
+			name:           "List Shortlists goes to marketplace-service with path rewrite",
+			method:         "GET",
+			path:           "/api/v1/company/shortlists",
+			expectedSource: "marketplace",
+			expectedPath:   "/v1/company/shortlists",
+			expectedBody:   "marketplace-response",
+		},
+		{
+			name:           "Create Shortlist goes to marketplace-service with path rewrite",
+			method:         "POST",
+			path:           "/api/v1/company/shortlists",
+			expectedSource: "marketplace",
+			expectedPath:   "/v1/company/shortlists",
+			expectedBody:   "marketplace-response",
+		},
+		{
+			name:           "Add Candidate to Shortlist goes to marketplace-service with path rewrite",
+			method:         "POST",
+			path:           "/api/v1/company/shortlists/76f0c8e3-057d-4c3e-8e8f-7c604b901a2f/candidates/93a73297-b0f5-4624-b2d5-f2a2b4c03db3",
+			expectedSource: "marketplace",
+			expectedPath:   "/v1/company/shortlists/76f0c8e3-057d-4c3e-8e8f-7c604b901a2f/candidates/93a73297-b0f5-4624-b2d5-f2a2b4c03db3",
+			expectedBody:   "marketplace-response",
 		},
 	}
 

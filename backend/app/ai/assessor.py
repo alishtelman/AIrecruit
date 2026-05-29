@@ -187,11 +187,36 @@ _QUESTION_ANALYSIS_TOOL = {
                                     "0.0 = clearly human, 1.0 = almost certainly AI."
                                 ),
                             },
+                            "communication_star_structured": {
+                                "type": "boolean",
+                                "description": "True if candidate structured their response using STAR or another logical framework, False otherwise."
+                            },
+                            "communication_style": {
+                                "type": "string",
+                                "description": "Detailed description of communication clarity, brevity, structurization, or issues like rambling."
+                            },
+                            "problem_solving_approach": {
+                                "type": "string",
+                                "enum": ["first_principles", "structured_decomposition", "trial_and_error", "superficial_heuristics", "none"],
+                                "description": "Problem-solving methodology demonstrated in the response."
+                            },
+                            "problem_solving_evidence": {
+                                "type": "string",
+                                "description": "Explicit evidence of hypothesis testing, root cause identification, or trade-off consideration."
+                            },
+                            "leadership_ownership": {
+                                "type": "string",
+                                "enum": ["strong_ownership", "collaborative", "passive_execution", "blame_shifting", "none"],
+                                "description": "Degree of personal ownership and/or collaboration shown."
+                            },
                         },
                         "required": [
                             "question_number", "targeted_competencies",
                             "answer_quality", "evidence", "skills_mentioned",
                             "red_flags", "specificity", "depth", "ai_likelihood",
+                            "communication_star_structured", "communication_style",
+                            "problem_solving_approach", "problem_solving_evidence",
+                            "leadership_ownership"
                         ],
                     },
                 },
@@ -6179,7 +6204,22 @@ class LLMAssessor:
             "4. Технологии/навыки с ЛИЧНЫМ опытом использования\n"
             "5. Красные флаги (противоречия, уход от вопроса, повторения, фабрикации)\n"
             "6. Конкретность (high/medium/low) и глубина (expert/strong/adequate/surface/none)\n"
-            "7. Вероятность AI-генерации (ai_likelihood 0.0-1.0)\n\n"
+            "7. Вероятность AI-генерации (ai_likelihood 0.0-1.0)\n"
+            "8. communication_star_structured (boolean): структурирован ли ответ по STAR (Ситуация, Задача, Действие, Результат) или другой четкой логической схеме?\n"
+            "9. communication_style: подробное описание ясности, лаконичности речи, избыточного использования «воды» или сумбурного изложения.\n"
+            "10. problem_solving_approach: метод решения задач:\n"
+            "    - 'first_principles' (первопринципное мышление: декомпозиция, поиск первопричины, анализ trade-offs и ограничений, понимание внутренних механизмов),\n"
+            "    - 'structured_decomposition' (последовательный структурированный разбор),\n"
+            "    - 'trial_and_error' (метод проб и ошибок, хаотичный поиск решения),\n"
+            "    - 'superficial_heuristics' (заученные шаблоны, поверхностная зубрежка),\n"
+            "    - 'none' (неприменимо).\n"
+            "11. problem_solving_evidence: цитата или описание, подтверждающее выбранный метод решения задач.\n"
+            "12. leadership_ownership: уровень ответственности и командного взаимодействия:\n"
+            "    - 'strong_ownership' (проактивность, принятие личной ответственности за результаты и сбои),\n"
+            "    - 'collaborative' (акцент на командной работе, выравнивании ожиданий и обмене опытом),\n"
+            "    - 'passive_execution' (пассивное исполнение задач сверху без понимания цели),\n"
+            "    - 'blame_shifting' (перекладывание ответственности на коллег, стек, руководство или обстоятельства),\n"
+            "    - 'none' (неприменимо).\n\n"
             "## ЖЁСТКИЕ ПРАВИЛА ОЦЕНКИ ANSWER_QUALITY — ОБЯЗАТЕЛЬНЫ\n\n"
             "КОРОТКИЙ ОТВЕТ (<10 слов):\n"
             "- answer_quality ОБЯЗАН быть ≤ 3\n"
@@ -6216,8 +6256,8 @@ class LLMAssessor:
             "идеальное покрытие всех аспектов без личных примеров, академический тон, "
             "ответ на незаданные вопросы. Живой человек: личные примеры, неполные мысли, "
             "специфические детали, неформальный язык.\n\n"
-            f"ВАЖНО: все свободные текстовые поля ответа (`evidence`, `red_flags`) верни на {output_language}. "
-            "Enum-значения (`specificity`, `depth`, `proficiency`) оставь в допустимом формате schema."
+            f"ВАЖНО: все свободные текстовые поля ответа (`evidence`, `red_flags`, `communication_style`, `problem_solving_evidence`) верни на {output_language}. "
+            "Enum-значения (`specificity`, `depth`, `proficiency`, `problem_solving_approach`, `leadership_ownership`) оставь в допустимом формате schema."
         )
 
         try:
@@ -6298,6 +6338,20 @@ class LLMAssessor:
             "- Слабые кандидаты: 3-5. Средние: 5-6. Хорошие: 7-8. Исключительные: 9-10.\n"
             "- При сомнении — снижай. Цена false-positive выше чем false-negative.\n"
             "- Не давай credit за намерения — только за доказанные знания и опыт.\n\n"
+            "## ОЦЕНКА МЯГКИХ НАВЫКОВ, КОММУНИКАЦИИ И РЕШЕНИЯ ЗАДАЧ (Pass 2)\n\n"
+            "При выставлении оценок по компетенциям категорий 'communication', 'problem_solving' и 'behavioral', опирайся на анализ вопросов (Pass 1) и следуй строгим критериям:\n\n"
+            "1. КОММУНИКАЦИЯ (competencies in 'communication' category):\n"
+            "- Оценка 7+: Требует, чтобы кандидат структурировал большинство ответов по методу STAR (Situation, Task, Action, Result) или другой ясной логической схеме (проверить поле communication_star_structured = true в Pass 1). Речь должна быть ясной, структурированной и лаконичной, с фокусом на главном.\n"
+            "- Оценка 5-6: Кандидат излагает мысли понятно, но требует наводящих вопросов для структурирования, допускает незначительную «воду» или сумбурность.\n"
+            "- Оценка ≤ 4: Кандидат уходит от ответов, излагает мысли хаотично, речь перегружена «водой» или jargon без адаптации под слушателя.\n\n"
+            "2. РЕШЕНИЕ ЗАДАЧ (competencies in 'problem_solving' category):\n"
+            "- Оценка 7+: Требует явных доказательств мышления от первых принципов (first_principles) или системной декомпозиции (structured_decomposition) в ответах. Кандидат должен четко описывать формулирование гипотез, изоляцию переменных, анализ ограничений и trade-offs.\n"
+            "- Оценка 5-6: Кандидат решает проблемы по готовым инструкциям или методом проб и ошибок (trial_and_error), но понимает базовые принципы.\n"
+            "- Оценка ≤ 4: Кандидат полагается исключительно на заученные шаблоны и поверхностную зубрежку (superficial_heuristics) без понимания сути процессов, либо не может описать подход к диагностике.\n\n"
+            "3. ПОВЕДЕНЧЕСКИЕ НАВЫКИ И ЛИДЕРСТВО (competencies in 'behavioral' category):\n"
+            "- Оценка 7+: Требует высокого уровня личной ответственности (strong_ownership - проактивное решение проблем, принятие ответственности за результаты и ошибки, выводы на будущее) или сильного командного взаимодействия (collaborative - координация, менторство, конструктивное разрешение конфликтов).\n"
+            "- Оценка 5-6: Кандидат демонстрирует стабильное выполнение задач в качестве пассивного исполнителя (passive_execution), без проактивности или глубокого понимания бизнес-целей.\n"
+            "- Оценка ≤ 3: Замечено перекладывание ответственности (blame_shifting) на коллег, технологии, внешние обстоятельства или руководство.\n\n"
             f"ВАЖНО: все свободные текстовые поля (`evidence`, `reasoning`, `strengths`, `weaknesses`, "
             f"`recommendations`, `interview_summary`, `red_flags.flag`, `red_flags.evidence`) верни на {output_language}. "
             "Enum-значения и числовые поля не переводить."
@@ -6333,17 +6387,9 @@ class LLMAssessor:
                     model_override=model_override,
                     runtime_settings=runtime_settings,
                 )
-            except Exception:
-                logger.exception("Legacy assessment failed, falling back to deterministic mock assessment")
-                return await MockAssessor().assess(
-                    target_role=target_role,
-                    message_history=message_history or [],
-                    message_timestamps=None,
-                    behavioral_signals=None,
-                    language=report_language,
-                    interview_meta=None,
-                    model_override=model_override,
-                )
+            except Exception as exc:
+                logger.exception("Legacy assessment failed")
+                raise RuntimeError("AI assessment failed completely") from exc
 
         comp_scores = data.get("competency_scores", [])
         raw_aggregates = _compute_aggregates(comp_scores, target_role)
@@ -6501,207 +6547,8 @@ class LLMAssessor:
 
 
 # ---------------------------------------------------------------------------
-# Mock fallback (no API key)
+# Disabled Fallback (no API key)
 # ---------------------------------------------------------------------------
-
-class MockAssessor:
-    async def assess(
-        self,
-        target_role: str,
-        message_history: list[dict],
-        message_timestamps: list[dict] | None = None,
-        behavioral_signals: dict | None = None,
-        language: str = "ru",
-        interview_meta: dict | None = None,
-        model_override: str | None = None,
-    ) -> AssessmentResult:
-        report_language = _normalized_report_language(language)
-        resolved_model = resolve_llm_runtime_model(model_override)
-        model_version = "mock-v2-evidence-aware"
-        if is_allowed_llm_model_preference(model_override):
-            model_version = f"{model_version}[{resolved_model}]"
-        per_q = _build_mock_question_analysis(
-            message_history=message_history,
-            target_role=target_role,
-            interview_meta=interview_meta,
-            report_language=report_language,
-        )
-        topic_plan = list((interview_meta or {}).get("topic_plan", []) or [])
-        per_q = _enrich_per_question_analysis_with_topic_plan(
-            per_q,
-            topic_plan,
-            report_language=report_language,
-        )
-        summary_model = _build_summary_model(target_role, report_language, interview_meta, per_q)
-        comp_scores = _build_mock_competency_scores(
-            target_role=target_role,
-            summary_model=summary_model,
-            interview_meta=interview_meta,
-            report_language=report_language,
-            per_question_analysis=per_q,
-        )
-        aggregates = _compute_aggregates(comp_scores, target_role)
-        overall = aggregates["overall_score"]
-
-        if overall >= 8.5:
-            recommendation = "strong_yes"
-        elif overall >= 7.0:
-            recommendation = "yes"
-        elif overall >= 5.5:
-            recommendation = "maybe"
-        else:
-            recommendation = "no"
-
-        response_count = len([m for m in message_history if m["role"] == "candidate"])
-
-        confidence_metrics = _compute_confidence_metrics(
-            comp_scores,
-            per_q,
-            summary_model=summary_model,
-            interview_meta=interview_meta,
-        )
-        answer_metrics = _compute_answer_metrics(per_q, message_history or [])
-        adjusted_aggregates, summary_penalties = _apply_summary_penalties(
-            aggregates,
-            summary_model,
-            confidence_metrics,
-        )
-        overall = adjusted_aggregates["overall_score"]
-        strengths, weaknesses, recommendations = _build_outcome_feedback(summary_model, report_language)
-        strengths = _prefer_outcome_feedback(
-            ["Завершил полное структурированное собеседование"] if report_language == "ru" else ["Completed the full structured interview"],
-            strengths,
-        )
-        weaknesses = _prefer_outcome_feedback(
-            ["Ответы могут включать более конкретные метрики"] if report_language == "ru" else ["Answers may include more concrete metrics"],
-            weaknesses,
-        )
-        recommendations = _prefer_outcome_feedback(
-            ["Используйте формат STAR для ответов"] if report_language == "ru" else ["Use the STAR format for answers"],
-            recommendations,
-        )
-        recommendation, gate_reasons = _apply_recommendation_gates(
-            llm_rec=recommendation,
-            overall_score=overall,
-            summary_model=summary_model,
-            answer_metrics=answer_metrics,
-            confidence_metrics=confidence_metrics,
-            competency_scores=comp_scores,
-        )
-        full_json = {
-            "competency_scores": comp_scores,
-            "per_question_analysis": per_q,
-            "skill_tags": _aggregate_skills(per_q, message_history=message_history),
-            "red_flags": [],
-            "response_consistency": round(min(9.0, max(3.0, overall + 0.4)), 1),
-            "aggregates": adjusted_aggregates,
-            "overall_confidence": confidence_metrics["overall_confidence"],
-            "confidence_verdict": confidence_metrics["confidence_verdict"],
-            "competency_confidence": confidence_metrics["competency_confidence"],
-            "confidence_reasons": confidence_metrics["confidence_reasons"],
-            "evidence_coverage": confidence_metrics["evidence_coverage"],
-            "decision_policy_version": _DECISION_POLICY_VERSION,
-            "summary_model": summary_model,
-            "hiring_recommendation": recommendation,
-            "recommendation_gate_reasons": gate_reasons,
-            "score_penalties": summary_penalties,
-            "interview_meta": interview_meta or {},
-            "answer_quality_score": answer_metrics["answer_quality_score"],
-            "depth_score": answer_metrics["depth_score"],
-            "mock": True,
-        }
-        full_json["calibrated_scoring"] = _build_calibrated_scoring(
-            per_question_analysis=per_q,
-            summary_model=summary_model,
-            report_language=report_language,
-            aggregates_pre_penalty=aggregates,
-            aggregates_final=adjusted_aggregates,
-            penalties=summary_penalties,
-        )
-        full_json["explainability_report"] = _build_explainability_report(
-            target_role=target_role,
-            report_language=report_language,
-            summary_model=summary_model,
-            per_question_analysis=per_q,
-            strengths=strengths,
-            weaknesses=weaknesses,
-            recommendations=recommendations,
-            hiring_recommendation=recommendation,
-            overall_score=overall,
-            overall_confidence=confidence_metrics["overall_confidence"],
-            calibrated_scoring=full_json.get("calibrated_scoring", {}),
-            penalties=list(full_json.get("score_penalties", []) or []),
-        )
-        system_design_evaluation = _build_system_design_evaluation(interview_meta, per_q)
-        if system_design_evaluation:
-            full_json["system_design_evaluation"] = system_design_evaluation
-        behavioral_interview_evaluation = _build_behavioral_interview_evaluation(
-            interview_meta,
-            per_q,
-            message_history,
-            report_language,
-        )
-        if behavioral_interview_evaluation:
-            full_json["behavioral_interview_evaluation"] = behavioral_interview_evaluation
-        coding_task_evaluation = _build_coding_task_evaluation(
-            interview_meta,
-            per_q,
-            message_history,
-            report_language,
-        )
-        if coding_task_evaluation:
-            full_json["coding_task_evaluation"] = coding_task_evaluation
-        sql_live_evaluation = _build_sql_live_evaluation(
-            interview_meta,
-            per_q,
-            message_history,
-            report_language,
-        )
-        if sql_live_evaluation:
-            full_json["sql_live_evaluation"] = sql_live_evaluation
-        written_communication_evaluation = _build_written_communication_evaluation(
-            interview_meta,
-            per_q,
-            message_history,
-            report_language,
-        )
-        if written_communication_evaluation:
-            full_json["written_communication_evaluation"] = written_communication_evaluation
-
-        cheat_risk, cheat_flags = _compute_cheat_risk(behavioral_signals, per_q)
-
-        return AssessmentResult(
-            overall_score=overall,
-            hard_skills_score=adjusted_aggregates["hard_skills_score"],
-            soft_skills_score=adjusted_aggregates["soft_skills_score"],
-            communication_score=adjusted_aggregates["communication_score"],
-            problem_solving_score=adjusted_aggregates["problem_solving_score"],
-            strengths=strengths or [],
-            weaknesses=weaknesses or [],
-            recommendations=recommendations or [],
-            hiring_recommendation=recommendation,
-            interview_summary=_build_interview_summary_text(
-                target_role,
-                report_language,
-                summary_model,
-                overall,
-            ),
-            model_version=model_version,
-            full_report_json=full_json,
-            competency_scores=comp_scores,
-            per_question_analysis=per_q,
-            skill_tags=full_json["skill_tags"],
-            red_flags=[],
-            response_consistency=full_json["response_consistency"],
-            cheat_risk_score=cheat_risk,
-            cheat_flags=cheat_flags,
-            overall_confidence=confidence_metrics["overall_confidence"],
-            competency_confidence=confidence_metrics["competency_confidence"],
-            confidence_reasons=confidence_metrics["confidence_reasons"],
-            evidence_coverage=confidence_metrics["evidence_coverage"],
-            decision_policy_version=_DECISION_POLICY_VERSION,
-        )
-
 
 class DisabledAssessor:
     async def assess(
@@ -6728,7 +6575,5 @@ except Exception:
 
 if _provider and _provider.name not in {"mock"}:
     assessor = LLMAssessor(provider=_provider)
-elif settings.allow_mock_ai:
-    assessor = MockAssessor()  # type: ignore[assignment]
 else:
     assessor = DisabledAssessor()  # type: ignore[assignment]

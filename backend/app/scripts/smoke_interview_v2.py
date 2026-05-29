@@ -81,8 +81,8 @@ def _compute_human_likeness(metrics: dict[str, int]) -> tuple[int, str]:
     return score, verdict
 
 
-async def _run_smoke(role: str, provider: str, base_url: str, max_turns: int, turn_delay_seconds: float = 8.0) -> int:
-    async with httpx.AsyncClient(base_url=base_url, timeout=90.0) as client:
+async def _run_smoke(role: str, provider: str, base_url: str, max_turns: int, turn_delay_seconds: float = 20.0) -> int:
+    async with httpx.AsyncClient(base_url=base_url, timeout=300.0) as client:
         status_resp = await client.get("/ai/status")
         status_resp.raise_for_status()
         ai_status = status_resp.json()

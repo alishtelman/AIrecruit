@@ -76,6 +76,9 @@ services:
     environment:
       RESUME_STORAGE_DIR: /app/storage/resumes
       MAX_RESUME_SIZE_MB: ${MAX_RESUME_SIZE_MB:-10}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://recruiting:recruiting@postgres:5432/recruiting}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-me}
+      MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:8080}
     ports:
       - "8083:8080"
     volumes:
@@ -195,6 +198,26 @@ services:
       timeout: 3s
       retries: 6
 
+  dialog-service:
+    build:
+      context: .
+      dockerfile: ./services/dialog/Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "8089:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: :8080
+      BACKEND_URL: http://backend:8000
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+
   api-gateway:
     build: ./services/api-gateway
     ports:
@@ -210,6 +233,10 @@ services:
         condition: service_healthy
       templates-service:
         condition: service_healthy
+      marketplace-service:
+        condition: service_healthy
+      dialog-service:
+        condition: service_healthy
     environment:
       API_GATEWAY_ADDR: :8080
       BACKEND_URL: http://backend:8000
@@ -217,6 +244,8 @@ services:
       RESUME_SERVICE_URL: http://resume-service:8080
       AUTH_SERVICE_URL: http://auth-service:8080
       TEMPLATES_SERVICE_URL: http://templates-service:8080
+      MARKETPLACE_SERVICE_URL: http://marketplace-service:8080
+      DIALOG_SERVICE_URL: http://dialog-service:8080
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
       interval: 5s

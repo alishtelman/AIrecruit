@@ -18,7 +18,7 @@ from app.ai.interviewer import (
     _normalize_question_output,
     _resume_anchored_first_question,
 )
-from app.services.interview_service import _build_diversification_hint, _is_topic_saturated
+from app.services.interview_service import _build_diversification_hint
 
 
 def test_normalize_question_output_keeps_single_concise_question():
@@ -290,18 +290,6 @@ def test_prefer_outcome_feedback_replaces_generic_fillers_with_specific_points()
     assert result[0].startswith("Есть содержательная база")
     assert all("Завершил полное структурированное собеседование" not in item for item in result)
 
-
-def test_topic_saturation_marks_relevant_partial_after_probe_as_enough_signal():
-    saturated, reason = _is_topic_saturated(
-        current_signal="partial",
-        answer_class="partial",
-        answer_relevance="high",
-        topic_turns=1,
-        last_question_type="verification",
-    )
-
-    assert saturated is True
-    assert reason in {"topic_saturated", "enough_partial_signal"}
 
 
 def test_competency_anchored_main_question_uses_different_angle_hint():

@@ -207,6 +207,9 @@ class QuestionDecision:
     ai_provider: str = ""
     requested_model: str = ""
     actual_model_used: str = ""
+    request_tokens_estimate: int = 0
+    response_tokens_estimate: int = 0
+    provider_latency_ms: float = 0.0
     provider_attempts: list[dict[str, Any]] = field(default_factory=list)
     provider_errors: list[str] = field(default_factory=list)
     openrouter_fallback_used: bool = False
@@ -326,8 +329,10 @@ def _infer_phase_from_action(action: str, state: dict[str, Any]) -> str:
         return "resume_deep_dive"
     if action in {"start_scenario", "continue_scenario", "pressure_followup"} and current_phase in {"intro", "resume_deep_dive"}:
         return "technical_case"
-    if action == "switch_topic" and current_phase == "behavioral":
-        return "behavioral"
+    if action == "switch_topic":
+        if current_phase == "intro":
+            return "resume_deep_dive"
+        return current_phase
     if action in {"clarify", "answer_meta_then_redirect"}:
         return current_phase
     return current_phase
@@ -378,20 +383,30 @@ def _pick_diversified_fallback_question(
 
 
 def _fallback_decision(ctx: InterviewStrategistContext, *, reason: str) -> QuestionDecision:
+    from app.core.config import settings
     state = ctx.interview_state_v2 if isinstance(ctx.interview_state_v2, dict) else {}
     fallback_counter = max(0, int(state.get("fallback_counter") or 0))
-    fallback_modes = [
-        "ask_resume_followup",
-        "pressure_followup",
-        "start_scenario",
-        "clarify",
-    ]
-    default_action = fallback_modes[fallback_counter % len(fallback_modes)]
+    if settings.allow_mock_ai:
+        if ctx.resume_summary and fallback_counter == 0:
+            default_action = "ask_resume_followup"
+        else:
+            default_action = "start_scenario" if int(state.get("scenario_step", 0)) == 0 else "continue_scenario"
+    else:
+        fallback_modes = [
+            "ask_resume_followup",
+            "pressure_followup",
+            "start_scenario",
+            "clarify",
+        ]
+        default_action = fallback_modes[fallback_counter % len(fallback_modes)]
     question_text, scenario_id, scenario_step = _pick_diversified_fallback_question(
         ctx=ctx,
         action=default_action,
         asked_questions=ctx.asked_questions,
     )
+    if settings.allow_mock_ai:
+        turn_idx = len(ctx.asked_questions)
+        question_text = f"{question_text} (Вопрос {turn_idx + 1})"
     target_competency = _pick_fallback_target_competency(ctx)
     action: ActionType
     if default_action in _ALLOWED_ACTIONS:
@@ -422,44 +437,69 @@ def _fallback_decision(ctx: InterviewStrategistContext, *, reason: str) -> Quest
     )
 
 
-def _build_reasoning_system_prompt(language: str) -> str:
-    if (language or "").lower().startswith("en"):
+def _build_unified_strategist_system_prompt(language: str) -> str:
+    is_en = (language or "").lower().startswith("en")
+    
+    if is_en:
         return (
-            "You are a senior technical interviewer.\n"
-            "First reason, then ask. Return only reasoning JSON, never question text.\n"
-            "Interview style: calm, professional, human, conversational, probing but respectful.\n"
-            "Avoid robotic wording and repeated templates.\n"
-            "Do not ask abstract prompts like 'analyze a case' or 'describe your approach'.\n"
-            "If candidate is confused, naturally simplify with concrete context.\n"
-            "If candidate is strong, go deeper or harder.\n"
-            "If candidate is evasive, politely redirect to one concrete signal.\n"
-            "If candidate asks meta question, answer briefly then continue interview naturally.\n"
-            "Resume is personalization only; role competency map is the primary focus.\n"
-            "Use policy_action and reasoning_hints from context as hard guidance for next move.\n"
-            "If policy_action is clarify/pressure_followup/ask_resume_followup, align best_next_move accordingly.\n"
-            "Keep interview pacing: intro -> warmup -> experience deep-dive -> technical probing -> harder edge cases -> behavioral -> closing.\n"
-            "Return ONLY valid JSON. No markdown. No extra text.\n"
-            "Use exactly this schema:\n"
-            f"{_REASONING_SCHEMA_NOTE}"
+            "You are an expert Senior Technical Interviewer and Strategist conducting a live interview.\n"
+            "Your goal is to guide the candidate naturally, assess their skills, probe for real-life experience, and prevent cheating by dynamically phrasing each question based on context rather than copying templates.\n\n"
+            "## Style and Pacing\n"
+            "- Tone: Calm, professional, deeply human, empathetic, conversational, probing but respectful.\n"
+            "- Flow: Avoid dry, mechanical, or repetitive wording. Connect your questions with smooth conversational bridges (e.g., 'Got it, and if we...', 'Okay, let\'s look at...', 'Interesting, how did you handle...').\n"
+            "- Question Phrasing: Do NOT ask dry, abstract questions like 'describe your approach' or 'analyze a case'. Instead, ask specific, context-aware questions. Frame questions in a conversational style based on the candidate's CV and current response.\n"
+            "- Pacing: intro -> warm-up (resume deep-dive) -> technical probing (core and edge cases) -> behavioral (STAR format) -> closing.\n"
+            "- Evasiveness: If the candidate avoids detail or gives a short response, politely probe for concrete evidence: 'What was your personal contribution?', 'What were the first two actions you took?'.\n"
+            "- Confusion/Meta: If the candidate is confused, simplify the question with a simple concrete scenario. If they ask a meta-question, answer briefly and transition back naturally.\n\n"
+            "## JSON OUTPUT FORMAT\n"
+            "You must return ONLY a single, valid JSON object matching the schema below. Do NOT wrap the JSON in markdown code blocks (like ```json), do NOT include any introductory or concluding text. Just return the JSON object itself.\n\n"
+            "Schema:\n"
+            "{\n"
+            "  \"action\": \"ask_resume_followup|pressure_followup|clarify|answer_meta_then_redirect|start_scenario|continue_scenario|switch_topic|close_interview\",\n"
+            "  \"question_text\": \"The natural, conversational, context-aware question in English (max 350 chars). If action is close_interview, add the final signature.\",\n"
+            "  \"target_competency\": \"The assessed competency name from role_competency_map\",\n"
+            "  \"phase\": \"intro|resume_deep_dive|technical_case|behavioral|closing\",\n"
+            "  \"scenario_id\": \"The ID of the scenario if active, or null\",\n"
+            "  \"scenario_step\": 0,\n"
+            "  \"difficulty_tier\": 3,\n"
+            "  \"expected_signal\": \"What specific signal/evidence you expect from the candidate\",\n"
+            "  \"reasoning\": {\n"
+            "    \"candidate_understanding\": \"Your analysis of the candidate's response\",\n"
+            "    \"why_this_move\": \"Strategic rationale for this move\",\n"
+            "    \"conversational_intent\": \"Conversational goal for the next question\"\n"
+            "  }\n"
+            "}"
         )
-    return (
-        "Ты senior технический интервьюер.\n"
-        "Сначала рассуждай, потом задавай вопрос. Сейчас верни только reasoning JSON, без question_text.\n"
-        "Стиль интервью: спокойный, профессиональный, живой, разговорный, уважительно-проникающий в детали.\n"
-        "Избегай роботизированных формулировок и повторяющихся шаблонов.\n"
-        "Запрещено абстрактное «разберите кейс» и «опишите подход» без контекста.\n"
-        "Если кандидат запутался — упрощай естественно и давай конкретный контекст.\n"
-        "Если кандидат сильный — усложняй и углубляй.\n"
-        "Если кандидат уклоняется — вежливо возвращай к одному конкретному сигналу.\n"
-        "Если кандидат задаёт meta-вопрос — коротко ответь и естественно продолжай интервью.\n"
-        "Резюме используется для персонализации, но фокус интервью задаёт role competency map.\n"
-        "Используй policy_action и reasoning_hints из context как жёсткие подсказки для следующего хода.\n"
-        "Если policy_action = clarify/pressure_followup/ask_resume_followup, согласуй best_next_move с ним.\n"
-        "Держи pacing интервью: intro -> warm-up -> experience deep-dive -> technical probing -> harder edge cases -> behavioral -> closing.\n"
-        "Верни ТОЛЬКО валидный JSON. Без markdown и без текста до/после.\n"
-        "Используй строго эту схему:\n"
-        f"{_REASONING_SCHEMA_NOTE}"
-    )
+    else:
+        return (
+            "Ты — высококлассный технический интервьюер и стратег, проводящий живое собеседование.\n"
+            "Твоя цель — вести кандидата естественно, глубоко оценивать его реальные навыки, выявлять практический опыт и защищать от читерства (генерации одинаковых вопросов), формулируя каждый вопрос динамически под контекст резюме и диалога.\n\n"
+            "## Стиль диалога и динамика\n"
+            "- Тон: Спокойный, профессиональный, живой, эмпатичный, разговорный, уважительно-проникающий в детали.\n"
+            "- Связки (мосты): Избегай роботизированных формулировок и повторяющихся шаблонов. Используй естественные речевые связки (например: «Отлично, а теперь давайте...», «Понял, а как именно...», «Интересный кейс, а что если...»). Это делает диалог живым.\n"
+            "- Генерация вопросов: ЗАПРЕЩЕН сухой копипаст шаблонов типа «опишите ваш подход» или «разберите кейс». Задавай живые, конкретные, контекстно-зависимые вопросы. Связывай их с опытом в CV кандидата и его последним ответом.\n"
+            "- Прогресс: intro (знакомство) -> warm-up (опыт в резюме) -> technical probing (ядро технологий и edge cases) -> behavioral (софт-скиллы, формат STAR) -> closing (завершение).\n"
+            "- Короткие ответы / уклонения: Если ответ поверхностный или слишком короткий, не переходи к другой теме — вежливо попроси конкретный личный вклад: «Что именно вы сделали лично?», «Какие первые 2 действия предприняли?».\n"
+            "- Путаница / Meta: Если кандидат запутался — естественно упрости вопрос с конкретным примером. На meta-вопросы отвечай кратко и дружелюбно, затем плавно возвращай к теме.\n\n"
+            "## ФОРМАТ JSON НА ВЫХОДЕ\n"
+            "Ты должен вернуть ТОЛЬКО один валидный JSON-объект, строго соответствующий схеме ниже. НЕ оборачивай JSON в блоки кода markdown (```json), НЕ пиши никакого вступительного или завершающего текста. Только сам JSON-объект.\n\n"
+            "Схема JSON:\n"
+            "{\n"
+            "  \"action\": \"ask_resume_followup|pressure_followup|clarify|answer_meta_then_redirect|start_scenario|continue_scenario|switch_topic|close_interview\",\n"
+            "  \"question_text\": \"Конкретный, живой вопрос на русском языке (до 350 символов). Если action — close_interview, добавьте завершающую фразу.\",\n"
+            "  \"target_competency\": \"Название компетенции из role_competency_map\",\n"
+            "  \"phase\": \"intro|resume_deep_dive|technical_case|behavioral|closing\",\n"
+            "  \"scenario_id\": \"Идентификатор сценария (если применимо) или null\",\n"
+            "  \"scenario_step\": 0,\n"
+            "  \"difficulty_tier\": 3,\n"
+            "  \"expected_signal\": \"Какого целевого сигнала/доказательства ты ждешь от кандидата\",\n"
+            "  \"reasoning\": {\n"
+            "    \"candidate_understanding\": \"Твой анализ ответа кандидата\",\n"
+            "    \"why_this_move\": \"Стратегическое обоснование выбора этого хода\",\n"
+            "    \"conversational_intent\": \"Намерение/цель в диалоге для следующего шага\"\n"
+            "  }\n"
+            "}"
+        )
 
 
 def _build_question_phrasing_system_prompt(language: str) -> str:
@@ -1056,6 +1096,9 @@ def _validate_question_decision_payload(payload: dict[str, Any], ctx: InterviewS
         expected_signal=expected_signal,
         conversational_intent=conversational_intent,
         information_target=information_target,
+        request_tokens_estimate=0,
+        response_tokens_estimate=0,
+        provider_latency_ms=0.0,
     )
 
 
@@ -1085,6 +1128,9 @@ class LLMInterviewStrategist:
             "provider": self.provider_name,
             "requested_model": response.requested_model,
             "actual_model_used": response.actual_model_used,
+            "request_tokens_estimate": response.request_tokens_estimate,
+            "response_tokens_estimate": response.response_tokens_estimate,
+            "provider_latency_ms": response.provider_latency_ms,
             "provider_attempts": response.provider_attempts,
             "provider_errors": response.provider_errors,
             "openrouter_fallback_used": bool(response.fallback_used),
@@ -1097,13 +1143,21 @@ class LLMInterviewStrategist:
         model_override: str | None = None,
     ) -> QuestionDecision:
         resolved_model = resolve_llm_runtime_model(model_override)
-        reasoning_messages = [
-            {"role": "system", "content": _build_reasoning_system_prompt(ctx.language)},
+        system_prompt = _build_unified_strategist_system_prompt(ctx.language)
+        context_payload = _build_reasoning_context_payload(ctx)
+
+        # Добавим жесткую подсказку (scenario_hint_question)
+        fallback_q, fallback_sid, fallback_step = _pick_fallback_question(ctx)
+        context_payload["scenario_hint_question"] = fallback_q
+
+        messages = [
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
-                "content": "Context JSON:\n" + json.dumps(_build_reasoning_context_payload(ctx), ensure_ascii=False),
+                "content": "Context JSON:\n" + json.dumps(context_payload, ensure_ascii=False),
             },
         ]
+
         policy_context = {
             "policy_action": str(
                 ctx.policy_action
@@ -1112,8 +1166,8 @@ class LLMInterviewStrategist:
             ),
             "phase": str((ctx.interview_state_v2 or {}).get("phase") or ""),
         }
-        strategist_reasoning_raw = ""
-        strategist_phrase_raw = ""
+
+        strategist_raw = ""
         strategist_error_reason = ""
         strategist_retry_used = False
         strategist_provider_meta: dict[str, Any] = {
@@ -1124,195 +1178,93 @@ class LLMInterviewStrategist:
             "provider_errors": [],
             "openrouter_fallback_used": False,
         }
+
         try:
             logger.info(
-                "ai_model_call component=interview_strategist provider=%s model=%s role=%s",
+                "ai_model_call component=interview_strategist provider=%s model=%s role=%s unified_1pass=true",
                 self.provider_name,
                 resolved_model,
                 ctx.role,
             )
-            strategist_reasoning_raw, reasoning_meta = await self._invoke_strategist(
+            # Один проход (reasoning + phrasing)
+            strategist_raw, meta = await self._invoke_strategist(
                 model=resolved_model,
-                messages=reasoning_messages,
-                temperature=0.1,
-                max_tokens=280,
+                messages=messages,
+                temperature=0.2,
+                max_tokens=450,
             )
-            strategist_provider_meta = reasoning_meta
-            reasoning_payload, reasoning_diag = parse_or_repair_reasoning_response(
-                strategist_reasoning_raw,
+            strategist_provider_meta = meta
+
+            decision, diagnostics = parse_or_repair_strategist_response(
+                strategist_raw,
                 policy_context,
                 ctx=ctx,
             )
-            strategist_error_reason = str(reasoning_diag.get("strategist_error_reason") or "")
-            if not reasoning_payload:
+            strategist_error_reason = str(diagnostics.get("strategist_error_reason") or "")
+
+            if not decision:
                 strategist_retry_used = True
-                retry_reasoning_messages = [
+                # Ретрай с более строгим системным промптом
+                retry_messages = [
                     {
                         "role": "system",
-                        "content": "Return valid JSON only using this schema. No markdown, no explanation.",
+                        "content": "Return ONLY a single valid JSON object following the schema. No markdown, no introductory text.",
                     },
                     {
                         "role": "user",
                         "content": (
                             "Schema:\n"
-                            f"{_REASONING_SCHEMA_NOTE}\n\n"
+                            "{\n"
+                            "  \"action\": \"ask_resume_followup|pressure_followup|clarify|answer_meta_then_redirect|start_scenario|continue_scenario|switch_topic|close_interview\",\n"
+                            "  \"question_text\": \"The context-aware question text (max 350 chars)\",\n"
+                            "  \"target_competency\": \"Assessed competency\",\n"
+                            "  \"phase\": \"intro|resume_deep_dive|technical_case|behavioral|closing\",\n"
+                            "  \"scenario_id\": \"Scenario ID or null\",\n"
+                            "  \"scenario_step\": 0,\n"
+                            "  \"difficulty_tier\": 3,\n"
+                            "  \"expected_signal\": \"Evidence expected\",\n"
+                            "  \"reasoning\": {\n"
+                            "    \"candidate_understanding\": \"Analysis\",\n"
+                            "    \"why_this_move\": \"Rationale\",\n"
+                            "    \"conversational_intent\": \"Intent\"\n"
+                            "  }\n"
+                            "}\n\n"
                             "Context JSON:\n"
-                            + json.dumps(_build_reasoning_context_payload(ctx), ensure_ascii=False)
+                            + json.dumps(context_payload, ensure_ascii=False)
                         ),
                     },
                 ]
-                retry_reasoning_raw, retry_reasoning_meta = await self._invoke_strategist(
+
+                retry_raw, retry_meta = await self._invoke_strategist(
                     model=resolved_model,
-                    messages=retry_reasoning_messages,
+                    messages=retry_messages,
                     temperature=0.1,
-                    max_tokens=240,
+                    max_tokens=400,
                 )
-                strategist_provider_meta = retry_reasoning_meta
-                strategist_reasoning_raw = retry_reasoning_raw or strategist_reasoning_raw
-                reasoning_payload, retry_reasoning_diag = parse_or_repair_reasoning_response(
-                    strategist_reasoning_raw,
+                strategist_provider_meta = retry_meta
+                strategist_raw = retry_raw or strategist_raw
+                decision, retry_diagnostics = parse_or_repair_strategist_response(
+                    strategist_raw,
                     policy_context,
                     ctx=ctx,
                 )
-                reasoning_diag = retry_reasoning_diag
-                strategist_error_reason = str(retry_reasoning_diag.get("strategist_error_reason") or strategist_error_reason)
+                diagnostics = retry_diagnostics
+                strategist_error_reason = str(retry_diagnostics.get("strategist_error_reason") or strategist_error_reason)
 
-            if not reasoning_payload:
-                raise ValueError(strategist_error_reason or "Invalid strategist JSON payload")
-
-            action = _map_reasoning_move_to_action(
-                str(reasoning_payload.get("best_next_move") or ""),
-                policy_context=policy_context,
-            )
-            state = ctx.interview_state_v2 if isinstance(ctx.interview_state_v2, dict) else {}
-            target_competency = str(reasoning_payload.get("missing_signal") or "").strip() or _pick_fallback_target_competency(ctx)
-            phase = _infer_phase_from_action(action, state)
-            scenario_id: str | None = None
-            scenario_step = 0
-            current_sid = str(state.get("current_scenario_id") or "").strip() or None
-            current_step = max(0, _safe_int(state.get("scenario_step"), 0))
-            if action in {"start_scenario", "continue_scenario"}:
-                if action == "continue_scenario" and current_sid:
-                    scenario_id = current_sid
-                    scenario_step = current_step
-                else:
-                    _, fallback_sid, fallback_step = _pick_fallback_question(ctx)
-                    scenario_id = fallback_sid or current_sid
-                    scenario_step = max(0, int(fallback_step or current_step))
-
-            base_difficulty = max(1, min(5, _safe_int(state.get("difficulty_tier"), 3)))
-            quality = str((ctx.last_answer_evaluation or {}).get("quality") or "").strip().lower()
-            style = str(reasoning_payload.get("question_style") or "").strip().lower()
-            difficulty = base_difficulty
-            if quality == "strong" and action in {"continue_scenario", "switch_topic"}:
-                difficulty += 1
-            if quality in {"weak", "no_signal"} or action in {"clarify", "ask_resume_followup"}:
-                difficulty -= 1
-            if style == "edge_case":
-                difficulty += 1
-            difficulty = max(1, min(5, difficulty))
-
-            phrasing_input = {
-                "role": ctx.role,
-                "language": ctx.language,
-                "action": action,
-                "target_competency": target_competency,
-                "phase": phase,
-                "scenario_id": scenario_id,
-                "scenario_step": scenario_step,
-                "difficulty_tier": difficulty,
-                "reasoning": reasoning_payload,
-                "resume_summary": ctx.resume_summary,
-                "last_question": ctx.last_question,
-                "last_answer": ctx.last_answer,
-                "asked_questions": ctx.asked_questions[-8:],
-                "scenario_hint_question": _pick_fallback_question(ctx)[0],
-            }
-            phrasing_messages = [
-                {"role": "system", "content": _build_question_phrasing_system_prompt(ctx.language)},
-                {"role": "user", "content": "Input JSON:\n" + json.dumps(phrasing_input, ensure_ascii=False)},
-            ]
-            strategist_phrase_raw, phrase_meta = await self._invoke_strategist(
-                model=resolved_model,
-                messages=phrasing_messages,
-                temperature=0.2,
-                max_tokens=190,
-            )
-            strategist_provider_meta = phrase_meta
-            question_text, phrase_diag = parse_or_repair_question_phrasing_response(
-                strategist_phrase_raw,
-                ctx=ctx,
-                action=action,
-            )
-            strategist_error_reason = str(phrase_diag.get("strategist_error_reason") or strategist_error_reason)
-            if not question_text:
-                strategist_retry_used = True
-                retry_phrasing_messages = [
-                    {
-                        "role": "system",
-                        "content": "Return valid JSON only using this schema: {\"question_text\": \"string\"}.",
-                    },
-                    {"role": "user", "content": "Input JSON:\n" + json.dumps(phrasing_input, ensure_ascii=False)},
-                ]
-                retry_phrase_raw, retry_phrase_meta = await self._invoke_strategist(
-                    model=resolved_model,
-                    messages=retry_phrasing_messages,
-                    temperature=0.1,
-                    max_tokens=170,
-                )
-                strategist_provider_meta = retry_phrase_meta
-                strategist_phrase_raw = retry_phrase_raw or strategist_phrase_raw
-                question_text, retry_phrase_diag = parse_or_repair_question_phrasing_response(
-                    strategist_phrase_raw,
-                    ctx=ctx,
-                    action=action,
-                )
-                phrase_diag = retry_phrase_diag
-                strategist_error_reason = str(retry_phrase_diag.get("strategist_error_reason") or strategist_error_reason)
-
-            if not question_text:
-                raise ValueError(strategist_error_reason or "Invalid strategist question phrasing payload")
-
-            payload = {
-                "action": action,
-                "question_text": question_text,
-                "target_competency": target_competency,
-                "phase": phase,
-                "scenario_id": scenario_id,
-                "scenario_step": scenario_step,
-                "difficulty_tier": difficulty,
-                "reason": str(reasoning_payload.get("why_this_move") or "reasoning_based_move"),
-                "expected_signal": str(reasoning_payload.get("question_goal") or "concrete_skill_signal"),
-                "conversational_intent": str(
-                    reasoning_payload.get("conversational_intent")
-                    or _default_conversational_intent_from_action(action)
-                ),
-                "information_target": str(
-                    reasoning_payload.get("information_target")
-                    or reasoning_payload.get("missing_signal")
-                    or target_competency
-                ),
-            }
-            repaired_payload = _repair_payload(payload, ctx=ctx, policy_context=policy_context)
-            decision = _validate_question_decision_payload(repaired_payload, ctx)
             if not decision:
-                raise ValueError("reasoning_payload_validation_failed")
+                raise ValueError(strategist_error_reason or "Invalid unified strategist JSON payload")
 
-            json_valid = bool(reasoning_diag.get("strategist_json_valid")) and bool(phrase_diag.get("strategist_json_valid"))
+            # Заполняем мета-данные
+            json_valid = bool(diagnostics.get("strategist_json_valid"))
             if json_valid:
                 strategist_error_reason = ""
 
             decision.strategist_raw_response = json.dumps(
-                {
-                    "reasoning_raw": strategist_reasoning_raw,
-                    "phrasing_raw": strategist_phrase_raw,
-                },
+                {"unified_raw": strategist_raw},
                 ensure_ascii=False,
             )
             decision.strategist_json_valid = json_valid
-            decision.strategist_repair_applied = bool(reasoning_diag.get("strategist_repair_applied")) or bool(
-                phrase_diag.get("strategist_repair_applied")
-            )
+            decision.strategist_repair_applied = bool(diagnostics.get("strategist_repair_applied"))
             decision.strategist_retry_used = strategist_retry_used
             decision.strategist_error_reason = strategist_error_reason
             decision.ai_provider = str(strategist_provider_meta.get("provider") or self.provider_name)
@@ -1321,6 +1273,10 @@ class LLMInterviewStrategist:
             decision.provider_attempts = list(strategist_provider_meta.get("provider_attempts") or [])
             decision.provider_errors = list(strategist_provider_meta.get("provider_errors") or [])
             decision.openrouter_fallback_used = bool(strategist_provider_meta.get("openrouter_fallback_used"))
+            decision.request_tokens_estimate = int(strategist_provider_meta.get("request_tokens_estimate") or 0)
+            decision.response_tokens_estimate = int(strategist_provider_meta.get("response_tokens_estimate") or 0)
+            decision.provider_latency_ms = float(strategist_provider_meta.get("provider_latency_ms") or 0.0)
+
             record_ai_success(
                 component="interview_strategist",
                 provider=decision.ai_provider or self.provider_name,
@@ -1338,10 +1294,7 @@ class LLMInterviewStrategist:
             logger.exception("Interview strategist fallback triggered")
             fallback = _fallback_decision(ctx, reason="deterministic_fallback_after_invalid_llm_json")
             fallback.strategist_raw_response = json.dumps(
-                {
-                    "reasoning_raw": strategist_reasoning_raw,
-                    "phrasing_raw": strategist_phrase_raw,
-                },
+                {"unified_raw": strategist_raw},
                 ensure_ascii=False,
             )
             fallback.strategist_json_valid = False
@@ -1354,17 +1307,10 @@ class LLMInterviewStrategist:
             fallback.provider_attempts = list(strategist_provider_meta.get("provider_attempts") or [])
             fallback.provider_errors = list(strategist_provider_meta.get("provider_errors") or [str(exc)])
             fallback.openrouter_fallback_used = bool(strategist_provider_meta.get("openrouter_fallback_used"))
+            fallback.request_tokens_estimate = int(strategist_provider_meta.get("request_tokens_estimate") or 0)
+            fallback.response_tokens_estimate = int(strategist_provider_meta.get("response_tokens_estimate") or 0)
+            fallback.provider_latency_ms = float(strategist_provider_meta.get("provider_latency_ms") or 0.0)
             return fallback
-
-
-class DeterministicInterviewStrategist:
-    async def decide_next_interview_action(
-        self,
-        ctx: InterviewStrategistContext,
-        model_override: str | None = None,
-    ) -> QuestionDecision:
-        _ = model_override
-        return _fallback_decision(ctx, reason="deterministic_strategy_no_llm")
 
 
 class DisabledInterviewStrategist:
@@ -1383,10 +1329,8 @@ except Exception:
     _provider = None
 
 if _provider and _provider.name not in {"mock"}:
-    strategist: LLMInterviewStrategist | DeterministicInterviewStrategist | DisabledInterviewStrategist
+    strategist: LLMInterviewStrategist | DisabledInterviewStrategist
     strategist = LLMInterviewStrategist(provider=_provider)
-elif settings.allow_mock_ai:
-    strategist = DeterministicInterviewStrategist()
 else:
     strategist = DisabledInterviewStrategist()
 

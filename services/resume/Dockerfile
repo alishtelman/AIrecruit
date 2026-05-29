@@ -3,6 +3,8 @@ FROM golang:1.23-alpine AS builder
 WORKDIR /src
 COPY go.mod ./
 COPY . .
+RUN go get github.com/jackc/pgx/v5@v5.5.5
+RUN go mod tidy
 RUN go build -o /out/resume-service ./cmd/resume-service
 
 FROM alpine:3.20

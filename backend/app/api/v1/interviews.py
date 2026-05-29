@@ -16,8 +16,6 @@ Why path over body:
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from groq import AuthenticationError as GroqAuthenticationError
-from groq import RateLimitError as GroqRateLimitError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_candidate
@@ -74,7 +72,7 @@ router = APIRouter(prefix="/interviews", tags=["interviews"])
 def _ai_auth_http_error() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="AI service authentication failed. Check GROQ_API_KEY configuration.",
+        detail="AI service authentication failed. Check GEMINI_API_KEY configuration.",
     )
 
 
@@ -144,13 +142,6 @@ async def start(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No active resume found. Please upload a resume before starting an interview.",
         )
-    except GroqAuthenticationError:
-        raise _ai_auth_http_error()
-    except GroqRateLimitError:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service rate limit reached. Please wait a few minutes and try again.",
-        )
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -188,13 +179,6 @@ async def send_message(
             status_code=status.HTTP_409_CONFLICT,
             detail="Interview is not active.",
         )
-    except GroqAuthenticationError:
-        raise _ai_auth_http_error()
-    except GroqRateLimitError:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service rate limit reached. Please wait a few minutes and try again.",
-        )
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -226,8 +210,6 @@ async def finish(
             status_code=status.HTTP_409_CONFLICT,
             detail="Interview is not active.",
         )
-    except GroqAuthenticationError:
-        raise _ai_auth_http_error()
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -243,40 +225,6 @@ async def finish(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Report generation failed. Interview marked as failed.",
         )
-
-
-@router.post(
-    "/{interview_id}/signals",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Submit behavioral signals captured during the interview",
-)
-async def submit_signals(
-    interview_id: uuid.UUID,
-    body: BehavioralSignalsRequest,
-    candidate: Candidate = Depends(_candidate),
-    db: AsyncSession = Depends(get_db),
-):
-    try:
-        await save_behavioral_signals(db, candidate.id, interview_id, body.model_dump())
-    except InterviewNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
-
-
-@router.post(
-    "/{interview_id}/recording",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Upload interview recording",
-)
-async def upload_recording(
-    interview_id: uuid.UUID,
-    file: UploadFile = File(...),
-    candidate: Candidate = Depends(_candidate),
-    db: AsyncSession = Depends(get_db),
-):
-    try:
-        await save_interview_recording(db, candidate.id, interview_id, file)
-    except InterviewNotFoundError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
 
 
 @router.get(

@@ -22,7 +22,7 @@ from app.models.platform_settings import PlatformSettings
 
 _ALLOWED_PROCTORING_POLICY_MODES = {"observe_only", "strict_flagging"}
 _PROVIDERS_REQUIRING_KEYS = {
-    "groq": "GROQ_API_KEY",
+    "gemini": "GEMINI_API_KEY",
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
@@ -57,8 +57,8 @@ def _normalize_max_retries(value: int | None) -> int:
 
 
 def _api_key_available(provider: str) -> bool:
-    if provider == "groq":
-        return bool(settings.GROQ_API_KEY)
+    if provider == "gemini":
+        return bool(settings.GEMINI_API_KEY)
     if provider == "openai":
         return bool(settings.OPENAI_API_KEY)
     if provider == "anthropic":
@@ -195,7 +195,7 @@ async def get_platform_settings_payload(db: AsyncSession) -> dict[str, Any]:
         "llm_api_key_available": key_available,
         "llm_required_api_key": required_key,
         "llm_configuration_warning": None if key_available else f"{required_key or 'API key'} is not configured",
-        "mock_ai_enabled": settings.allow_mock_ai,
+        "mock_ai_enabled": False,
         "tts_provider": settings.TTS_PROVIDER,
         "tts_fallback_provider": settings.TTS_FALLBACK_PROVIDER,
         "created_at": row.created_at,
