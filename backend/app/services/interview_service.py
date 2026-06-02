@@ -5563,6 +5563,7 @@ async def add_candidate_message(
             language=interview.language,
             answer_evaluation=runtime_answer_evaluation,
             force_concrete_example=True,
+            asked_question_texts=asked_question_texts,
         )
         resume_followup_hint = _build_resume_deep_dive_followup(
             language=interview.language,
@@ -6352,6 +6353,7 @@ async def add_candidate_message(
                         scenario_context=str(active_qa_scenario_id or ""),
                         language=interview.language,
                         answer_evaluation=runtime_answer_evaluation,
+                        asked_question_texts=asked_question_texts,
                     )
                     decision_reason = f"{decision_reason}_v2_empty_question_pressure_followup"
                     decision_action = "follow_up"
@@ -6396,6 +6398,7 @@ async def add_candidate_message(
                         language=interview.language,
                         answer_evaluation=runtime_answer_evaluation,
                         force_concrete_example=True,
+                        asked_question_texts=asked_question_texts,
                     )
                     if should_force_example
                     else _runtime_followup_question_text(

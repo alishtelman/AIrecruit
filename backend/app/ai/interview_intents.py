@@ -97,6 +97,31 @@ _OFFTOPIC_MARKERS = (
     "joke",
     "music",
 )
+_END_INTERVIEW_MARKERS = (
+    "завершим",
+    "завершаем",
+    "давайте завершим",
+    "закончим",
+    "закончили",
+    "хватит на сегодня",
+    "хватит вопросов",
+    "на этом всё",
+    "на этом все",
+    "заканчиваем",
+    "пока что всё",
+    "спасибо за интервью",
+    "интервью закончено",
+    "всё на этом",
+    "стоп интервью",
+    "let's finish",
+    "that's all",
+    "end interview",
+    "stop interview",
+    "finish interview",
+    "that's enough",
+    "we're done",
+    "i'm done",
+)
 
 
 def _norm(text: str) -> str:
@@ -166,6 +191,27 @@ def classify_candidate_intent(message: str, context: dict) -> dict:
             "should_advance_scenario": False,
             "recommended_policy": "clarify",
             "reason": "empty_or_blank_message",
+        }
+
+    # "пока" alone means goodbye — treat as end_interview
+    if msg.rstrip(".!,") in {"пока", "bye", "goodbye", "пока пока", "до свидания"}:
+        return {
+            "intent": "end_interview",
+            "should_count_as_answer": False,
+            "should_advance_phase": True,
+            "should_advance_scenario": True,
+            "recommended_policy": "switch_topic",
+            "reason": "candidate_said_goodbye",
+        }
+
+    if _contains_any(msg, _END_INTERVIEW_MARKERS):
+        return {
+            "intent": "end_interview",
+            "should_count_as_answer": False,
+            "should_advance_phase": True,
+            "should_advance_scenario": True,
+            "recommended_policy": "switch_topic",
+            "reason": "candidate_wants_to_end_interview",
         }
 
     if _contains_any(msg, _CHALLENGE_MARKERS) or _CHALLENGE_STYLE_RE.search(msg):
