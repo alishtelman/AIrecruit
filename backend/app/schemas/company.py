@@ -67,7 +67,6 @@ class CompanyAISettingsResponse(BaseModel):
     message: str = "AI runtime is managed by platform admin."
     tts_provider: str
     tts_fallback_provider: str
-    mock_ai_available: bool = False
     runtime_applied_fields: list[str] = Field(default_factory=list)
     stored_preference_fields: list[str] = Field(default_factory=list)
 

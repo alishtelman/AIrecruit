@@ -29,8 +29,10 @@ from app.schemas.interview import (
     FinishInterviewResponse,
     InterviewDetailResponse,
     InterviewDebugTraceResponse,
+    InterviewLastLLMDebugResponse,
     InterviewListItemResponse,
     InterviewReportStatusResponse,
+    PracticalSubmissionRequest,
     SendMessageRequest,
     SendMessageResponse,
     StartInterviewRequest,
@@ -54,6 +56,7 @@ from app.services.interview_service import (
     get_coding_task_artifact,
     get_interview_detail,
     get_interview_debug_trace,
+    get_interview_last_llm_debug,
     get_interview_report_status,
     get_written_artifact,
     list_interviews,
@@ -61,6 +64,7 @@ from app.services.interview_service import (
     save_behavioral_signals,
     save_coding_task_artifact,
     save_interview_recording,
+    save_practical_submission,
     save_written_artifact,
     start_interview,
 )
@@ -72,7 +76,7 @@ router = APIRouter(prefix="/interviews", tags=["interviews"])
 def _ai_auth_http_error() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="AI service authentication failed. Check GEMINI_API_KEY configuration.",
+        detail="AI service authentication failed. Check OPENAI_API_KEY configuration.",
     )
 
 
@@ -187,6 +191,38 @@ async def send_message(
 
 
 @router.post(
+    "/{interview_id}/practical-submission",
+    response_model=SendMessageResponse,
+    summary="Submit a practical task solution and receive the next interview question",
+)
+async def submit_practical_task(
+    interview_id: uuid.UUID,
+    body: PracticalSubmissionRequest,
+    candidate: Candidate = Depends(_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await save_practical_submission(db, candidate, interview_id, body)
+    except InterviewNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
+    except InterviewAlreadyFinishedError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Interview is already finished.",
+        )
+    except InterviewNotActiveError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Interview is not active.",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        )
+
+
+@router.post(
     "/{interview_id}/finish",
     response_model=FinishInterviewResponse,
     summary="Finish interview and generate assessment report",
@@ -218,7 +254,7 @@ async def finish(
     except MaxQuestionsNotReachedError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Cannot finish yet. Please answer all questions first.",
+            detail="Cannot finish yet. Please answer at least 8 questions before manual completion.",
         )
     except Exception:
         raise HTTPException(
@@ -334,6 +370,22 @@ async def get_debug_trace(
 ):
     try:
         return await get_interview_debug_trace(db, candidate, interview_id)
+    except InterviewNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
+
+
+@router.get(
+    "/{interview_id}/debug/last-llm",
+    response_model=InterviewLastLLMDebugResponse,
+    summary="Get the last Interview Engine v2 LLM call/debug snapshot",
+)
+async def get_last_llm_debug(
+    interview_id: uuid.UUID,
+    candidate: Candidate = Depends(_candidate),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await get_interview_last_llm_debug(db, candidate, interview_id)
     except InterviewNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
 

@@ -1,6 +1,8 @@
 import type {
   AdminAuditLogList,
   AdminCompanyList,
+  AdminLLMDiagnostics,
+  AdminLLMPing,
   AdminReportList,
   AdminUserList,
   ActiveResume,
@@ -38,6 +40,7 @@ import type {
   InterviewReplay,
   InterviewTemplate,
   LoginRequest,
+  PracticalSubmissionRequest,
   ProctoringTimeline,
   ResumeTextResponse,
   ResumeUploadResponse,
@@ -163,6 +166,11 @@ export const adminApi = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+  getLLMDiagnostics: () => request<AdminLLMDiagnostics>("/api/v1/admin/ai-settings/diagnostics"),
+  testLLM: () =>
+    request<AdminLLMPing>("/api/v1/admin/ai-settings/test", {
+      method: "POST",
+    }),
   listInterviews: (params: { q?: string; status?: string; limit?: number } = {}) =>
     request<AdminInterviewList>(
       withQuery("/api/v1/admin/interviews", {
@@ -187,10 +195,11 @@ export const adminApi = {
       method: "PUT",
       body: JSON.stringify({ is_active }),
     }),
-  listCompanies: (params: { q?: string; limit?: number } = {}) =>
+  listCompanies: (params: { q?: string; status?: string; limit?: number } = {}) =>
     request<AdminCompanyList>(
       withQuery("/api/v1/admin/companies", {
         q: params.q,
+        status: params.status,
         limit: params.limit,
       })
     ),
@@ -206,9 +215,14 @@ export const adminApi = {
         limit: params.limit,
       })
     ),
-  listAuditLog: (params: { limit?: number } = {}) =>
+  getReport: (reportId: string) =>
+    request<AssessmentReport>(`/api/v1/admin/reports/${reportId}`),
+  listAuditLog: (params: { q?: string; action?: string; entity_type?: string; limit?: number } = {}) =>
     request<AdminAuditLogList>(
       withQuery("/api/v1/admin/audit-log", {
+        q: params.q,
+        action: params.action,
+        entity_type: params.entity_type,
         limit: params.limit,
       })
     ),
@@ -523,6 +537,12 @@ export const interviewApi = {
   saveWrittenArtifact: (id: string, data: { content: string }) =>
     request<WrittenArtifact>(`/api/v1/interviews/${id}/written-artifact`, {
       method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  submitPracticalTask: (id: string, data: PracticalSubmissionRequest) =>
+    request<SendMessageResponse>(`/api/v1/interviews/${id}/practical-submission`, {
+      method: "POST",
       body: JSON.stringify(data),
     }),
 

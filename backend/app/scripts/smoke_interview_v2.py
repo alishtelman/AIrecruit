@@ -175,7 +175,6 @@ async def _run_smoke(role: str, provider: str, base_url: str, max_turns: int, tu
         "provider_requested": provider,
         "provider_runtime": ai_status.get("provider"),
         "model_runtime": ai_status.get("model"),
-        "mock_enabled": ai_status.get("mock_enabled"),
         "total_turns": int(metrics.get("total_turns", 0)),
         "scored_questions": int(metrics.get("scored_questions", 0)),
         "strategist_success_count": int(metrics.get("strategist_success_count", 0)),
@@ -205,7 +204,7 @@ async def _run_smoke(role: str, provider: str, base_url: str, max_turns: int, tu
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Interview Engine v2 smoke interview")
     parser.add_argument("--role", default="qa_engineer", help="Role slug (e.g. qa_engineer)")
-    parser.add_argument("--provider", default="openrouter", help="Expected provider name")
+    parser.add_argument("--provider", default="openai", help="Expected provider name")
     parser.add_argument("--base-url", default=os.getenv("TEST_BASE_URL", "http://localhost:8000"))
     parser.add_argument("--max-turns", type=int, default=14)
     parser.add_argument("--turn-delay", type=float, default=8.0,

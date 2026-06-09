@@ -49,7 +49,8 @@ export function useTTS(language?: string) {
       // Try backend TTS provider chain first. If backend TTS fails once,
       // switch to browser-only fallback for the rest of the session.
       let blob: Blob | null = null;
-      if (backendTtsAvailableRef.current) {
+      const shouldUseBackendTTS = backendTtsAvailableRef.current && !activeLanguage.startsWith("ru");
+      if (shouldUseBackendTTS) {
         try {
           blob = await ttsApi.synthesize(text, activeLanguage);
         } catch (error) {

@@ -1,8 +1,8 @@
 """
 AI Interviewer module.
 
-Singleton `interviewer` is an LLMInterviewer (LLM provider) when provider is configured,
-otherwise falls back to MockInterviewer.
+Singleton `interviewer` is an LLMInterviewer when Gemini is configured,
+otherwise it is disabled.
 """
 import re
 import logging
@@ -1003,12 +1003,16 @@ def _resume_anchored_main_question(ctx: InterviewContext) -> str | None:
 
     role_prompt_ru = {
         "qa_engineer": "какой самый критичный дефект или риск качества вы там обнаружили, как верифицировали первопричину и как убедились, что фикс реально сработал",
+        "data_scientist": "какую data/ML-задачу вы там решали, какие метрики выбрали и как проверили качество результата",
         "product_manager": "какой самый сложный продуктовый компромисс вы там приняли и по каким данным защищали это решение",
+        "mobile_engineer": "какую mobile-проблему вы там решали, как локализовали её на устройствах или версиях и чем подтвердили результат",
         "designer": "какое ключевое UX/UI-решение вы там приняли, на каких данных и как проверяли результат после запуска",
     }
     role_prompt_en = {
         "qa_engineer": "what was the most critical quality risk or defect there, how did you verify root cause, and how did you confirm the fix actually worked",
+        "data_scientist": "what data or ML problem did you solve there, which metrics did you choose, and how did you validate result quality",
         "product_manager": "what was the hardest product trade-off there, and which data supported your final decision",
+        "mobile_engineer": "what mobile problem did you solve there, how did you localize it by device or version, and how did you validate the result",
         "designer": "what was the key UX/UI decision there, what evidence informed it, and how did you validate impact after release",
     }
 
@@ -2127,9 +2131,10 @@ def _build_system_prompt(ctx: InterviewContext) -> str:
             f"Это вопрос {ctx.question_number} из {ctx.max_questions}.\n"
         )
 
-    # Resume
     if ctx.resume_text:
-        prompt += f"\n## Резюме кандидата\n{ctx.resume_text[:4000]}\n"
+        from app.core.config import settings
+        max_context_chars = getattr(settings, "LLM_MAX_CONTEXT_CHARS", 12000)
+        prompt += f"\n## Резюме кандидата\n{ctx.resume_text[:max_context_chars]}\n"
 
     if ctx.resume_anchor:
         prompt += (
@@ -2268,14 +2273,18 @@ class LLMInterviewer:
             {"role": "system", "content": system},
             {"role": "user", "content": "Начни собеседование." if ctx.language != "en" else "Start the interview."},
         ]
-        for msg in ctx.message_history:
+        from app.core.config import settings
+        max_messages = int(settings.LLM_MAX_INPUT_MESSAGES)
+        history_to_send = ctx.message_history[-max_messages:] if max_messages > 0 else ctx.message_history
+        for msg in history_to_send:
             role = "assistant" if msg["role"] == "assistant" else "user"
             messages.append({"role": role, "content": msg["content"]})
 
         # Non-main question types: shorter output, slightly higher temperature for variety
         is_non_main = ctx.question_type != "main"
-        max_tokens = 96 if is_non_main else 140
-        temperature = 0.65 if is_non_main else 0.5
+        max_tokens = min(int(settings.LLM_MAX_OUTPUT_TOKENS), 96 if is_non_main else 140)
+        temperature = float(settings.LLM_TEMPERATURE)
+        timeout = float(settings.LLM_TIMEOUT_SECONDS)
 
         resolved_model = resolve_llm_runtime_model(model_override)
         try:
@@ -2291,6 +2300,7 @@ class LLMInterviewer:
                 model=resolved_model,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                timeout=timeout,
             )
             record_ai_success(
                 component="interviewer",
@@ -2338,7 +2348,7 @@ try:
 except Exception:
     _provider = None
 
-if _provider and _provider.name not in {"mock"}:
+if _provider:
     interviewer = LLMInterviewer(provider=_provider)
 else:
     interviewer = DisabledInterviewer()  # type: ignore[assignment]

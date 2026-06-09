@@ -367,6 +367,9 @@ class AssessmentReportResponse(BaseModel):
     coding_task_summary: CodingTaskSummary | None = None
     sql_live_summary: SqlLiveSummary | None = None
     written_communication_summary: WrittenCommunicationSummary | None = None
+    practical_section: dict | None = None
+    interview_quality_metrics: dict | None = None
+    answer_quality_counters: dict | None = None
 
     model_config = {"from_attributes": True}
 
@@ -402,6 +405,9 @@ class AssessmentReportResponse(BaseModel):
             _set_value(data, "summary_model", summary_model)
             _set_value(data, "calibrated_scoring", full_report_json.get("calibrated_scoring"))
             _set_value(data, "explainability_report", full_report_json.get("explainability_report"))
+            _set_value(data, "practical_section", full_report_json.get("practical_section"))
+            _set_value(data, "interview_quality_metrics", full_report_json.get("interview_quality_metrics"))
+            _set_value(data, "answer_quality_counters", full_report_json.get("answer_quality_counters"))
 
             competency_scores = _get_value(data, "competency_scores")
             if isinstance(competency_scores, list) and isinstance(per_question_analysis, list):

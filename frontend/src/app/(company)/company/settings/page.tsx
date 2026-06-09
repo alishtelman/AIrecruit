@@ -210,12 +210,6 @@ export default function CompanySettingsPage() {
                         {aiSettings?.tts_fallback_provider}
                       </div>
                     </div>
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
-                      <div className="mb-1 text-xs uppercase tracking-[0.18em] text-slate-500">{t("ai.runtime.mock")}</div>
-                      <div className="text-sm text-white">
-                        {aiSettings?.mock_ai_available ? t("ai.runtime.enabled") : t("ai.runtime.disabled")}
-                      </div>
-                    </div>
                   </div>
 
                   <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-sm leading-6 text-blue-100">

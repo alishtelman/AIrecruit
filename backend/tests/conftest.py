@@ -4,7 +4,7 @@ Test fixtures.
 Tests run against the live backend at http://localhost:8001.
 Requires `docker compose up` to be running.
 
-AI calls are handled by whatever interviewer is active (LLM or Mock).
+AI calls are handled by the configured Gemini interviewer.
 Each test creates fresh users with unique emails to avoid conflicts.
 """
 import os

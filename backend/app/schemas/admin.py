@@ -7,16 +7,33 @@ from pydantic import BaseModel, EmailStr, Field
 class AdminOverviewMetricsResponse(BaseModel):
     total_users: int
     active_candidates: int
+    candidates_added_7d: int = 0
+    total_companies: int = 0
     active_companies: int
+    companies_added_7d: int = 0
     company_members: int
     interviews_total: int
+    interviews_started_7d: int = 0
+    interviews_in_progress: int = 0
     interviews_completed: int
+    interviews_failed: int = 0
+    completion_rate_pct: float = 0.0
+    report_processing: int = 0
     reports_generated: int
+    reports_generated_7d: int = 0
+    average_overall_score: float | None = None
+
+
+class AdminDailyTrendPointResponse(BaseModel):
+    date: str
+    interviews_started: int = 0
+    reports_generated: int = 0
+    candidates_created: int = 0
+    companies_created: int = 0
 
 
 class AdminRuntimeStatusResponse(BaseModel):
     app_env: str
-    mock_ai_enabled: bool
     rate_limit_enabled: bool
     platform_admin_bootstrap_enabled: bool
 
@@ -60,10 +77,49 @@ class AdminRecentReportResponse(BaseModel):
 class AdminOverviewResponse(BaseModel):
     metrics: AdminOverviewMetricsResponse
     runtime: AdminRuntimeStatusResponse
+    daily_trends: list[AdminDailyTrendPointResponse]
     recent_users: list[AdminRecentUserResponse]
     recent_companies: list[AdminRecentCompanyResponse]
     recent_interviews: list[AdminRecentInterviewResponse]
     recent_reports: list[AdminRecentReportResponse]
+
+
+class AdminAIRuntimeEventResponse(BaseModel):
+    at: str | None = None
+    component: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    note: str | None = None
+    error: str | None = None
+
+
+class AdminLLMDiagnosticsResponse(BaseModel):
+    provider: str
+    interviewer_model: str
+    assessor_model: str
+    configured: bool
+    api_key_available: bool
+    required_api_key: str | None = None
+    configuration_warning: str | None = None
+    timeout_seconds: int
+    max_retries: int
+    runtime_provider: str
+    runtime_model: str
+    runtime_api_key_present: bool
+    last_success: AdminAIRuntimeEventResponse | None = None
+    last_error: AdminAIRuntimeEventResponse | None = None
+    checked_at: datetime
+
+
+class AdminLLMPingResponse(BaseModel):
+    ok: bool
+    provider: str
+    model: str
+    status: str
+    latency_ms: float | None = None
+    response_preview: str | None = None
+    error: str | None = None
+    created_at: datetime
 
 
 class PlatformSettingsResponse(BaseModel):
@@ -85,7 +141,6 @@ class PlatformSettingsResponse(BaseModel):
     llm_api_key_available: bool = False
     llm_required_api_key: str | None = None
     llm_configuration_warning: str | None = None
-    mock_ai_enabled: bool = False
     tts_provider: str | None = None
     tts_fallback_provider: str | None = None
     created_at: datetime
@@ -153,6 +208,12 @@ class AdminCompanyListItemResponse(BaseModel):
     owner_email: str | None = None
     is_active: bool
     member_count: int = 0
+    assessments_total: int = 0
+    assessments_in_progress: int = 0
+    assessments_pending: int = 0
+    assessments_completed: int = 0
+    reports_generated: int = 0
+    last_activity_at: datetime | None = None
     created_at: datetime
 
 

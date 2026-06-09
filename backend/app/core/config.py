@@ -20,16 +20,27 @@ class Settings(BaseSettings):
     RATE_LIMIT_INTERVIEW_MESSAGE_PER_MINUTE: int = 240
     RATE_LIMIT_TTS_PER_MINUTE: int = 180
     RATE_LIMIT_STT_PER_MINUTE: int = 90
-    AI_PROVIDER: str = "gemini"
-    GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.5-flash"
-    OPENROUTER_API_KEY: str = ""
-    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
-    OPENROUTER_MODEL: str = ""
-    OPENROUTER_FALLBACK_MODELS: str = ""
-    OPENROUTER_SITE_URL: str = "http://localhost:3000"
-    OPENROUTER_APP_NAME: str = "AI Talent Verification Platform"
-    ALLOW_MOCK_AI: bool = True
+    AI_PROVIDER: str = "openai"
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-5.4-mini"
+    OPENAI_REASONING_EFFORT: str = "low"
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+
+    # LLM Parameters & Cost Control
+    LLM_TIMEOUT_SECONDS: float = 20.0
+    LLM_MAX_OUTPUT_TOKENS: int = 500
+    LLM_TEMPERATURE: float = 0.4
+
+    # Final Assessment Parameters
+    ASSESSMENT_MAX_OUTPUT_TOKENS: int = 2000
+    ASSESSMENT_TEMPERATURE: float = 0.2
+
+    # Context Size limits for cost control
+    LLM_MAX_INPUT_MESSAGES: int = 10
+    LLM_MAX_CONTEXT_CHARS: int = 12000
+
+    # Media/STT/TTS API Keys (not used for LLM)
+    GROQ_API_KEY: str = ""  # media/STT/TTS stack only, not LLM
     ELEVENLABS_API_KEY: str = ""
     TTS_PROVIDER: str = "groq"
     TTS_FALLBACK_PROVIDER: str = "groq"
@@ -38,11 +49,10 @@ class Settings(BaseSettings):
     MEDIA_SERVICE_URL: str = ""
     RESUME_SERVICE_URL: str = ""
     SANDBOX_SERVICE_URL: str = ""
-    LLM_SERVICE_URL: str = ""
     MARKETPLACE_SERVICE_URL: str = ""
     REPORT_WORKER_HEALTH_URL: str = ""
     REPORT_SYNC_GENERATION_TIMEOUT_SECONDS: float = 8.0
-    REPORT_ASSESSMENT_TIMEOUT_SECONDS: float = 25.0
+    REPORT_ASSESSMENT_TIMEOUT_SECONDS: float = 90.0
     REPORT_MAX_AUTO_RETRIES: int = 3
     REPORT_RETRY_BASE_BACKOFF_SECONDS: int = 2
     REPORT_RETRY_MAX_BACKOFF_SECONDS: int = 12
@@ -80,23 +90,11 @@ class Settings(BaseSettings):
         return self.APP_ENV.lower() in {"development", "dev", "local", "test"}
 
     @property
-    def allow_mock_ai(self) -> bool:
-        return self.ALLOW_MOCK_AI and self.is_local_or_test
-
-    @property
     def ai_provider(self) -> str:
         normalized = (self.AI_PROVIDER or "").strip().lower()
-        if normalized in {"groq", "openrouter", "gemini"}:
+        if normalized == "openai":
             return normalized
-        return "gemini"
-
-    @property
-    def openrouter_fallback_models(self) -> list[str]:
-        return [
-            token.strip()
-            for token in (self.OPENROUTER_FALLBACK_MODELS or "").split(",")
-            if token and token.strip()
-        ]
+        return "openai"
 
     @property
     def allow_bearer_auth(self) -> bool:

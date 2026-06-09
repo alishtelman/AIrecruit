@@ -50,7 +50,7 @@ Verified on `origin/main` in [`docs/platform-admin.md`](docs/platform-admin.md):
 
 1. Sign in as `platform_admin` through `/admin/login`.
 2. Open `/admin/dashboard` for platform-wide metrics across users, companies, interviews, and reports.
-3. Inspect runtime flags such as environment, mock-AI mode, rate limiting, and platform-admin bootstrap status.
+3. Inspect runtime flags such as environment, rate limiting, and platform-admin bootstrap status.
 4. Review recent users, companies, interviews, and reports from a single cross-company workspace.
 
 ---
@@ -388,10 +388,11 @@ Rate limiting:
 - `RATE_LIMIT_TTS_PER_MINUTE`
 - `RATE_LIMIT_STT_PER_MINUTE`
 
-AI:
+AI and voice:
 
-- `GROQ_API_KEY`
-- `ALLOW_MOCK_AI` (dev/test fallback behavior)
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL` (`gpt-5.4-mini` by default)
+- `GROQ_API_KEY` (media STT/TTS only)
 - `TTS_PROVIDER` (`groq` or `elevenlabs`)
 - `TTS_FALLBACK_PROVIDER`
 - `MEDIA_SERVICE_URL` (optional Go media sidecar URL; compose sets this for backend)
@@ -470,4 +471,4 @@ CI gates (`.github/workflows/ci.yml`) run on push/PR:
 
 - Frontend uses localized copy from `frontend/messages/en.json` and `frontend/messages/ru.json`.
 - Locale is cookie-driven (`NEXT_LOCALE`) with middleware routing and no locale path prefix.
-- For production, disable mock AI mode and run only with real provider keys.
+- For production, configure `OPENAI_API_KEY` and run only with real provider keys.

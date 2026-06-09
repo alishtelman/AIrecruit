@@ -51,7 +51,6 @@ This means:
   },
   "runtime": {
     "app_env": "development",
-    "mock_ai_enabled": true,
     "rate_limit_enabled": false,
     "platform_admin_bootstrap_enabled": true
   },
@@ -85,14 +84,13 @@ Important interpretation:
 `runtime` exposes a compact operational snapshot:
 
 - `app_env`
-- `mock_ai_enabled`
 - `rate_limit_enabled`
 - `platform_admin_bootstrap_enabled`
 
 This is useful for fast operator checks such as:
 
 - whether the app is running in local/dev/test/prod mode
-- whether mock AI fallback is allowed
+- whether rate limiting is active
 - whether runtime rate limiting is active
 - whether platform-admin bootstrap should be available
 
@@ -150,7 +148,7 @@ Verified UI sections on `/admin/dashboard`:
 
 1. Hero block with current admin session email
 2. Metric cards for users, candidates, companies, and reports
-3. Runtime card with environment, mock AI, rate limit, and bootstrap status
+3. Runtime card with environment, rate limit, and bootstrap status
 4. Throughput card with interviews and member counts
 5. Recent users list
 6. Recent companies list

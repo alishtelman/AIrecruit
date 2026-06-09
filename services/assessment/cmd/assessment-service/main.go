@@ -91,7 +91,6 @@ type Pass2Output struct {
 }
 
 type LLMCompleteRequest struct {
-	Provider       string         `json:"provider"`
 	Model          string         `json:"model"`
 	Messages       []Message      `json:"messages"`
 	Temperature    float64        `json:"temperature"`
@@ -101,21 +100,35 @@ type LLMCompleteRequest struct {
 }
 
 type LLMCompleteResponse struct {
-	Text     string `json:"text"`
-	Model    string `json:"model"`
-	Provider string `json:"provider"`
+	Text  string `json:"text"`
+	Model string `json:"model"`
 }
 
 type server struct {
-	llmServiceURL string
-	client        *http.Client
+	openaiAPIKey    string
+	openaiModel     string
+	openaiBaseURL   string
+	reasoningEffort string
+	client          *http.Client
+}
+
+func isReasoningModel(model string) bool {
+	name := strings.ToLower(strings.TrimSpace(model))
+	for _, prefix := range []string{"gpt-5", "o1", "o3", "o4"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func main() {
-	llmURL := envOrDefault("LLM_SERVICE_URL", "http://llm-service:8080")
 	srv := &server{
-		llmServiceURL: llmURL,
-		client:        &http.Client{Timeout: 180 * time.Second},
+		openaiAPIKey:    strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
+		openaiModel:     envOrDefault("OPENAI_MODEL", "gpt-5.4-mini"),
+		openaiBaseURL:   strings.TrimRight(envOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"), "/"),
+		reasoningEffort: envOrDefault("OPENAI_REASONING_EFFORT", "low"),
+		client:          &http.Client{Timeout: 180 * time.Second},
 	}
 
 	mux := http.NewServeMux()
@@ -147,8 +160,9 @@ func (s *server) handleAssess(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.runAssessment(r.Context(), payload)
 	if err != nil {
-		log.Printf("Assessment failed: %v, falling back to deterministic mock assessment", err)
-		result = s.generateMockAssessment(payload)
+		log.Printf("Assessment failed: %v", err)
+		writeError(w, http.StatusBadGateway, "Assessment LLM request failed: "+err.Error())
+		return
 	}
 
 	writeJSON(w, http.StatusOK, result)
@@ -301,14 +315,13 @@ AI-генерация признаки: буллет-пойнты без про�
 		return nil, "", err
 	}
 
-	model := "deepseek/deepseek-chat"
+	model := s.openaiModel
 	if modelOverride != "" {
 		model = modelOverride
 	}
 
 	llmReq := LLMCompleteRequest{
-		Provider:       "openrouter",
-		Model:          model,
+		Model: model,
 		Messages: []Message{
 			{Role: "system", Content: system},
 			{Role: "user", Content: fmt.Sprintf("Транскрипт:\n\n%s", transcript)},
@@ -405,7 +418,7 @@ PHILOSOPHY:
 		return Pass2Output{}, err
 	}
 
-	model := "deepseek/deepseek-chat"
+	model := s.openaiModel
 	if modelOverride != "" {
 		model = modelOverride
 	}
@@ -413,8 +426,7 @@ PHILOSOPHY:
 	userContent := fmt.Sprintf("## Транскрипт\n%s\n\n## Анализ вопросов (Pass 1)\n%s", transcript, pass1Summary)
 
 	llmReq := LLMCompleteRequest{
-		Provider:       "openrouter",
-		Model:          model,
+		Model: model,
 		Messages: []Message{
 			{Role: "system", Content: system},
 			{Role: "user", Content: userContent},
@@ -442,16 +454,70 @@ PHILOSOPHY:
 }
 
 func (s *server) callLLM(ctx context.Context, req LLMCompleteRequest) (LLMCompleteResponse, error) {
-	body, err := json.Marshal(req)
+	if s.openaiAPIKey == "" {
+		return LLMCompleteResponse{}, fmt.Errorf("OPENAI_API_KEY is not configured")
+	}
+
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		model = s.openaiModel
+	}
+
+	var messages []map[string]string
+	for _, msg := range req.Messages {
+		content := strings.TrimSpace(msg.Content)
+		if content == "" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(msg.Role)) {
+		case "system":
+			messages = append(messages, map[string]string{"role": "system", "content": content})
+		case "assistant", "model":
+			messages = append(messages, map[string]string{"role": "assistant", "content": content})
+		default:
+			messages = append(messages, map[string]string{"role": "user", "content": content})
+		}
+	}
+	if len(req.Tool) > 0 {
+		toolJSON, _ := json.Marshal(req.Tool)
+		messages = append(messages, map[string]string{
+			"role":    "system",
+			"content": "Return only a valid JSON object matching this schema. Do not include markdown.\n" + string(toolJSON),
+		})
+	}
+
+	payload := map[string]any{
+		"model":           model,
+		"messages":        messages,
+		"response_format": map[string]string{"type": "json_object"},
+	}
+	if isReasoningModel(model) {
+		// Reasoning models: max_completion_tokens (not max_tokens), no temperature.
+		maxTok := req.MaxTokens
+		if maxTok < 4096 {
+			maxTok = 4096
+		}
+		payload["max_completion_tokens"] = maxTok
+		if s.reasoningEffort != "" {
+			payload["reasoning_effort"] = s.reasoningEffort
+		}
+	} else {
+		payload["max_tokens"] = req.MaxTokens
+		payload["temperature"] = req.Temperature
+	}
+
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return LLMCompleteResponse{}, err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.llmServiceURL+"/v1/complete", bytes.NewReader(body))
+	url := s.openaiBaseURL + "/chat/completions"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return LLMCompleteResponse{}, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+s.openaiAPIKey)
 
 	resp, err := s.client.Do(httpReq)
 	if err != nil {
@@ -461,15 +527,33 @@ func (s *server) callLLM(ctx context.Context, req LLMCompleteRequest) (LLMComple
 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
-		return LLMCompleteResponse{}, fmt.Errorf("llm-service returned status %d: %s", resp.StatusCode, string(raw))
+		return LLMCompleteResponse{}, fmt.Errorf("OpenAI returned status %d: %s", resp.StatusCode, string(raw))
 	}
 
-	var completion LLMCompleteResponse
-	if err := json.NewDecoder(resp.Body).Decode(&completion); err != nil {
+	var payloadResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payloadResp); err != nil {
 		return LLMCompleteResponse{}, err
 	}
+	if len(payloadResp.Choices) == 0 || strings.TrimSpace(payloadResp.Choices[0].Message.Content) == "" {
+		return LLMCompleteResponse{}, fmt.Errorf("OpenAI returned empty response")
+	}
 
-	return completion, nil
+	usedModel := model
+	if strings.TrimSpace(payloadResp.Model) != "" {
+		usedModel = payloadResp.Model
+	}
+
+	return LLMCompleteResponse{
+		Text:  payloadResp.Choices[0].Message.Content,
+		Model: usedModel,
+	}, nil
 }
 
 func computeAggregates(scores []CompetencyScore) map[string]float64 {
@@ -517,45 +601,10 @@ func computeAggregates(scores []CompetencyScore) map[string]float64 {
 
 	return map[string]float64{
 		"overall_score":         roundTo1(overall),
-		"hard_skills_score":      roundTo1(hard),
-		"soft_skills_score":      roundTo1(soft),
+		"hard_skills_score":     roundTo1(hard),
+		"soft_skills_score":     roundTo1(soft),
 		"communication_score":   roundTo1(comm),
 		"problem_solving_score": roundTo1(ps),
-	}
-}
-
-func (s *server) generateMockAssessment(req AssessRequest) AssessmentResult {
-	competencies := GetCompetencies(req.TargetRole)
-	var scores []CompetencyScore
-	for _, c := range competencies {
-		scores = append(scores, CompetencyScore{
-			Competency: c.Name,
-			Category:   c.Category,
-			Score:      6.0,
-			Weight:     c.Weight,
-			Evidence:   "Mock evidence from answers",
-			Reasoning:  "Mock reasoning",
-		})
-	}
-	aggrs := computeAggregates(scores)
-
-	return AssessmentResult{
-		OverallScore:         aggrs["overall_score"],
-		HardSkillsScore:      aggrs["hard_skills_score"],
-		SoftSkillsScore:      aggrs["soft_skills_score"],
-		CommunicationScore:   aggrs["communication_score"],
-		ProblemSolvingScore:  aggrs["problem_solving_score"],
-		Strengths:            []string{"Mock strength 1", "Mock strength 2"},
-		Weaknesses:           []string{"Mock weakness 1"},
-		Recommendations:      []string{"Mock recommendation 1"},
-		HiringRecommendation: "yes",
-		InterviewSummary:     "Mock interview summary.",
-		ModelVersion:         "mock-model",
-		CompetencyScores:     scores,
-		PerQuestionAnalysis:  []QuestionAnalysis{},
-		SkillTags:            []SkillTag{},
-		RedFlags:             []RedFlag{},
-		ResponseConsistency:  8.0,
 	}
 }
 

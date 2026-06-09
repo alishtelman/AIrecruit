@@ -90,6 +90,13 @@ def decide_interview_policy(
         advance_scenario = False
         reason = "offtopic_message"
 
+    if intent == "end_interview":
+        policy_action = "close_interview"
+        count_as_scored_answer = False
+        advance_phase = True
+        advance_scenario = True
+        reason = "candidate_requested_manual_finish"
+
     if intent == "answer" and quality in {"strong", "medium"}:
         policy_action = "continue"
         count_as_scored_answer = True
@@ -106,4 +113,3 @@ def decide_interview_policy(
         "update_weak_answer_count": update_weak_answer_count,
         "reason": reason,
     }
-

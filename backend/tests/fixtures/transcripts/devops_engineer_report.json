@@ -18,7 +18,7 @@
   ],
   "hiring_recommendation": "maybe",
   "interview_summary": "The DevOps Engineer interview covered 0 core topics Signal quality was limited. Overall score: 4.5/10.",
-  "model_version": "deepseek/deepseek-chat",
+  "model_version": "gemini-2.5-flash",
   "full_report_json": {
     "competency_scores": [
       {

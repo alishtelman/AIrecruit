@@ -19,7 +19,7 @@ def test_report_response_dedupes_repeated_lists():
         "recommendations": ["Add STAR examples", "Add STAR examples"],
         "hiring_recommendation": "yes",
         "interview_summary": None,
-        "model_version": "mock",
+        "model_version": "gemini-2.5-flash",
         "created_at": datetime.utcnow(),
         "red_flags": [
             {"flag": "generic answer", "evidence": "same", "severity": "medium"},

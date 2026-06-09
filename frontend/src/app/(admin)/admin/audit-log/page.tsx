@@ -18,6 +18,11 @@ function formatDate(value: string, locale: string) {
   }).format(new Date(value));
 }
 
+function formatMetadata(value: Record<string, unknown> | null) {
+  if (!value || Object.keys(value).length === 0) return "—";
+  return JSON.stringify(value);
+}
+
 export default function AdminAuditLogPage() {
   const t = useTranslations("admin.auditLog");
   const locale = useLocale();
@@ -28,19 +33,22 @@ export default function AdminAuditLogPage() {
   const [items, setItems] = useState<AdminAuditLogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [q, setQ] = useState("");
+  const [action, setAction] = useState("");
+  const [entityType, setEntityType] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const payload = await adminApi.listAuditLog({ limit: 100 });
+      const payload = await adminApi.listAuditLog({ q, action, entity_type: entityType, limit: 100 });
       setItems(payload.items);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("errors.load"));
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [q, action, entityType, t]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -60,7 +68,25 @@ export default function AdminAuditLogPage() {
         {error && <div className="mt-6 rounded-2xl border border-red-500/25 bg-red-500/10 px-5 py-4 text-sm text-red-300">{error}</div>}
 
         <section className="ai-panel mt-6 rounded-[1.75rem] p-6">
-          <div className="flex justify-end">
+          <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr_0.8fr_auto]">
+            <input
+              className="ai-input min-h-12 rounded-2xl px-4"
+              placeholder={t("filters.search")}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+            <input
+              className="ai-input min-h-12 rounded-2xl px-4"
+              placeholder={t("filters.action")}
+              value={action}
+              onChange={(e) => setAction(e.target.value)}
+            />
+            <input
+              className="ai-input min-h-12 rounded-2xl px-4"
+              placeholder={t("filters.entityType")}
+              value={entityType}
+              onChange={(e) => setEntityType(e.target.value)}
+            />
             <button type="button" onClick={load} className="ai-button-primary rounded-full px-5 py-3 text-sm font-semibold">
               {t("actions.refresh")}
             </button>
@@ -73,20 +99,25 @@ export default function AdminAuditLogPage() {
           <div className="mt-6 rounded-2xl border border-slate-700 bg-slate-900/60 px-5 py-8 text-center text-slate-400">{t("empty")}</div>
         ) : (
           <section className="ai-panel mt-6 overflow-hidden rounded-[1.75rem]">
-            <div className="grid grid-cols-[1fr_0.8fr_0.8fr_1.7fr_1fr] gap-4 border-b border-slate-800 px-6 py-4 text-xs uppercase tracking-[0.22em] text-slate-500">
+            <div className="grid grid-cols-[1fr_0.8fr_0.8fr_1.4fr_1fr_1fr] gap-4 border-b border-slate-800 px-6 py-4 text-xs uppercase tracking-[0.22em] text-slate-500">
               <div>{t("table.actor")}</div>
               <div>{t("table.action")}</div>
               <div>{t("table.entity")}</div>
               <div>{t("table.summary")}</div>
+              <div>{t("table.metadata")}</div>
               <div>{t("table.created")}</div>
             </div>
             <div className="divide-y divide-slate-800">
               {items.map((item) => (
-                <div key={item.id} className="grid grid-cols-[1fr_0.8fr_0.8fr_1.7fr_1fr] gap-4 px-6 py-4 text-sm">
+                <div key={item.id} className="grid grid-cols-[1fr_0.8fr_0.8fr_1.4fr_1fr_1fr] gap-4 px-6 py-4 text-sm">
                   <div className="text-white">{item.actor_email}</div>
                   <div className="text-slate-300">{item.action}</div>
-                  <div className="text-slate-300">{item.entity_type}</div>
+                  <div className="text-slate-300">
+                    <div>{item.entity_type}</div>
+                    {item.entity_id && <div className="mt-1 break-all text-xs text-slate-500">{item.entity_id}</div>}
+                  </div>
                   <div className="text-slate-400">{item.summary}</div>
+                  <div className="line-clamp-3 break-all font-mono text-xs text-slate-500">{formatMetadata(item.metadata_json)}</div>
                   <div className="text-slate-400">{formatDate(item.created_at, locale)}</div>
                 </div>
               ))}

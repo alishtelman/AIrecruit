@@ -479,7 +479,7 @@ func (srv *server) handleGetInterviewDetail(w http.ResponseWriter, r *http.Reque
 		reportID = nil
 	}
 
-	// Fetch Visible Messages (filter out system messages)
+	// Fetch Visible Messages (filter out system/internal-only messages)
 	var messages []InterviewMessageResponse
 	msgQuery := `
 		SELECT role, content, created_at 
@@ -493,7 +493,7 @@ func (srv *server) handleGetInterviewDetail(w http.ResponseWriter, r *http.Reque
 		for rows.Next() {
 			var m InterviewMessageResponse
 			if err := rows.Scan(&m.Role, &m.Content, &m.CreatedAt); err == nil {
-				if m.Role != "system" {
+				if m.Role != "system" && m.Role != "practical_submission" {
 					messages = append(messages, m)
 				}
 			}
@@ -1019,4 +1019,3 @@ func extractReportDiagnostics(stateRaw []byte) *ReportProcessingDiagnostics {
 		LastErrorAt:     raw.LastErrorAt,
 	}
 }
-

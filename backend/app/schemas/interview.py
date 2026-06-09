@@ -111,6 +111,35 @@ class SendMessageRequest(BaseModel):
         return v.strip()
 
 
+class PracticalTaskResponse(BaseModel):
+    """A mid-interview practical task opened in the frontend modal."""
+    task_id: str
+    task_type: str  # coding_task | sql_task | qa_test_case_task | debugging_task | product_case_task | business_case_task
+    title: str
+    instruction: str
+    language: str | None = None  # python | javascript | sql | text | other
+    starter_code: str | None = None
+    examples: list[dict] = []
+    time_limit_minutes: int = 10
+    evaluation_criteria: list[str] = []
+    voice_intro: str | None = None  # what the AI says before opening the modal
+
+
+class PracticalSubmissionRequest(BaseModel):
+    task_id: str
+    task_type: str
+    answer: str
+    language: str | None = None
+    duration_seconds: int | None = None
+
+    @field_validator("answer")
+    @classmethod
+    def answer_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("answer cannot be empty")
+        return v
+
+
 class SendMessageResponse(BaseModel):
     interview_id: uuid.UUID
     status: str
@@ -125,6 +154,9 @@ class SendMessageResponse(BaseModel):
     interview_stage: InterviewStageResponse | None = None
     module_session: InterviewModuleSessionResponse | None = None
     closing_message: str | None = None
+    # Voice-first / practical task fields
+    question_delivery_type: Literal["voice_only", "practical_task"] = "voice_only"
+    practical_task: PracticalTaskResponse | None = None
 
 
 class ReportSummary(BaseModel):
@@ -216,6 +248,28 @@ class InterviewDebugTraceResponse(BaseModel):
     traces: list[dict[str, Any]] = []
     interview_quality_metrics: dict[str, int] = {}
     live_smoke_summary: str | None = None
+
+
+class InterviewLastLLMDebugResponse(BaseModel):
+    interview_id: uuid.UUID
+    provider: str
+    model: str
+    requested_model: str = ""
+    actual_model_used: str = ""
+    source: str = "unknown"
+    selected_generator: str = ""
+    prompt_preview: str = ""
+    raw_response_preview: str = ""
+    error: str = ""
+    latency_ms: float = 0.0
+    status: str = "unknown"
+    fallback_reason: str = ""
+    provider_attempts: list[dict[str, Any]] = []
+    provider_errors: list[str] = []
+    question_before_guardrails: str | None = None
+    question_after_guardrails: str | None = None
+    strategist_json_valid: bool = False
+    created_at: str | None = None
 
 
 class BehavioralSignalsRequest(BaseModel):

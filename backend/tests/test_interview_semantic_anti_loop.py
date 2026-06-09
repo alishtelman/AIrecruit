@@ -1,6 +1,7 @@
 from app.services.interview_service import (
     _conversational_intent_streak,
     _derive_conversational_intent,
+    _is_question_repeat_candidate,
     _semantic_anti_loop_adaptation,
 )
 
@@ -51,3 +52,20 @@ def test_semantic_anti_loop_adaptation_targets_missing_resume_evidence_first():
     assert "лично" in question.lower()
     assert conversational_intent == "extract_personal_actions"
     assert information_target == "personal_actions"
+
+
+def test_repeat_candidate_rejects_current_question_even_if_history_lags():
+    current_question = (
+        "Давайте сменим компетенцию: опишите одно продуктовое решение, где вы балансировали "
+        "ценность для пользователя, бизнес-эффект и риск разработки."
+    )
+    candidate = (
+        "Опишите одно продуктовое решение, где вы балансировали ценность для пользователя, "
+        "бизнес-эффект и риск разработки."
+    )
+
+    assert _is_question_repeat_candidate(
+        candidate,
+        previous_questions=[],
+        current_question=current_question,
+    )

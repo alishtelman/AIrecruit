@@ -26,8 +26,6 @@ services:
         condition: service_healthy
       sandbox-service:
         condition: service_healthy
-      llm-service:
-        condition: service_healthy
       marketplace-service:
         condition: service_healthy
       assessment-service:
@@ -38,7 +36,6 @@ services:
       MEDIA_SERVICE_URL: http://media-service:8080
       RESUME_SERVICE_URL: http://resume-service:8080
       SANDBOX_SERVICE_URL: http://sandbox-service:8080
-      LLM_SERVICE_URL: http://llm-service:8080
       MARKETPLACE_SERVICE_URL: http://marketplace-service:8080
       ASSESSMENT_SERVICE_URL: http://assessment-service:8080
       REPORT_WORKER_MODE: ${REPORT_WORKER_MODE:-embedded}
@@ -99,18 +96,6 @@ services:
       timeout: 3s
       retries: 6
 
-  llm-service:
-    build: ./services/llm
-    env_file:
-      - .env
-    ports:
-      - "8084:8080"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
-      interval: 5s
-      timeout: 3s
-      retries: 6
-
   marketplace-service:
     build: ./services/marketplace
     env_file:
@@ -132,11 +117,6 @@ services:
       - .env
     ports:
       - "8086:8080"
-    depends_on:
-      llm-service:
-        condition: service_healthy
-    environment:
-      LLM_SERVICE_URL: http://llm-service:8080
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
       interval: 5s

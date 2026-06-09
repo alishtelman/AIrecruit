@@ -5,7 +5,6 @@ import wave
 from dataclasses import dataclass
 
 import httpx
-from groq import AsyncGroq
 
 from app.core.config import settings
 
@@ -150,6 +149,7 @@ class GroqTTSProvider(BaseTTSProvider):
         if language not in _GROQ_SUPPORTED_LANGUAGES:
             raise TTSUnsupportedLanguageError(f"Groq TTS does not support language '{language}'")
 
+        from groq import AsyncGroq
         client = AsyncGroq(api_key=settings.GROQ_API_KEY)
         try:
             audio_chunks: list[bytes] = []

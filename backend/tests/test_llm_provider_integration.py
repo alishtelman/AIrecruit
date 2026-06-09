@@ -11,26 +11,24 @@ from app.core.config import Settings
 from app.services.interview_service import _select_next_question_decision_v2
 
 
-def test_provider_factory_selects_openrouter(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("AI_PROVIDER", "openrouter")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "key")
-    monkeypatch.setenv("OPENROUTER_MODEL", "")
-    monkeypatch.setenv("OPENROUTER_FALLBACK_MODELS", "model/one:free,model/two:free")
-    monkeypatch.setenv("ALLOW_MOCK_AI", "false")
+def test_provider_factory_selects_openai(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("AI_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "key")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
     monkeypatch.setenv("APP_ENV", "development")
 
     provider = get_llm_provider(Settings())
 
-    assert provider.name == "openrouter"
-    assert provider.configured_model == "model/one:free"
+    assert provider.name == "openai"
+    assert provider.configured_model == "gpt-5.4-mini"
 
 
 class _AlwaysFailProvider(LLMProvider):
-    name = "openrouter"
+    name = "openai"
 
     @property
     def configured_model(self) -> str:
-        return "model/test:free"
+        return "gpt-5.4-mini"
 
     @property
     def is_configured(self) -> bool:
@@ -45,13 +43,14 @@ class _AlwaysFailProvider(LLMProvider):
         max_tokens,
         response_format=None,
         extra_body=None,
+        timeout=None,
     ):
-        _ = (messages, model, temperature, max_tokens, response_format, extra_body)
+        _ = (messages, model, temperature, max_tokens, response_format, extra_body, timeout)
         raise ProviderChatError("provider unavailable", code="all_models_failed")
 
 
 @pytest.mark.asyncio
-async def test_openrouter_unavailable_falls_back_to_deterministic_strategy():
+async def test_openai_unavailable_propagates_exception_explicitly():
     strategist = LLMInterviewStrategist(provider=_AlwaysFailProvider())
     ctx = InterviewStrategistContext(
         role="qa_engineer",
@@ -70,12 +69,10 @@ async def test_openrouter_unavailable_falls_back_to_deterministic_strategy():
         ],
     )
 
-    decision = await strategist.decide_next_interview_action(ctx)
+    with pytest.raises(ProviderChatError) as exc_info:
+        await strategist.decide_next_interview_action(ctx)
 
-    assert isinstance(decision, QuestionDecision)
-    assert decision.question_text.strip()
-    assert decision.strategist_json_valid is False
-    assert "deterministic_fallback" in decision.reason
+    assert "provider unavailable" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -91,15 +88,15 @@ async def test_v2_question_decision_exposes_provider_error_fields(monkeypatch: p
             difficulty_tier=2,
             reason="test_provider_trace",
             expected_signal="concrete_steps",
-            ai_provider="openrouter",
-            requested_model="model/requested:free",
-            actual_model_used="model/fallback:free",
+            ai_provider="openai",
+            requested_model="gpt-5.4-mini",
+            actual_model_used="gpt-5.4-mini",
             provider_attempts=[
-                {"model": "model/requested:free", "ok": False, "error": "429 rate_limit"},
-                {"model": "model/fallback:free", "ok": True, "error": None},
+                {"model": "gpt-5.4-mini", "ok": False, "error": "429 rate_limit"},
+                {"model": "gpt-5.4-mini", "ok": True, "error": None},
             ],
-            provider_errors=["model/requested:free: 429 rate_limit"],
-            openrouter_fallback_used=True,
+            provider_errors=["gpt-5.4-mini: 429 rate_limit"],
+            provider_fallback_used=True,
         )
 
     monkeypatch.setattr("app.services.interview_service.decide_next_interview_action", _fake_decide)
@@ -124,9 +121,9 @@ async def test_v2_question_decision_exposes_provider_error_fields(monkeypatch: p
         model_preference=None,
     )
 
-    assert result["ai_provider"] == "openrouter"
-    assert result["requested_model"] == "model/requested:free"
-    assert result["actual_model_used"] == "model/fallback:free"
-    assert result["openrouter_fallback_used"] is True
+    assert result["ai_provider"] == "openai"
+    assert result["requested_model"] == "gpt-5.4-mini"
+    assert result["actual_model_used"] == "gpt-5.4-mini"
+    assert result["provider_fallback_used"] is True
     assert len(result["provider_attempts"]) == 2
     assert result["provider_errors"]

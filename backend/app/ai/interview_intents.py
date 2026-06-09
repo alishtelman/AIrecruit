@@ -158,9 +158,6 @@ def _is_request_for_example(text: str) -> bool:
 
 
 def _is_weak_answer(message: str, context: dict[str, Any]) -> bool:
-    from app.core.config import settings
-    if settings.allow_mock_ai:
-        return False
     msg = _norm(message)
     if not msg:
         return False

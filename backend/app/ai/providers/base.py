@@ -55,5 +55,6 @@ class LLMProvider(ABC):
         max_tokens: int,
         response_format: dict[str, Any] | None = None,
         extra_body: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> ProviderChatCompletionResult:
         raise NotImplementedError

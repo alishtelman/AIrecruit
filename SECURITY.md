@@ -32,7 +32,7 @@ Before exposing the system publicly:
 - set strict `CSRF_TRUSTED_ORIGINS` (or leave empty to inherit `CORS_ORIGINS`)
 - set `AUTH_ALLOW_BEARER=false`
 - run behind HTTPS only
-- set `ALLOW_MOCK_AI=false`
+- configure `OPENAI_API_KEY`
 - rotate any default/example secrets
 
 Startup will fail outside local/test when security-critical settings are unsafe

@@ -4,8 +4,8 @@ AI Assessor module — two-pass scientific assessment pipeline.
 Pass 1: Per-question evidence extraction (answer quality, skills, red flags).
 Pass 2: Competency scoring with evidence aggregation.
 
-Singleton `assessor` is an LLMAssessor (configured LLM provider) when provider is available,
-otherwise falls back to MockAssessor.
+Singleton `assessor` is an LLMAssessor when Gemini is configured,
+otherwise it is disabled.
 """
 import json
 import logging
@@ -5588,7 +5588,7 @@ def _compute_response_times(message_timestamps: list[dict] | None) -> dict:
     }
 
 
-def _build_mock_question_analysis(
+def _build_fallback_question_analysis(
     *,
     message_history: list[dict],
     target_role: str,
@@ -5775,7 +5775,7 @@ def _build_mock_question_analysis(
     return per_q
 
 
-def _build_mock_competency_scores(
+def _build_fallback_competency_scores(
     *,
     target_role: str,
     summary_model: dict,
@@ -5870,7 +5870,7 @@ def _build_mock_competency_scores(
 
 
 # ---------------------------------------------------------------------------
-# LLM implementation (Groq) — two-pass assessment
+# LLM implementation (Gemini) — two-pass assessment
 # ---------------------------------------------------------------------------
 
 class LLMAssessor:
@@ -5987,7 +5987,7 @@ class LLMAssessor:
                         recommendations=data.get("recommendations") or [],
                         hiring_recommendation=data["hiring_recommendation"],
                         interview_summary=data.get("interview_summary"),
-                        model_version=data.get("model_version", "deepseek/deepseek-chat"),
+                        model_version=data.get("model_version", "gpt-5.4-mini"),
                         competency_scores=data.get("competency_scores") or [],
                         per_question_analysis=data.get("per_question_analysis") or [],
                         skill_tags=data.get("skill_tags") or [],
@@ -6264,8 +6264,8 @@ class LLMAssessor:
             response = await self._create_completion_with_model_fallback(
                 model_override=model_override,
                 runtime_settings=runtime_settings,
-                max_tokens=2048,
-                temperature=0.2,
+                max_tokens=settings.ASSESSMENT_MAX_OUTPUT_TOKENS,
+                temperature=settings.ASSESSMENT_TEMPERATURE,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": f"Транскрипт:\n\n{transcript}"},
@@ -6366,8 +6366,8 @@ class LLMAssessor:
             response = await self._create_completion_with_model_fallback(
                 model_override=model_override,
                 runtime_settings=runtime_settings,
-                max_tokens=2048,
-                temperature=0.2,
+                max_tokens=settings.ASSESSMENT_MAX_OUTPUT_TOKENS,
+                temperature=settings.ASSESSMENT_TEMPERATURE,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user_content},
@@ -6506,8 +6506,8 @@ class LLMAssessor:
         response = await self._create_completion_with_model_fallback(
             model_override=model_override,
             runtime_settings=runtime_settings,
-            max_tokens=1024,
-            temperature=0.2,
+            max_tokens=settings.ASSESSMENT_MAX_OUTPUT_TOKENS,
+            temperature=settings.ASSESSMENT_TEMPERATURE,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": f"Транскрипт собеседования:\n\n{transcript}"},
@@ -6573,7 +6573,7 @@ try:
 except Exception:
     _provider = None
 
-if _provider and _provider.name not in {"mock"}:
+if _provider:
     assessor = LLMAssessor(provider=_provider)
 else:
     assessor = DisabledAssessor()  # type: ignore[assignment]

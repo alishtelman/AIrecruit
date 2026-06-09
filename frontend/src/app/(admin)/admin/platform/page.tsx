@@ -11,8 +11,7 @@ import type { PlatformSettings } from "@/lib/types";
 type BooleanSettingKey =
   | "candidate_registration_enabled"
   | "company_registration_enabled"
-  | "employee_invites_enabled"
-  | "maintenance_mode_enabled";
+  | "employee_invites_enabled";
 
 function formatDate(value: string, locale: string) {
   return new Intl.DateTimeFormat(locale, {
@@ -59,7 +58,6 @@ export default function AdminPlatformPage() {
         candidate_registration_enabled: settings.candidate_registration_enabled,
         company_registration_enabled: settings.company_registration_enabled,
         employee_invites_enabled: settings.employee_invites_enabled,
-        maintenance_mode_enabled: settings.maintenance_mode_enabled,
       });
       setSettings(payload);
       setNotice(t("saved"));
@@ -96,7 +94,6 @@ export default function AdminPlatformPage() {
                 ["candidate_registration_enabled", "candidateRegistration"],
                 ["company_registration_enabled", "companyRegistration"],
                 ["employee_invites_enabled", "employeeInvites"],
-                ["maintenance_mode_enabled", "maintenanceMode"],
               ].map(([key, suffix]) => (
                 <div key={key} className="rounded-3xl border border-slate-700 bg-slate-900/70 p-5">
                   <div className="flex items-start justify-between gap-4">

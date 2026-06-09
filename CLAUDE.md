@@ -83,7 +83,7 @@ Key files:
 
 - Auth is cookie-first (`HttpOnly`) with temporary Bearer compatibility.
 - In non-local environments, insecure/default `SECRET_KEY` causes startup failure.
-- Keep `ALLOW_MOCK_AI=false` in production.
+- Configure `OPENAI_API_KEY` for interviewer and assessor LLM calls.
 - Recording uploads are MIME + size constrained.
 
 ## Code Rules

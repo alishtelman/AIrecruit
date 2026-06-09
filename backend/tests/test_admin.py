@@ -43,6 +43,32 @@ async def _upload_resume(client: AsyncClient, token: str) -> None:
     assert resp.status_code == 200, resp.text
 
 
+async def _complete_minimum_interview(
+    client: AsyncClient,
+    token: str,
+    interview_id: str,
+) -> None:
+    answers = [
+        "Готов начать интервью.",
+        "Я проектировал backend API, декомпозировал задачу, оценивал риски и выпускал изменения в production.",
+        "В одном проекте я оптимизировал PostgreSQL-запросы через EXPLAIN ANALYZE, индексы и контроль p95 latency.",
+        "Для Redis-кеширования я задавал TTL, инвалидацию, fallback и мониторинг hit rate после релиза.",
+        "При инциденте я смотрел логи, метрики, последний релиз, формировал гипотезы и согласовывал rollback.",
+        "Я объяснял бизнесу impact, сроки восстановления, workaround и следующий контрольный шаг простым языком.",
+        "По безопасности я проверял права доступа, секреты, input validation и аудит критичных операций.",
+        "После релиза я сверял error rate, latency, throughput и пользовательский impact с целевыми метриками.",
+        "В финале я фиксировал выводы в postmortem, назначал action items и проверял, что повторяемость снизилась.",
+    ]
+
+    for answer in answers:
+        msg = await client.post(
+            f"/api/v1/interviews/{interview_id}/message",
+            headers=auth_headers(token),
+            json={"message": answer},
+        )
+        assert msg.status_code == 200, msg.text
+
+
 @pytest.mark.asyncio
 async def test_admin_overview_requires_platform_admin(client: AsyncClient, candidate_token: str):
     resp = await client.get("/api/v1/admin/overview", headers=auth_headers(candidate_token))
@@ -58,6 +84,11 @@ async def test_admin_overview_returns_metrics_for_platform_admin(client: AsyncCl
     data = resp.json()
     assert "metrics" in data
     assert "runtime" in data
+    assert "daily_trends" in data
+    assert len(data["daily_trends"]) == 7
+    assert "interviews_in_progress" in data["metrics"]
+    assert "completion_rate_pct" in data["metrics"]
+    assert "reports_generated_7d" in data["metrics"]
     assert "recent_users" in data
 
 
@@ -88,9 +119,9 @@ async def test_admin_can_update_platform_ai_runtime_without_prompt_body_in_audit
         "/api/v1/admin/ai-settings",
         headers=auth_headers(token),
         json={
-            "llm_provider": "groq",
-            "interviewer_model": "llama-3.1-8b-instant",
-            "assessor_model": "llama-3.1-8b-instant",
+            "llm_provider": "openai",
+            "interviewer_model": "gpt-5.4-mini",
+            "assessor_model": "gpt-5.4-mini",
             "llm_timeout_seconds": 12,
             "llm_max_retries": 2,
             "interviewer_prompt_override": secret_prompt,
@@ -99,14 +130,23 @@ async def test_admin_can_update_platform_ai_runtime_without_prompt_body_in_audit
     )
     assert resp.status_code == 200, resp.text
     payload = resp.json()
-    assert payload["llm_provider"] == "groq"
-    assert payload["interviewer_model"] == "llama-3.1-8b-instant"
-    assert payload["assessor_model"] == "llama-3.1-8b-instant"
+    assert payload["llm_provider"] == "openai"
+    assert payload["interviewer_model"] == "gpt-5.4-mini"
+    assert payload["assessor_model"] == "gpt-5.4-mini"
     assert payload["llm_timeout_seconds"] == 12
     assert payload["llm_max_retries"] == 2
-    assert payload["llm_required_api_key"] == "GROQ_API_KEY"
-    assert "groq" in payload["llm_model_options"]
-    assert payload["llm_model_options"]["openrouter"] == ["openrouter/free"]
+    assert payload["llm_required_api_key"] == "OPENAI_API_KEY"
+    assert payload["llm_model_options"] == {
+        "openai": ["gpt-5.4-mini", "gpt-5-mini", "gpt-5", "gpt-4.1-mini", "gpt-4o-mini"],
+    }
+
+    diagnostics = await client.get("/api/v1/admin/ai-settings/diagnostics", headers=auth_headers(token))
+    assert diagnostics.status_code == 200, diagnostics.text
+    diagnostics_payload = diagnostics.json()
+    assert diagnostics_payload["provider"] == "openai"
+    assert diagnostics_payload["interviewer_model"] == "gpt-5.4-mini"
+    assert diagnostics_payload["required_api_key"] == "OPENAI_API_KEY"
+    assert "last_success" in diagnostics_payload
 
     audit = await client.get("/api/v1/admin/audit-log", headers=auth_headers(token))
     assert audit.status_code == 200, audit.text
@@ -115,9 +155,9 @@ async def test_admin_can_update_platform_ai_runtime_without_prompt_body_in_audit
     assert secret_prompt not in encoded
 
     await _set_platform_settings(
-        llm_provider="groq",
-        interviewer_model="llama-3.3-70b-versatile",
-        assessor_model="llama-3.3-70b-versatile",
+        llm_provider="openai",
+        interviewer_model="gpt-5.4-mini",
+        assessor_model="gpt-5.4-mini",
         interviewer_prompt_override=None,
         assessor_prompt_override=None,
         llm_timeout_seconds=30,
@@ -132,9 +172,9 @@ async def test_admin_rejects_invalid_provider_model_pair(client: AsyncClient):
         "/api/v1/admin/ai-settings",
         headers=auth_headers(token),
         json={
-            "llm_provider": "openai",
-            "interviewer_model": "llama-3.3-70b-versatile",
-            "assessor_model": "gpt-4.1-mini",
+            "llm_provider": "legacy-provider",
+            "interviewer_model": "gemini-2.5-flash",
+            "assessor_model": "gemini-2.5-flash",
         },
     )
     assert resp.status_code == 422, resp.text
@@ -195,15 +235,7 @@ async def test_admin_can_list_and_requeue_interviews(client: AsyncClient, candid
     assert start.status_code == 201, start.text
     interview_id = start.json()["interview_id"]
 
-    while True:
-        msg = await client.post(
-            f"/api/v1/interviews/{interview_id}/message",
-            headers=auth_headers(candidate_token),
-            json={"message": "Я проектировал API, работал с PostgreSQL и Redis в production."},
-        )
-        assert msg.status_code == 200, msg.text
-        if msg.json()["current_question"] is None:
-            break
+    await _complete_minimum_interview(client, candidate_token, interview_id)
 
     finish = await client.post(
         f"/api/v1/interviews/{interview_id}/finish",
@@ -256,6 +288,22 @@ async def test_admin_can_list_and_toggle_users(client: AsyncClient, candidate_to
 
 
 @pytest.mark.asyncio
+async def test_admin_cannot_deactivate_self(client: AsyncClient):
+    token = await _admin_token(client)
+    me = await client.get("/api/v1/auth/me", headers=auth_headers(token))
+    assert me.status_code == 200, me.text
+
+    updated = await client.put(
+        f"/api/v1/admin/users/{me.json()['id']}/status",
+        headers=auth_headers(token),
+        json={"is_active": False},
+    )
+
+    assert updated.status_code == 409, updated.text
+    assert "cannot deactivate" in updated.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
 async def test_admin_can_list_and_toggle_companies_and_access_is_blocked(client: AsyncClient, company_token: str):
     token = await _admin_token(client)
     me = await client.get("/api/v1/auth/me", headers=auth_headers(company_token))
@@ -267,6 +315,18 @@ async def test_admin_can_list_and_toggle_companies_and_access_is_blocked(client:
     items = listed.json()["items"]
     company = next((item for item in items if item["owner_email"] == company_email), None)
     assert company is not None
+    assert "assessments_total" in company
+    assert "assessments_in_progress" in company
+    assert "reports_generated" in company
+    assert "last_activity_at" in company
+
+    filtered_by_owner = await client.get(
+        "/api/v1/admin/companies",
+        headers=auth_headers(token),
+        params={"q": company_email, "status": "active"},
+    )
+    assert filtered_by_owner.status_code == 200, filtered_by_owner.text
+    assert any(item["owner_email"] == company_email for item in filtered_by_owner.json()["items"])
 
     updated = await client.put(
         f"/api/v1/admin/companies/{company['id']}/status",
@@ -301,15 +361,7 @@ async def test_admin_can_list_reports_and_audit_log(client: AsyncClient, candida
     assert start.status_code == 201, start.text
     interview_id = start.json()["interview_id"]
 
-    while True:
-        msg = await client.post(
-            f"/api/v1/interviews/{interview_id}/message",
-            headers=auth_headers(candidate_token),
-            json={"message": "Я строил production API, оптимизировал PostgreSQL и настраивал Redis кеширование."},
-        )
-        assert msg.status_code == 200, msg.text
-        if msg.json()["current_question"] is None:
-            break
+    await _complete_minimum_interview(client, candidate_token, interview_id)
 
     finish = await client.post(
         f"/api/v1/interviews/{interview_id}/finish",
@@ -320,6 +372,11 @@ async def test_admin_can_list_reports_and_audit_log(client: AsyncClient, candida
     reports = await client.get("/api/v1/admin/reports", headers=auth_headers(token))
     assert reports.status_code == 200, reports.text
     assert len(reports.json()["items"]) >= 1
+    report_id = reports.json()["items"][0]["id"]
+
+    report_detail = await client.get(f"/api/v1/admin/reports/{report_id}", headers=auth_headers(token))
+    assert report_detail.status_code == 200, report_detail.text
+    assert report_detail.json()["id"] == report_id
 
     updated = await client.put(
         "/api/v1/admin/platform-settings",
@@ -334,3 +391,17 @@ async def test_admin_can_list_reports_and_audit_log(client: AsyncClient, candida
     assert audit.status_code == 200, audit.text
     summaries = [item["summary"] for item in audit.json()["items"]]
     assert any("Updated global platform settings" in summary for summary in summaries)
+
+    filtered = await client.get(
+        "/api/v1/admin/audit-log",
+        headers=auth_headers(token),
+        params={
+            "q": "global platform",
+            "action": "platform_settings_updated",
+            "entity_type": "platform_settings",
+        },
+    )
+    assert filtered.status_code == 200, filtered.text
+    assert len(filtered.json()["items"]) >= 1
+    assert all(item["action"] == "platform_settings_updated" for item in filtered.json()["items"])
+    assert all(item["entity_type"] == "platform_settings" for item in filtered.json()["items"])

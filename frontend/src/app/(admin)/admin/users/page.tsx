@@ -50,11 +50,13 @@ export default function AdminUsersPage() {
     void load();
   }, [authLoading, load]);
 
-  async function toggleUser(userId: string, nextActive: boolean) {
-    setBusyId(userId);
+  async function toggleUser(item: AdminUserListItem, nextActive: boolean) {
+    if (!nextActive && !window.confirm(t("confirmDeactivate", { email: item.email }))) return;
+    if (nextActive && !window.confirm(t("confirmActivate", { email: item.email }))) return;
+    setBusyId(item.id);
     setError("");
     try {
-      await adminApi.setUserStatus(userId, nextActive);
+      await adminApi.setUserStatus(item.id, nextActive);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("errors.update"));
@@ -114,7 +116,7 @@ export default function AdminUsersPage() {
                   <div className="flex justify-end">
                     <button
                       type="button"
-                      onClick={() => toggleUser(item.id, !item.is_active)}
+                      onClick={() => toggleUser(item, !item.is_active)}
                       disabled={busyId === item.id}
                       className="rounded-full border border-white/10 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                     >

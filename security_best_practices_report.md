@@ -108,7 +108,7 @@ The project has moved from an initial remediation branch state to an expanded pr
    - frontend lint/build
    - targeted backend auth/privacy tests
    - dependency scanning (npm + pip)
-4. Add release checklist step that validates `APP_ENV`, cookie security flags, and `ALLOW_MOCK_AI=false` in production.
+4. Add release checklist step that validates `APP_ENV`, cookie security flags, and `GEMINI_API_KEY` in production.
 
 ---
 

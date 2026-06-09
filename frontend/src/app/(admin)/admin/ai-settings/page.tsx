@@ -1,16 +1,29 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 
 import { AdminWorkspaceHeader } from "@/components/admin-workspace-header";
 import { useAuth } from "@/hooks/useAuth";
 import { adminApi } from "@/lib/api";
-import type { PlatformSettings } from "@/lib/types";
+import type { AdminLLMDiagnostics, AdminLLMPing, PlatformSettings } from "@/lib/types";
+
+function formatDateTime(value: string | null | undefined, locale: string) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat(locale, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(value));
+}
 
 export default function AdminAISettingsPage() {
   const t = useTranslations("admin.aiSettings");
   const common = useTranslations("common");
+  const locale = useLocale();
   const { loading: authLoading, logout } = useAuth({
     redirectTo: "/admin/login",
     allowedRoles: ["platform_admin"],
@@ -18,19 +31,24 @@ export default function AdminAISettingsPage() {
   const [settings, setSettings] = useState<PlatformSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [diagnostics, setDiagnostics] = useState<AdminLLMDiagnostics | null>(null);
+  const [lastPing, setLastPing] = useState<AdminLLMPing | null>(null);
 
-  const provider = settings?.llm_provider ?? "groq";
+  const provider = settings?.llm_provider ?? "openai";
   const modelOptions = settings?.llm_model_options?.[provider] ?? [];
 
   useEffect(() => {
     if (authLoading) return;
     setLoading(true);
     setError("");
-    adminApi
-      .getPlatformSettings()
-      .then(setSettings)
+    Promise.all([adminApi.getPlatformSettings(), adminApi.getLLMDiagnostics()])
+      .then(([settingsPayload, diagnosticsPayload]) => {
+        setSettings(settingsPayload);
+        setDiagnostics(diagnosticsPayload);
+      })
       .catch((err) => setError(err instanceof Error ? err.message : t("errors.load")))
       .finally(() => setLoading(false));
   }, [authLoading, t]);
@@ -52,11 +70,28 @@ export default function AdminAISettingsPage() {
         llm_max_retries: settings.llm_max_retries,
       });
       setSettings(payload);
+      setDiagnostics(await adminApi.getLLMDiagnostics());
       setNotice(t("saved"));
     } catch (err) {
       setError(err instanceof Error ? err.message : t("errors.save"));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function testLLM() {
+    setTesting(true);
+    setError("");
+    setNotice("");
+    try {
+      const payload = await adminApi.testLLM();
+      setLastPing(payload);
+      setDiagnostics(await adminApi.getLLMDiagnostics());
+      setNotice(payload.ok ? t("diagnostics.testOk") : t("diagnostics.testFailed"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("diagnostics.testFailed"));
+    } finally {
+      setTesting(false);
     }
   }
 
@@ -85,9 +120,66 @@ export default function AdminAISettingsPage() {
                 value={settings.llm_api_key_available ? `${settings.llm_required_api_key} available` : `${settings.llm_required_api_key ?? "API key"} missing`}
                 tone={settings.llm_api_key_available ? "ok" : "warn"}
               />
-              <StatusCard label="Mock AI" value={settings.mock_ai_enabled ? "Enabled" : "Disabled"} />
               <StatusCard label="TTS" value={`${settings.tts_provider ?? "disabled"} -> ${settings.tts_fallback_provider ?? "none"}`} />
             </div>
+
+            <div className="mb-6 rounded-[1.5rem] border border-slate-800 bg-slate-950/35 p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">{t("diagnostics.title")}</h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-400">{t("diagnostics.description")}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={testLLM}
+                  disabled={testing}
+                  className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-5 py-3 text-sm font-semibold text-emerald-200 transition hover:border-emerald-400/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {testing ? t("diagnostics.testing") : t("diagnostics.test")}
+                </button>
+              </div>
+
+              <div className="mt-5 grid gap-3 md:grid-cols-4">
+                <StatusCard
+                  label={t("diagnostics.configured")}
+                  value={diagnostics?.configured ? t("diagnostics.ok") : t("diagnostics.needsAttention")}
+                  tone={diagnostics?.configured ? "ok" : "warn"}
+                />
+                <StatusCard
+                  label={t("diagnostics.runtime")}
+                  value={`${diagnostics?.runtime_provider ?? "—"} / ${diagnostics?.runtime_model ?? "—"}`}
+                />
+                <StatusCard
+                  label={t("diagnostics.timeout")}
+                  value={`${diagnostics?.timeout_seconds ?? settings.llm_timeout_seconds}s · ${diagnostics?.max_retries ?? settings.llm_max_retries} retries`}
+                />
+                <StatusCard
+                  label={t("diagnostics.checkedAt")}
+                  value={formatDateTime(diagnostics?.checked_at, locale)}
+                />
+              </div>
+
+              {(diagnostics?.last_success || diagnostics?.last_error || lastPing) && (
+                <div className="mt-5 grid gap-3 lg:grid-cols-3">
+                  <DiagnosticEvent
+                    label={t("diagnostics.lastSuccess")}
+                    value={diagnostics?.last_success?.at ? `${diagnostics.last_success.component ?? "ai"} · ${diagnostics.last_success.model ?? "model"} · ${formatDateTime(diagnostics.last_success.at, locale)}` : "—"}
+                    tone="ok"
+                  />
+                  <DiagnosticEvent
+                    label={t("diagnostics.lastError")}
+                    value={diagnostics?.last_error?.error ? `${diagnostics.last_error.component ?? "ai"} · ${diagnostics.last_error.error}` : "—"}
+                    tone={diagnostics?.last_error?.error ? "warn" : "default"}
+                  />
+                  <DiagnosticEvent
+                    label={t("diagnostics.lastPing")}
+                    value={lastPing ? `${lastPing.status} · ${lastPing.latency_ms ?? "—"}ms · ${lastPing.response_preview ?? lastPing.error ?? "—"}` : "—"}
+                    tone={lastPing?.ok ? "ok" : lastPing ? "warn" : "default"}
+                  />
+                </div>
+              )}
+            </div>
+
             {settings.llm_configuration_warning && (
               <div className="mb-6 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
                 {settings.llm_configuration_warning}
@@ -110,26 +202,10 @@ export default function AdminAISettingsPage() {
 
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-300">LLM provider</label>
-                <select
-                  className="ai-input min-h-12 w-full appearance-none rounded-2xl px-4 pr-12"
-                  value={settings.llm_provider}
-                  onChange={(e) => {
-                    const nextProvider = e.target.value;
-                    const nextModels = settings.llm_model_options[nextProvider] ?? [];
-                    const nextModel = nextModels[0] ?? "";
-                    setSettings({
-                      ...settings,
-                      llm_provider: nextProvider,
-                      interviewer_model: nextModel,
-                      assessor_model: nextModel,
-                    });
-                  }}
-                >
-                  {Object.keys(settings.llm_model_options).map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
-                <p className="mt-2 text-sm text-slate-500">Provider is platform-wide and hidden from company users.</p>
+                <div className="ai-input flex min-h-12 w-full items-center rounded-2xl px-4 text-slate-200">
+                  {settings.llm_provider}
+                </div>
+                <p className="mt-2 text-sm text-slate-500">OpenAI is the only supported LLM provider.</p>
               </div>
 
               <div>
@@ -157,7 +233,7 @@ export default function AdminAISettingsPage() {
                     <option key={option} value={option}>{option}</option>
                   ))}
                 </select>
-                <p className="mt-2 text-sm text-slate-500">No cross-provider fallback is used.</p>
+                <p className="mt-2 text-sm text-slate-500">Only live OpenAI calls are used.</p>
               </div>
 
               <div className="grid gap-5 md:grid-cols-2">
@@ -230,6 +306,16 @@ function StatusCard({ label, value, tone = "default" }: { label: string; value: 
     <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
       <div className="mb-1 text-xs uppercase tracking-[0.18em] text-slate-500">{label}</div>
       <div className={`break-words text-sm font-medium ${toneClass}`}>{value}</div>
+    </div>
+  );
+}
+
+function DiagnosticEvent({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "ok" | "warn" }) {
+  const toneClass = tone === "ok" ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-100" : tone === "warn" ? "border-amber-500/20 bg-amber-500/5 text-amber-100" : "border-slate-800 bg-slate-950/40 text-slate-300";
+  return (
+    <div className={`rounded-2xl border p-4 ${toneClass}`}>
+      <div className="mb-2 text-xs uppercase tracking-[0.18em] text-slate-500">{label}</div>
+      <div className="line-clamp-3 break-words text-sm">{value}</div>
     </div>
   );
 }

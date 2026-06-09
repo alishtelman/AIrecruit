@@ -110,42 +110,33 @@ async def startup_event():
             await ensure_platform_admin(db)
 
     interviewer_provider = (
-        getattr(interviewer, "provider_name", "gemini")
+        getattr(interviewer, "provider_name", "openai")
         if isinstance(interviewer, LLMInterviewer)
         else "disabled"
     )
     assessor_provider = (
-        getattr(assessor, "provider_name", "gemini")
+        getattr(assessor, "provider_name", "openai")
         if isinstance(assessor, LLMAssessor)
         else "disabled"
     )
-
-    mock_mode_enabled = False
 
     if interviewer_provider == assessor_provider:
         active_provider = interviewer_provider
     else:
         active_provider = f"mixed({interviewer_provider},{assessor_provider})"
 
-    model_name = resolve_llm_runtime_model(None) if active_provider not in {"mock", "disabled"} else "disabled"
-    if settings.ai_provider == "openrouter":
-        api_key_present = bool(settings.OPENROUTER_API_KEY)
-    elif settings.ai_provider == "gemini":
-        api_key_present = bool(settings.GEMINI_API_KEY)
-    else:
-        api_key_present = False
+    model_name = resolve_llm_runtime_model(None) if active_provider != "disabled" else "disabled"
+    api_key_present = bool(settings.OPENAI_API_KEY) if settings.ai_provider == "openai" else False
     set_runtime_identity(
         provider=active_provider,
         model=model_name,
         api_key_present=api_key_present,
-        mock_enabled=mock_mode_enabled,
     )
     logger.info(
-        "ai_runtime_startup active_provider=%s model_name=%s api_key_present=%s mock_mode_enabled=%s interviewer_provider=%s assessor_provider=%s",
+        "ai_runtime_startup active_provider=%s model_name=%s api_key_present=%s interviewer_provider=%s assessor_provider=%s",
         active_provider,
         model_name,
         api_key_present,
-        mock_mode_enabled,
         interviewer_provider,
         assessor_provider,
     )

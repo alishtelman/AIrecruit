@@ -6,6 +6,7 @@ from app.services.interview_service import (
     _is_forbidden_generic_question_text,
     _map_v2_action_to_legacy,
     _apply_v2_question_guardrails,
+    _resume_deep_dive_can_advance,
     _resume_deep_dive_gate_opened,
     _update_resume_evidence,
 )
@@ -33,6 +34,36 @@ def test_resume_gate_keeps_resume_phase_after_first_shallow_resume_answer():
     ).lower()
     assert "по вашему опыту" in followup
     assert "конкретн" in followup or "кейс" in followup
+
+
+def test_product_resume_evidence_allows_stage_advance_after_concrete_pm_case():
+    evidence = {
+        "role_context": False,
+        "concrete_case": False,
+        "personal_actions": False,
+        "result_or_impact": False,
+        "resume_questions_count": 0,
+    }
+    evidence = _update_resume_evidence(
+        resume_evidence=evidence,
+        answer=(
+            "Я продакт в финтехе. Например, в кейсе переводов я собрал данные, "
+            "сформулировал гипотезу, запустил A/B эксперимент, приоритизировал "
+            "доработку и конверсия выросла на 6%."
+        ),
+        answer_evaluation={"quality": "strong", "has_personal_action": True, "has_result": True},
+        topic_phase="intro",
+    )
+
+    assert evidence["role_context"] is True
+    assert evidence["concrete_case"] is True
+    assert evidence["personal_actions"] is True
+    assert evidence["result_or_impact"] is True
+    assert _resume_deep_dive_can_advance(
+        resume_evidence=evidence,
+        resume_scored_turns=1,
+        answer_evaluation={"quality": "strong"},
+    ) is True
 
 
 def test_meta_challenge_does_not_count_as_scored_answer_and_redirects():

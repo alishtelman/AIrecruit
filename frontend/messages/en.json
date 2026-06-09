@@ -69,17 +69,16 @@
         "users": "Users",
         "usersHelp": "All accounts in the system",
         "candidates": "Candidates",
-        "candidatesHelp": "Public and private profiles",
+        "candidatesHelp": "+{count} in 7 days",
         "companies": "Companies",
-        "companiesHelp": "Active company workspaces",
+        "companiesHelp": "{total} total · +{count} in 7 days",
         "reports": "Reports",
-        "reportsHelp": "Generated assessment reports"
+        "reportsHelp": "+{count} in 7 days"
       },
       "runtime": {
         "title": "Runtime and modes",
         "subtitle": "Quick readout of environment and system switches.",
         "environment": "Environment",
-        "mockAi": "Mock AI",
         "rateLimit": "Rate limiting",
         "bootstrap": "Bootstrap admin",
         "enabled": "Enabled",
@@ -120,12 +119,29 @@
         "completed": "Completed",
         "report_generated": "Report generated",
         "failed": "Failed"
+      },
+      "ops": {
+        "title": "Live ops metrics",
+        "subtitle": "What is happening now and where manual attention may be needed.",
+        "inProgress": "In progress now",
+        "reportQueue": "Report queue",
+        "failed": "Failed",
+        "completionRate": "Completion rate",
+        "avgScore": "Average score"
+      },
+      "trends": {
+        "title": "7-day trend",
+        "subtitle": "Interviews, reports, new candidates, and companies by day.",
+        "interviews": "Interviews",
+        "reports": "Reports",
+        "candidates": "Candidates",
+        "companies": "Companies"
       }
     },
     "platform": {
       "loading": "Loading platform settings...",
       "title": "Global platform controls",
-      "description": "Manage what is currently allowed system-wide: registrations, invites, and maintenance mode.",
+      "description": "Manage what is currently allowed system-wide: registrations and invites.",
       "save": "Save platform settings",
       "saved": "Platform settings updated",
       "errors": {
@@ -177,6 +193,23 @@
         "policy": "If a workspace does not override policy, interviews will start with this mode.",
         "interviewerModel": "Leave empty to use the default runtime model.",
         "assessorModel": "Leave empty to use the default runtime model."
+      },
+      "diagnostics": {
+        "title": "LLM diagnostics",
+        "description": "Checks the active OpenAI configuration, latest runtime event, and a short live ping without exposing keys.",
+        "test": "Test LLM",
+        "testing": "Testing...",
+        "testOk": "LLM ping succeeded",
+        "testFailed": "LLM ping failed — see diagnostics",
+        "configured": "Configuration",
+        "runtime": "Runtime",
+        "timeout": "Timeout/retries",
+        "checkedAt": "Checked at",
+        "lastSuccess": "Last success",
+        "lastError": "Last error",
+        "lastPing": "Last ping",
+        "ok": "Ready",
+        "needsAttention": "Needs attention"
       }
     },
     "interviews": {
@@ -196,7 +229,8 @@
       "actions": {
         "refresh": "Refresh",
         "requeue": "Requeue report",
-        "requeueing": "Requeueing..."
+        "requeueing": "Requeueing...",
+        "openReport": "Open"
       },
       "table": {
         "candidate": "Candidate",
@@ -211,7 +245,8 @@
         "processing": "Processing",
         "failed": "Failed",
         "ready": "Ready"
-      }
+      },
+      "confirmRequeue": "Regenerate this report? The current report will be deleted and created again."
     },
     "users": {
       "loading": "Loading users...",
@@ -236,7 +271,9 @@
         "role": "Role",
         "status": "Status",
         "created": "Created"
-      }
+      },
+      "confirmDeactivate": "Deactivate user {email}? They will lose platform access.",
+      "confirmActivate": "Activate user {email}? Platform access will be restored."
     },
     "companies": {
       "loading": "Loading companies...",
@@ -247,7 +284,8 @@
         "update": "Failed to update company status"
       },
       "filters": {
-        "search": "Search by company name"
+        "search": "Search by company or owner email",
+        "allStatuses": "All statuses"
       },
       "actions": {
         "refresh": "Refresh",
@@ -261,7 +299,26 @@
         "owner": "Owner",
         "members": "Members",
         "status": "Status",
-        "created": "Created"
+        "created": "Created",
+        "assessments": "Assessments",
+        "reports": "Reports",
+        "lastActivity": "Activity"
+      },
+      "confirmDeactivate": "Deactivate company {name}? Company users will lose workspace access.",
+      "confirmActivate": "Activate company {name}? Workspace access will be restored.",
+      "stats": {
+        "active": "Active",
+        "members": "Members",
+        "assessments": "Assessments",
+        "inProgress": "In progress",
+        "pending": "Pending",
+        "reports": "Reports"
+      },
+      "assessmentParts": {
+        "total": "total",
+        "pending": "pending",
+        "inProgress": "live",
+        "completed": "done"
       }
     },
     "reports": {
@@ -275,7 +332,8 @@
         "search": "Candidate or email"
       },
       "actions": {
-        "refresh": "Refresh"
+        "refresh": "Refresh",
+        "open": "Open report"
       },
       "empty": "No reports match the current search.",
       "table": {
@@ -303,7 +361,13 @@
         "action": "Action",
         "entity": "Entity",
         "summary": "Summary",
-        "created": "Created"
+        "created": "Created",
+        "metadata": "Metadata"
+      },
+      "filters": {
+        "search": "Search actor, action, entity, or summary",
+        "action": "Filter by action",
+        "entityType": "Filter by entity"
       }
     }
   },
@@ -504,31 +568,79 @@
       "forCompanies": "For companies",
       "candidate": {
         "cta": "Get verified",
-        "step1": { "title": "Upload your resume", "desc": "PDF or DOCX. Skills and experience are extracted automatically." },
-        "step2": { "title": "Complete AI interview", "desc": "Adaptive questions tailored to your role. Answer by text or voice." },
-        "step3": { "title": "Get your skill report", "desc": "Assessment across hard skills, problem solving, communication, soft skills, and consistency." },
-        "step4": { "title": "Join the database", "desc": "Verified professionals become visible to hiring companies." }
+        "step1": {
+          "title": "Upload your resume",
+          "desc": "PDF or DOCX. Skills and experience are extracted automatically."
+        },
+        "step2": {
+          "title": "Complete AI interview",
+          "desc": "Adaptive questions tailored to your role. Answer by text or voice."
+        },
+        "step3": {
+          "title": "Get your skill report",
+          "desc": "Assessment across hard skills, problem solving, communication, soft skills, and consistency."
+        },
+        "step4": {
+          "title": "Join the database",
+          "desc": "Verified professionals become visible to hiring companies."
+        }
       },
       "company": {
         "cta": "Start hiring",
-        "step1": { "title": "Browse verified candidates", "desc": "Filter by role, score, and hiring recommendation." },
-        "step2": { "title": "View detailed reports", "desc": "Competency heatmaps, skill matrices, red flags, and per-question analysis." },
-        "step3": { "title": "Assess your employees", "desc": "Send invite links for internal reviews and skill audits." },
-        "step4": { "title": "Make data-driven decisions", "desc": "Hire from verified evidence, not just CVs and gut feeling." }
+        "step1": {
+          "title": "Browse verified candidates",
+          "desc": "Filter by role, score, and hiring recommendation."
+        },
+        "step2": {
+          "title": "View detailed reports",
+          "desc": "Competency heatmaps, skill matrices, red flags, and per-question analysis."
+        },
+        "step3": {
+          "title": "Assess your employees",
+          "desc": "Send invite links for internal reviews and skill audits."
+        },
+        "step4": {
+          "title": "Make data-driven decisions",
+          "desc": "Hire from verified evidence, not just CVs and gut feeling."
+        }
       }
     },
     "features": {
       "title": "Everything you need",
       "subtitle": "Built on industrial and organizational psychology research. Powered by state-of-the-art LLMs.",
       "items": {
-        "ai": { "title": "Adaptive AI Interviewer", "desc": "Questions adapt based on the resume and previous answers. The AI follows up on weak spots and digs deeper into strengths." },
-        "science": { "title": "Scientific Assessment", "desc": "Two-pass LLM pipeline: per-question evidence extraction followed by competency scoring with calibrated rubrics." },
-        "heatmap": { "title": "Competency Heatmaps", "desc": "Ten competencies per role are scored individually. See exactly where a candidate excels and where they need growth." },
-        "voice": { "title": "Voice Interviews", "desc": "Candidates can answer by voice using speech-to-text. Questions can also be read aloud by AI." },
-        "team": { "title": "Multi-user Teams", "desc": "Invite recruiters to your company account. Admins manage access, members browse candidates and reports." },
-        "employee": { "title": "Employee Assessments", "desc": "Send invite links to existing employees for performance review, promotion decisions, or skill audits." },
-        "flags": { "title": "Red Flag Detection", "desc": "Automatic detection of contradictions, fabricated experience, evasive answers, and inconsistencies across responses." },
-        "dimensions": { "title": "5 Score Dimensions", "desc": "Overall score, hard skills, soft skills, communication, and problem solving — all backed by weighted competency aggregation." }
+        "ai": {
+          "title": "Adaptive AI Interviewer",
+          "desc": "Questions adapt based on the resume and previous answers. The AI follows up on weak spots and digs deeper into strengths."
+        },
+        "science": {
+          "title": "Scientific Assessment",
+          "desc": "Two-pass LLM pipeline: per-question evidence extraction followed by competency scoring with calibrated rubrics."
+        },
+        "heatmap": {
+          "title": "Competency Heatmaps",
+          "desc": "Ten competencies per role are scored individually. See exactly where a candidate excels and where they need growth."
+        },
+        "voice": {
+          "title": "Voice Interviews",
+          "desc": "Candidates can answer by voice using speech-to-text. Questions can also be read aloud by AI."
+        },
+        "team": {
+          "title": "Multi-user Teams",
+          "desc": "Invite recruiters to your company account. Admins manage access, members browse candidates and reports."
+        },
+        "employee": {
+          "title": "Employee Assessments",
+          "desc": "Send invite links to existing employees for performance review, promotion decisions, or skill audits."
+        },
+        "flags": {
+          "title": "Red Flag Detection",
+          "desc": "Automatic detection of contradictions, fabricated experience, evasive answers, and inconsistencies across responses."
+        },
+        "dimensions": {
+          "title": "5 Score Dimensions",
+          "desc": "Overall score, hard skills, soft skills, communication, and problem solving — all backed by weighted competency aggregation."
+        }
       }
     },
     "companies": {
@@ -777,7 +889,6 @@
         "interviewer": "Interviewer runtime",
         "assessor": "Assessor runtime",
         "tts": "Voice runtime chain",
-        "mock": "Mock AI fallback",
         "enabled": "Enabled",
         "disabled": "Disabled",
         "appliedNote": "Today this panel actively controls proctoring policy for new company assessment interviews. Model preferences are stored now and can be wired into later module runtimes without losing admin intent."
@@ -1309,6 +1420,7 @@
     "loadFailed": "Could not load interview",
     "reportGenerationFailed": "Report generation failed. Please retry finishing the interview.",
     "question": "Question {current} of {total}",
+    "introPending": "Interview setup",
     "followup": "Follow-up",
     "verification": "Verification",
     "deepDive": "Deep dive",
@@ -1338,7 +1450,7 @@
     "questionProgressLabel": "Question progress",
     "askedQuestionsLabel": "Chat questions",
     "estimateLabel": "Estimated window",
-    "progressHint": "Core plan complete: {percent}% · answers: {answered}",
+    "progressHint": "Dialogue progress: {percent}% · answers: {answered}",
     "currentFocusLabel": "Current focus",
     "resumePreviewHint": "Keep your answers anchored to concrete resume experience.",
     "faceAwayLabel": "Away from camera",
@@ -1406,7 +1518,7 @@
       "answerPlaceholder": "Explain audience fit, structure choices, and what you would revise next..."
     },
     "completeTitle": "Interview complete",
-    "completeDescription": "Interview complete. Core plan: {coreCount}/{coreTotal}. Chat totals: {askedCount} questions and {answeredCount} answers. Generate your assessment report now.",
+    "completeDescription": "Interview complete. Chat totals: {askedCount} questions and {answeredCount} answers. Generate your assessment report now.",
     "finish": "Finish and get report",
     "generating": "Generating report...",
     "waiting": "Waiting for report...",
@@ -1507,9 +1619,15 @@
       "eyebrow": "Roadmap",
       "title": "Development roadmap",
       "phases": {
-        "now": { "label": "Now" },
-        "next": { "label": "Next" },
-        "later": { "label": "Later" }
+        "now": {
+          "label": "Now"
+        },
+        "next": {
+          "label": "Next"
+        },
+        "later": {
+          "label": "Later"
+        }
       }
     },
     "systemDesign": {

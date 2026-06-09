@@ -47,22 +47,41 @@ func main() {
 	log.Printf("  Dialog URL:     %s", dialogURL)
 
 	srv := &server{
-		backendProxy:     httputil.NewSingleHostReverseProxy(backendURL),
-		mediaProxy:       httputil.NewSingleHostReverseProxy(mediaURL),
-		authProxy:        httputil.NewSingleHostReverseProxy(authURL),
-		templatesProxy:   httputil.NewSingleHostReverseProxy(templatesURL),
-		marketplaceProxy: httputil.NewSingleHostReverseProxy(marketplaceURL),
-		resumeProxy:      httputil.NewSingleHostReverseProxy(resumeURL),
-		dialogProxy:      httputil.NewSingleHostReverseProxy(dialogURL),
+		backendProxy:     newReverseProxy(backendURL),
+		mediaProxy:       newReverseProxy(mediaURL),
+		authProxy:        newReverseProxy(authURL),
+		templatesProxy:   newReverseProxy(templatesURL),
+		marketplaceProxy: newReverseProxy(marketplaceURL),
+		resumeProxy:      newReverseProxy(resumeURL),
+		dialogProxy:      newReverseProxy(dialogURL),
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", srv.handleHealth)
 	mux.HandleFunc("/", srv.handleProxy)
 
+	corsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		mux.ServeHTTP(w, r)
+	})
+
 	httpServer := &http.Server{
 		Addr:    listenAddr,
-		Handler: mux,
+		Handler: corsHandler,
 	}
 
 	go func() {
@@ -188,4 +207,17 @@ func parseURL(raw string) *url.URL {
 		log.Fatalf("Failed to parse URL %q: %v", raw, err)
 	}
 	return u
+}
+
+func newReverseProxy(target *url.URL) *httputil.ReverseProxy {
+	p := httputil.NewSingleHostReverseProxy(target)
+	p.ModifyResponse = func(res *http.Response) error {
+		res.Header.Del("Access-Control-Allow-Origin")
+		res.Header.Del("Access-Control-Allow-Credentials")
+		res.Header.Del("Access-Control-Allow-Methods")
+		res.Header.Del("Access-Control-Allow-Headers")
+		res.Header.Del("Access-Control-Expose-Headers")
+		return nil
+	}
+	return p
 }

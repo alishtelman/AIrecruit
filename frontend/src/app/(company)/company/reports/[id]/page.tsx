@@ -174,13 +174,14 @@ export default function CompanyReportPage() {
               </Section>
             )}
 
-            {displayReport.weaknesses.length > 0 && (
-              <Section title={t("areasToImprove")} color="yellow">
-                {displayReport.weaknesses.map((w) => <ListItem key={w} text={w} bullet="△" color="text-yellow-400" />)}
+            {displayReport.recommendations.length > 0 && (
+              <Section title={t("recommendations")} color="blue">
+                {displayReport.recommendations.map((r) => <ListItem key={r} text={r} bullet="→" color="text-blue-400" />)}
               </Section>
             )}
+          </div>
+        )}
 
-        <ConfidencePanel report={report} locale={locale} />
         {report.explainability_report && (
           <ExplainabilityPanel explainability={report.explainability_report} />
         )}

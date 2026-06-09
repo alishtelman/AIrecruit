@@ -6,8 +6,8 @@ from app.ai.assessor import (
     _apply_summary_penalties,
     _build_explainability_report,
     _build_outcome_feedback,
-    _build_mock_competency_scores,
-    _build_mock_question_analysis,
+    _build_fallback_competency_scores,
+    _build_fallback_question_analysis,
     _build_summary_model,
     _compute_confidence_metrics,
     _prefer_outcome_feedback,
@@ -306,8 +306,8 @@ def test_competency_anchored_main_question_uses_different_angle_hint():
     assert "безопас" in question.lower() or "auth" in question.lower()
 
 
-def test_mock_question_analysis_promotes_concrete_partial_answer_to_high_signal():
-    per_q = _build_mock_question_analysis(
+def test_fallback_question_analysis_promotes_concrete_partial_answer_to_high_signal():
+    per_q = _build_fallback_question_analysis(
         message_history=[
             {"role": "assistant", "content": "Как вы оптимизировали PostgreSQL под высокой нагрузкой?"},
             {
@@ -396,7 +396,7 @@ def test_summary_model_marks_validated_topic_for_concrete_mechanistic_answer():
     assert "метрики" in summary["topic_outcomes"][0]["what_was_scored"]
 
 
-def test_mock_competency_scores_raise_validated_topic_into_seven_plus_range():
+def test_fallback_competency_scores_raise_validated_topic_into_seven_plus_range():
     per_q = [
         {
             "question_number": 1,
@@ -421,7 +421,7 @@ def test_mock_competency_scores_raise_validated_topic_into_seven_plus_range():
         ]
     }
 
-    comp_scores = _build_mock_competency_scores(
+    comp_scores = _build_fallback_competency_scores(
         target_role="backend_engineer",
         summary_model=summary,
         interview_meta={

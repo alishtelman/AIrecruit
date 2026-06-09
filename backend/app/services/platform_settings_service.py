@@ -1,8 +1,6 @@
-import logging
 from collections.abc import Mapping
 from typing import Any
 
-import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +11,7 @@ from app.ai.model_preferences import (
     DEFAULT_LLM_TIMEOUT_SECONDS,
     default_model_for_provider,
     model_options_payload,
+    is_allowed_provider_model,
     normalize_llm_model_preference,
     normalize_llm_provider,
     resolve_provider_model,
@@ -22,12 +21,8 @@ from app.models.platform_settings import PlatformSettings
 
 _ALLOWED_PROCTORING_POLICY_MODES = {"observe_only", "strict_flagging"}
 _PROVIDERS_REQUIRING_KEYS = {
-    "gemini": "GEMINI_API_KEY",
     "openai": "OPENAI_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
 }
-logger = logging.getLogger(__name__)
 
 
 def _normalize_model_preference(value: str | None) -> str | None:
@@ -57,69 +52,17 @@ def _normalize_max_retries(value: int | None) -> int:
 
 
 def _api_key_available(provider: str) -> bool:
-    if provider == "gemini":
-        return bool(settings.GEMINI_API_KEY)
     if provider == "openai":
         return bool(settings.OPENAI_API_KEY)
-    if provider == "anthropic":
-        return bool(settings.ANTHROPIC_API_KEY)
-    if provider == "openrouter":
-        return bool(settings.OPENROUTER_API_KEY)
     return False
-
-
-async def _llm_service_provider_statuses() -> dict[str, dict[str, Any]] | None:
-    base_url = str(settings.LLM_SERVICE_URL or "").strip().rstrip("/")
-    if not base_url:
-        return None
-
-    try:
-        async with httpx.AsyncClient(timeout=1.0) as client:
-            response = await client.get(f"{base_url}/v1/status")
-        if response.status_code >= 400:
-            logger.warning("LLM service status returned HTTP %s", response.status_code)
-            return None
-        payload = response.json()
-    except (httpx.HTTPError, ValueError, TypeError) as exc:
-        logger.warning("LLM service status unavailable; using local env fallback: %s", exc)
-        return None
-
-    providers = payload.get("providers") if isinstance(payload, Mapping) else None
-    if not isinstance(providers, list):
-        logger.warning("LLM service status payload is missing providers list")
-        return None
-
-    statuses: dict[str, dict[str, Any]] = {}
-    allowed_providers = model_options_payload()
-    for item in providers:
-        if not isinstance(item, Mapping):
-            continue
-        provider = normalize_llm_provider(str(item.get("provider") or ""))
-        if provider not in allowed_providers:
-            continue
-        configured = item.get("configured")
-        if not isinstance(configured, bool):
-            continue
-        required_key = str(item.get("required_api_key") or _PROVIDERS_REQUIRING_KEYS.get(provider) or "").strip()
-        statuses[provider] = {
-            "configured": configured,
-            "required_api_key": required_key or None,
-        }
-
-    return statuses or None
 
 
 def _resolve_provider_key_status(
     provider: str,
     provider_statuses: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[bool, str | None]:
+    _ = provider_statuses
     required_key = _PROVIDERS_REQUIRING_KEYS.get(provider)
-    status = provider_statuses.get(provider) if provider_statuses else None
-    if isinstance(status, Mapping):
-        service_required_key = str(status.get("required_api_key") or required_key or "").strip() or None
-        configured = status.get("configured")
-        if isinstance(configured, bool):
-            return configured, service_required_key
     return _api_key_available(provider), required_key
 
 
@@ -174,8 +117,7 @@ async def get_platform_settings_payload(db: AsyncSession) -> dict[str, Any]:
         provider,
         row.assessor_model or row.assessor_model_preference,
     )
-    provider_statuses = await _llm_service_provider_statuses()
-    key_available, required_key = _resolve_provider_key_status(provider, provider_statuses)
+    key_available, required_key = _resolve_provider_key_status(provider)
     return {
         "candidate_registration_enabled": row.candidate_registration_enabled,
         "company_registration_enabled": row.company_registration_enabled,
@@ -195,7 +137,6 @@ async def get_platform_settings_payload(db: AsyncSession) -> dict[str, Any]:
         "llm_api_key_available": key_available,
         "llm_required_api_key": required_key,
         "llm_configuration_warning": None if key_available else f"{required_key or 'API key'} is not configured",
-        "mock_ai_enabled": False,
         "tts_provider": settings.TTS_PROVIDER,
         "tts_fallback_provider": settings.TTS_FALLBACK_PROVIDER,
         "created_at": row.created_at,
@@ -222,20 +163,23 @@ async def update_platform_settings(
     llm_max_retries: int | None = None,
 ) -> dict[str, Any]:
     row = await get_or_create_platform_settings(db)
-    target_provider = normalize_llm_provider(llm_provider or row.llm_provider)
+    current_db_provider = normalize_llm_provider(row.llm_provider)
+    if current_db_provider not in model_options_payload():
+        current_db_provider = DEFAULT_LLM_PROVIDER
+    target_provider = normalize_llm_provider(llm_provider) if llm_provider is not None else current_db_provider
     if target_provider not in model_options_payload():
         raise ValueError("Unsupported LLM provider")
     target_interviewer_model = interviewer_model
-    provider_changed = llm_provider is not None and target_provider != normalize_llm_provider(row.llm_provider)
-    if target_interviewer_model is None and provider_changed:
-        target_interviewer_model = default_model_for_provider(target_provider)
     if target_interviewer_model is None:
-        target_interviewer_model = row.interviewer_model or row.interviewer_model_preference or default_model_for_provider(target_provider)
+        target_interviewer_model = row.interviewer_model or row.interviewer_model_preference
+    if not is_allowed_provider_model(target_provider, target_interviewer_model):
+        target_interviewer_model = default_model_for_provider(target_provider)
+
     target_assessor_model = assessor_model
-    if target_assessor_model is None and provider_changed:
-        target_assessor_model = default_model_for_provider(target_provider)
     if target_assessor_model is None:
-        target_assessor_model = row.assessor_model or row.assessor_model_preference or default_model_for_provider(target_provider)
+        target_assessor_model = row.assessor_model or row.assessor_model_preference
+    if not is_allowed_provider_model(target_provider, target_assessor_model):
+        target_assessor_model = default_model_for_provider(target_provider)
     validate_provider_model_payload(target_provider, target_interviewer_model, field_name="interviewer_model")
     validate_provider_model_payload(target_provider, target_assessor_model, field_name="assessor_model")
 

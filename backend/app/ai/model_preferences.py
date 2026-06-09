@@ -1,32 +1,26 @@
 from __future__ import annotations
 
-from app.core.config import settings
-
-DEFAULT_LLM_MODEL = "gemini-2.5-flash"
-DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat-v3-0324:free"
+DEFAULT_LLM_MODEL = "gpt-5.4-mini"
 
 DEFAULT_LLM_MAX_RETRIES = 3
 DEFAULT_LLM_TIMEOUT_SECONDS = 30.0
 
-DEFAULT_LLM_PROVIDER = "gemini"
+DEFAULT_LLM_PROVIDER = "openai"
 DEFAULT_LLM_MODELS_BY_PROVIDER = {
-    "gemini": "gemini-2.5-flash",
-    "openai": "gpt-4.1-mini",
-    "anthropic": "claude-sonnet-4-20250514",
-    "openrouter": "openrouter/free",
+    "openai": "gpt-5.4-mini",
 }
 
 ALLOWED_LLM_MODELS_BY_PROVIDER = {
-    "gemini": (
-        "gemini-2.5-flash",
-        "gemini-2.5-pro",
+    "openai": (
+        "gpt-5.4-mini",
+        "gpt-5-mini",
+        "gpt-5",
+        "gpt-4.1-mini",
+        "gpt-4o-mini",
     ),
-    "openai": ("gpt-4.1-mini", "gpt-4.1"),
-    "anthropic": ("claude-sonnet-4-20250514", "claude-haiku-4-20250514"),
-    "openrouter": (),
 }
 
-ALLOWED_LLM_MODELS = set(ALLOWED_LLM_MODELS_BY_PROVIDER["gemini"])
+ALLOWED_LLM_MODELS = set(ALLOWED_LLM_MODELS_BY_PROVIDER["openai"])
 
 
 def normalize_llm_model_preference(value: str | None) -> str | None:
@@ -45,22 +39,11 @@ def is_allowed_llm_provider(value: str | None) -> bool:
 
 def is_allowed_llm_model_preference(value: str | None) -> bool:
     normalized = normalize_llm_model_preference(value)
-    if settings.ai_provider == "openrouter":
-        return bool(normalized and len(normalized) <= 160)
     return normalized in ALLOWED_LLM_MODELS
 
 
 def resolve_llm_runtime_model(value: str | None) -> str:
     normalized = normalize_llm_model_preference(value)
-    if settings.ai_provider == "openrouter":
-        if normalized:
-            return normalized
-        if settings.OPENROUTER_MODEL.strip():
-            return settings.OPENROUTER_MODEL.strip()
-        fallback_models = settings.openrouter_fallback_models
-        if fallback_models:
-            return fallback_models[0]
-        return DEFAULT_OPENROUTER_MODEL
     if normalized in ALLOWED_LLM_MODELS:
         return normalized
     return DEFAULT_LLM_MODEL

@@ -10,6 +10,8 @@ from app.schemas.admin import (
     AdminAuditLogListResponse,
     AdminCompanyListItemResponse,
     AdminCompanyListResponse,
+    AdminLLMDiagnosticsResponse,
+    AdminLLMPingResponse,
     AdminInterviewListItemResponse,
     AdminInterviewListResponse,
     AdminOverviewResponse,
@@ -20,9 +22,12 @@ from app.schemas.admin import (
     PlatformSettingsResponse,
     PlatformSettingsUpdateRequest,
 )
+from app.schemas.report import AssessmentReportResponse
 from app.services.admin_service import (
     admin_requeue_interview_report,
     create_admin_audit_log,
+    get_admin_llm_diagnostics,
+    get_admin_report,
     get_admin_overview,
     get_admin_platform_settings,
     list_admin_audit_logs,
@@ -30,6 +35,7 @@ from app.services.admin_service import (
     list_admin_interviews,
     list_admin_reports,
     list_admin_users,
+    run_admin_llm_ping,
     set_admin_company_active,
     set_admin_user_active,
     update_admin_platform_settings,
@@ -121,6 +127,38 @@ async def update_admin_ai_settings(
     return payload
 
 
+@router.get("/ai-settings/diagnostics", response_model=AdminLLMDiagnosticsResponse)
+async def admin_ai_diagnostics(
+    _: User = Depends(get_current_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_admin_llm_diagnostics(db)
+
+
+@router.post("/ai-settings/test", response_model=AdminLLMPingResponse)
+async def admin_ai_test(
+    current_user: User = Depends(get_current_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    payload = await run_admin_llm_ping(db)
+    await create_admin_audit_log(
+        db,
+        actor_user_id=current_user.id,
+        action="platform_ai_tested",
+        entity_type="platform_settings",
+        entity_id="1",
+        summary="Tested global AI runtime",
+        metadata_json={
+            "provider": payload.provider,
+            "model": payload.model,
+            "status": payload.status,
+            "ok": payload.ok,
+            "latency_ms": payload.latency_ms,
+        },
+    )
+    return payload
+
+
 @router.get("/interviews", response_model=AdminInterviewListResponse)
 async def admin_interviews(
     q: str | None = None,
@@ -182,17 +220,21 @@ async def admin_set_user_status(
             is_active=body.is_active,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        detail = str(exc)
+        if "not found" in detail.lower():
+            raise HTTPException(status_code=404, detail=detail)
+        raise HTTPException(status_code=409, detail=detail)
 
 
 @router.get("/companies", response_model=AdminCompanyListResponse)
 async def admin_companies(
     q: str | None = None,
+    status: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
     _: User = Depends(get_current_platform_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    return await list_admin_companies(db, q=q, limit=limit)
+    return await list_admin_companies(db, q=q, status=status, limit=limit)
 
 
 @router.put("/companies/{company_id}/status", response_model=AdminCompanyListItemResponse)
@@ -223,10 +265,31 @@ async def admin_reports(
     return await list_admin_reports(db, q=q, limit=limit)
 
 
+@router.get("/reports/{report_id}", response_model=AssessmentReportResponse)
+async def admin_report_detail(
+    report_id: uuid.UUID,
+    _: User = Depends(get_current_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        return await get_admin_report(db, report_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
 @router.get("/audit-log", response_model=AdminAuditLogListResponse)
 async def admin_audit_log(
+    q: str | None = None,
+    action: str | None = None,
+    entity_type: str | None = None,
     limit: int = Query(default=100, ge=1, le=200),
     _: User = Depends(get_current_platform_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    return await list_admin_audit_logs(db, limit=limit)
+    return await list_admin_audit_logs(
+        db,
+        q=q,
+        action=action,
+        entity_type=entity_type,
+        limit=limit,
+    )

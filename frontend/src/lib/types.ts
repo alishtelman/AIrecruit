@@ -16,16 +16,33 @@ export type AssessmentModuleStatus = "pending" | "in_progress" | "completed" | "
 export interface AdminOverviewMetrics {
   total_users: number;
   active_candidates: number;
+  candidates_added_7d: number;
+  total_companies: number;
   active_companies: number;
+  companies_added_7d: number;
   company_members: number;
   interviews_total: number;
+  interviews_started_7d: number;
+  interviews_in_progress: number;
   interviews_completed: number;
+  interviews_failed: number;
+  completion_rate_pct: number;
+  report_processing: number;
   reports_generated: number;
+  reports_generated_7d: number;
+  average_overall_score: number | null;
+}
+
+export interface AdminDailyTrendPoint {
+  date: string;
+  interviews_started: number;
+  reports_generated: number;
+  candidates_created: number;
+  companies_created: number;
 }
 
 export interface AdminRuntimeStatus {
   app_env: string;
-  mock_ai_enabled: boolean;
   rate_limit_enabled: boolean;
   platform_admin_bootstrap_enabled: boolean;
 }
@@ -69,6 +86,7 @@ export interface AdminRecentReport {
 export interface AdminOverview {
   metrics: AdminOverviewMetrics;
   runtime: AdminRuntimeStatus;
+  daily_trends: AdminDailyTrendPoint[];
   recent_users: AdminRecentUser[];
   recent_companies: AdminRecentCompany[];
   recent_interviews: AdminRecentInterview[];
@@ -83,7 +101,7 @@ export interface PlatformSettings {
   proctoring_policy_mode: "observe_only" | "strict_flagging" | string;
   interviewer_model_preference: string | null;
   assessor_model_preference: string | null;
-  llm_provider: "groq" | "openai" | "anthropic" | "openrouter" | string;
+  llm_provider: "openai" | string;
   interviewer_model: string;
   assessor_model: string;
   interviewer_prompt_override: string | null;
@@ -94,11 +112,48 @@ export interface PlatformSettings {
   llm_api_key_available: boolean;
   llm_required_api_key: string | null;
   llm_configuration_warning: string | null;
-  mock_ai_enabled: boolean;
   tts_provider: string | null;
   tts_fallback_provider: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface AdminAIRuntimeEvent {
+  at: string | null;
+  component: string | null;
+  provider: string | null;
+  model: string | null;
+  note: string | null;
+  error: string | null;
+}
+
+export interface AdminLLMDiagnostics {
+  provider: string;
+  interviewer_model: string;
+  assessor_model: string;
+  configured: boolean;
+  api_key_available: boolean;
+  required_api_key: string | null;
+  configuration_warning: string | null;
+  timeout_seconds: number;
+  max_retries: number;
+  runtime_provider: string;
+  runtime_model: string;
+  runtime_api_key_present: boolean;
+  last_success: AdminAIRuntimeEvent | null;
+  last_error: AdminAIRuntimeEvent | null;
+  checked_at: string;
+}
+
+export interface AdminLLMPing {
+  ok: boolean;
+  provider: string;
+  model: string;
+  status: string;
+  latency_ms: number | null;
+  response_preview: string | null;
+  error: string | null;
+  created_at: string;
 }
 
 export interface AdminInterviewListItem {
@@ -138,6 +193,12 @@ export interface AdminCompanyListItem {
   owner_email: string | null;
   is_active: boolean;
   member_count: number;
+  assessments_total: number;
+  assessments_in_progress: number;
+  assessments_pending: number;
+  assessments_completed: number;
+  reports_generated: number;
+  last_activity_at: string | null;
   created_at: string;
 }
 
@@ -260,7 +321,6 @@ export interface CompanyAISettings {
   message: string;
   tts_provider: string;
   tts_fallback_provider: string;
-  mock_ai_available: boolean;
   runtime_applied_fields: string[];
   stored_preference_fields: string[];
 }
@@ -464,6 +524,27 @@ export interface SendMessageRequest {
   message: string;
 }
 
+export interface PracticalTask {
+  task_id: string;
+  task_type: string; // "coding_task" | "sql_task" | "qa_test_case_task" | "debugging_task" | "product_case_task" | "business_case_task"
+  title: string;
+  instruction: string;
+  language?: string | null; // "python" | "javascript" | "sql" | "text" | "other"
+  starter_code?: string | null;
+  examples?: Array<{ input?: string; output?: string; description?: string }>;
+  time_limit_minutes: number;
+  evaluation_criteria: string[];
+  voice_intro?: string | null;
+}
+
+export interface PracticalSubmissionRequest {
+  task_id: string;
+  task_type: string;
+  answer: string;
+  language?: string | null;
+  duration_seconds?: number | null;
+}
+
 export interface SendMessageResponse {
   interview_id: string;
   status: InterviewStatus;
@@ -477,10 +558,12 @@ export interface SendMessageResponse {
   question_type: string;
   interview_stage?: InterviewStage | null;
   module_session: InterviewModuleSession | null;
+  question_delivery_type?: "voice_only" | "practical_task";
+  practical_task?: PracticalTask | null;
 }
 
 export interface InterviewMessage {
-  role: "assistant" | "candidate" | "system";
+  role: "assistant" | "candidate" | "system" | "practical_submission";
   content: string;
   created_at: string;
 }
@@ -1044,6 +1127,9 @@ export interface AssessmentReport {
   coding_task_summary: CodingTaskSummary | null;
   sql_live_summary: SqlLiveSummary | null;
   written_communication_summary: WrittenCommunicationSummary | null;
+  practical_section: Record<string, unknown> | null;
+  interview_quality_metrics: Record<string, number> | null;
+  answer_quality_counters: Record<string, number> | null;
 }
 
 export interface ReportModuleSession {

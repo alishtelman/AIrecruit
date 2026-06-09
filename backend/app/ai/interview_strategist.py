@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.ai.model_preferences import resolve_llm_runtime_model
-from app.ai.providers import LLMProvider, get_llm_provider
+from app.ai.providers import LLMProvider, ProviderChatError, get_llm_provider
 from app.ai.runtime_status import record_ai_error, record_ai_success
 from app.core.config import settings
 
@@ -212,7 +212,27 @@ class QuestionDecision:
     provider_latency_ms: float = 0.0
     provider_attempts: list[dict[str, Any]] = field(default_factory=list)
     provider_errors: list[str] = field(default_factory=list)
-    openrouter_fallback_used: bool = False
+    provider_fallback_used: bool = False
+    prompt_preview: str = ""
+    raw_response_preview: str = ""
+    source: str = ""
+
+
+def _debug_preview(value: Any, *, limit: int = 1200) -> str:
+    text = str(value or "")
+    text = _WS_RE.sub(" ", text).strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "…"
+
+
+def _messages_debug_preview(messages: list[dict[str, str]], *, limit: int = 2000) -> str:
+    chunks: list[str] = []
+    for msg in messages:
+        role = str(msg.get("role") or "unknown")
+        content = _debug_preview(msg.get("content") or "", limit=700)
+        chunks.append(f"{role}: {content}")
+    return _debug_preview("\n".join(chunks), limit=limit)
 
 
 def _question_signature(question: str) -> str:
@@ -383,30 +403,20 @@ def _pick_diversified_fallback_question(
 
 
 def _fallback_decision(ctx: InterviewStrategistContext, *, reason: str) -> QuestionDecision:
-    from app.core.config import settings
     state = ctx.interview_state_v2 if isinstance(ctx.interview_state_v2, dict) else {}
     fallback_counter = max(0, int(state.get("fallback_counter") or 0))
-    if settings.allow_mock_ai:
-        if ctx.resume_summary and fallback_counter == 0:
-            default_action = "ask_resume_followup"
-        else:
-            default_action = "start_scenario" if int(state.get("scenario_step", 0)) == 0 else "continue_scenario"
-    else:
-        fallback_modes = [
-            "ask_resume_followup",
-            "pressure_followup",
-            "start_scenario",
-            "clarify",
-        ]
-        default_action = fallback_modes[fallback_counter % len(fallback_modes)]
+    fallback_modes = [
+        "ask_resume_followup",
+        "pressure_followup",
+        "start_scenario",
+        "clarify",
+    ]
+    default_action = fallback_modes[fallback_counter % len(fallback_modes)]
     question_text, scenario_id, scenario_step = _pick_diversified_fallback_question(
         ctx=ctx,
         action=default_action,
         asked_questions=ctx.asked_questions,
     )
-    if settings.allow_mock_ai:
-        turn_idx = len(ctx.asked_questions)
-        question_text = f"{question_text} (Вопрос {turn_idx + 1})"
     target_competency = _pick_fallback_target_competency(ctx)
     action: ActionType
     if default_action in _ALLOWED_ACTIONS:
@@ -434,6 +444,7 @@ def _fallback_decision(ctx: InterviewStrategistContext, *, reason: str) -> Quest
         strategist_error_reason=reason,
         conversational_intent=_default_conversational_intent_from_action(action),
         information_target=target_competency,
+        source="fallback",
     )
 
 
@@ -526,13 +537,40 @@ def _build_question_phrasing_system_prompt(language: str) -> str:
     )
 
 
+# Keys carried in interview_state_v2 purely for diagnostics/persistence that the
+# strategist does NOT need to choose the next question. Sending them into the
+# prompt every turn snowballs input tokens (the traces even embed previous
+# prompt/response previews) and pushes free-tier requests into token-per-minute
+# rate limits. They are stripped from the prompt copy only — stored state is
+# untouched.
+_HEAVY_STATE_KEYS_FOR_PROMPT = (
+    "decision_traces",
+    "last_llm",
+    "last_policy_decision",
+    "interview_quality_metrics",
+    "last_answer_evaluation",  # already passed separately as last_answer_evaluation
+    "asked_questions",         # already passed separately (capped) as asked_questions
+)
+
+
+def _slim_state_for_prompt(state: Any) -> Any:
+    if not isinstance(state, dict):
+        return state
+    slim = {k: v for k, v in state.items() if k not in _HEAVY_STATE_KEYS_FOR_PROMPT}
+    for key in ("conversational_intent_history", "information_target_history"):
+        value = slim.get(key)
+        if isinstance(value, list) and len(value) > 8:
+            slim[key] = value[-8:]
+    return slim
+
+
 def _context_payload(ctx: InterviewStrategistContext) -> dict[str, Any]:
     return {
         "role": ctx.role,
         "language": ctx.language,
         "resume_summary": ctx.resume_summary,
         "role_competency_map": ctx.role_competency_map,
-        "interview_state_v2": ctx.interview_state_v2,
+        "interview_state_v2": _slim_state_for_prompt(ctx.interview_state_v2),
         "last_question": ctx.last_question,
         "last_answer": ctx.last_answer,
         "last_answer_evaluation": ctx.last_answer_evaluation,
@@ -1118,11 +1156,13 @@ class LLMInterviewStrategist:
         temperature: float,
         max_tokens: int,
     ) -> tuple[str, dict[str, Any]]:
+        from app.core.config import settings
         response = await self._provider.chat_completion(
             messages=messages,
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
+            timeout=settings.LLM_TIMEOUT_SECONDS,
         )
         meta = {
             "provider": self.provider_name,
@@ -1133,7 +1173,7 @@ class LLMInterviewStrategist:
             "provider_latency_ms": response.provider_latency_ms,
             "provider_attempts": response.provider_attempts,
             "provider_errors": response.provider_errors,
-            "openrouter_fallback_used": bool(response.fallback_used),
+            "provider_fallback_used": bool(response.fallback_used),
         }
         return str(response.text or "").strip(), meta
 
@@ -1176,22 +1216,27 @@ class LLMInterviewStrategist:
             "actual_model_used": "",
             "provider_attempts": [],
             "provider_errors": [],
-            "openrouter_fallback_used": False,
+            "provider_fallback_used": False,
         }
 
         try:
             logger.info(
-                "ai_model_call component=interview_strategist provider=%s model=%s role=%s unified_1pass=true",
+                "ai_model_call component=interview_strategist status=start provider=%s model=%s role=%s unified_1pass=true history_items=%s last_answer_chars=%s phase=%s",
                 self.provider_name,
                 resolved_model,
                 ctx.role,
+                len(ctx.transcript_summary or []),
+                len(ctx.last_answer or ""),
+                str((ctx.interview_state_v2 or {}).get("phase") or ""),
             )
-            # Один проход (reasoning + phrasing)
+            # Один проход (reasoning + phrasing).
+            # With thinkingBudget=0 the model emits the JSON directly, so a
+            # moderate cap is enough for the reasoning object + question text.
             strategist_raw, meta = await self._invoke_strategist(
                 model=resolved_model,
                 messages=messages,
                 temperature=0.2,
-                max_tokens=450,
+                max_tokens=1024,
             )
             strategist_provider_meta = meta
 
@@ -1204,6 +1249,12 @@ class LLMInterviewStrategist:
 
             if not decision:
                 strategist_retry_used = True
+                logger.warning(
+                    "ai_model_call component=interview_strategist status=retry provider=%s model=%s reason=%s",
+                    self.provider_name,
+                    resolved_model,
+                    strategist_error_reason or "invalid_json",
+                )
                 # Ретрай с более строгим системным промптом
                 retry_messages = [
                     {
@@ -1239,7 +1290,7 @@ class LLMInterviewStrategist:
                     model=resolved_model,
                     messages=retry_messages,
                     temperature=0.1,
-                    max_tokens=400,
+                    max_tokens=1024,
                 )
                 strategist_provider_meta = retry_meta
                 strategist_raw = retry_raw or strategist_raw
@@ -1272,16 +1323,28 @@ class LLMInterviewStrategist:
             decision.actual_model_used = str(strategist_provider_meta.get("actual_model_used") or resolved_model)
             decision.provider_attempts = list(strategist_provider_meta.get("provider_attempts") or [])
             decision.provider_errors = list(strategist_provider_meta.get("provider_errors") or [])
-            decision.openrouter_fallback_used = bool(strategist_provider_meta.get("openrouter_fallback_used"))
+            decision.provider_fallback_used = bool(strategist_provider_meta.get("provider_fallback_used"))
             decision.request_tokens_estimate = int(strategist_provider_meta.get("request_tokens_estimate") or 0)
             decision.response_tokens_estimate = int(strategist_provider_meta.get("response_tokens_estimate") or 0)
             decision.provider_latency_ms = float(strategist_provider_meta.get("provider_latency_ms") or 0.0)
+            decision.prompt_preview = _messages_debug_preview(messages)
+            decision.raw_response_preview = _debug_preview(strategist_raw)
+            decision.source = decision.ai_provider or self.provider_name
 
             record_ai_success(
                 component="interview_strategist",
                 provider=decision.ai_provider or self.provider_name,
                 model=decision.actual_model_used or resolved_model,
-                note=("fallback_models_used" if decision.openrouter_fallback_used else None),
+                note=("fallback_models_used" if decision.provider_fallback_used else None),
+            )
+            logger.info(
+                "ai_model_call component=interview_strategist status=success provider=%s model=%s latency_ms=%.1f source=%s json_valid=%s question_chars=%s",
+                decision.ai_provider or self.provider_name,
+                decision.actual_model_used or resolved_model,
+                decision.provider_latency_ms,
+                decision.source,
+                decision.strategist_json_valid,
+                len(decision.question_text or ""),
             )
             return decision
         except Exception as exc:
@@ -1291,7 +1354,20 @@ class LLMInterviewStrategist:
                 model=resolved_model,
                 error=str(exc),
             )
-            logger.exception("Interview strategist fallback triggered")
+            if isinstance(exc, ProviderChatError):
+                logger.exception(
+                    "Interview strategist provider failed provider=%s model=%s error=%s",
+                    str(strategist_provider_meta.get("provider") or self.provider_name),
+                    resolved_model,
+                    exc,
+                )
+                raise
+            logger.exception(
+                "Interview strategist fallback triggered provider=%s model=%s error=%s",
+                str(strategist_provider_meta.get("provider") or self.provider_name),
+                resolved_model,
+                exc,
+            )
             fallback = _fallback_decision(ctx, reason="deterministic_fallback_after_invalid_llm_json")
             fallback.strategist_raw_response = json.dumps(
                 {"unified_raw": strategist_raw},
@@ -1306,10 +1382,20 @@ class LLMInterviewStrategist:
             fallback.actual_model_used = str(strategist_provider_meta.get("actual_model_used") or "")
             fallback.provider_attempts = list(strategist_provider_meta.get("provider_attempts") or [])
             fallback.provider_errors = list(strategist_provider_meta.get("provider_errors") or [str(exc)])
-            fallback.openrouter_fallback_used = bool(strategist_provider_meta.get("openrouter_fallback_used"))
+            fallback.provider_fallback_used = bool(strategist_provider_meta.get("provider_fallback_used"))
             fallback.request_tokens_estimate = int(strategist_provider_meta.get("request_tokens_estimate") or 0)
             fallback.response_tokens_estimate = int(strategist_provider_meta.get("response_tokens_estimate") or 0)
             fallback.provider_latency_ms = float(strategist_provider_meta.get("provider_latency_ms") or 0.0)
+            fallback.prompt_preview = _messages_debug_preview(messages)
+            fallback.raw_response_preview = _debug_preview(strategist_raw)
+            fallback.source = "fallback"
+            logger.warning(
+                "ai_model_call component=interview_strategist status=fallback provider=%s model=%s latency_ms=%.1f source=fallback error=%s",
+                fallback.ai_provider or self.provider_name,
+                fallback.actual_model_used or resolved_model,
+                fallback.provider_latency_ms,
+                fallback.strategist_error_reason,
+            )
             return fallback
 
 
@@ -1328,13 +1414,16 @@ try:
 except Exception:
     _provider = None
 
-if _provider and _provider.name not in {"mock"}:
+if _provider:
     strategist: LLMInterviewStrategist | DisabledInterviewStrategist
     strategist = LLMInterviewStrategist(provider=_provider)
 else:
     strategist = DisabledInterviewStrategist()
 
 
-async def decide_next_interview_action(ctx: InterviewStrategistContext) -> QuestionDecision:
+async def decide_next_interview_action(
+    ctx: InterviewStrategistContext,
+    model_override: str | None = None,
+) -> QuestionDecision:
     """Public entrypoint used by interview engine v2."""
-    return await strategist.decide_next_interview_action(ctx)
+    return await strategist.decide_next_interview_action(ctx, model_override=model_override)

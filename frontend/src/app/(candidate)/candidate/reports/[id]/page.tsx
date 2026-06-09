@@ -104,11 +104,6 @@ function localizeCompetencyLabel(label: string, locale: string) {
 }
 
 function localizeEvidenceText(text: string, locale: string) {
-  if (locale === "ru" && text === "Mock evidence from response") return "Тестовое подтверждение из ответа";
-  if (locale === "ru" && text.startsWith("Mock evidence for ")) {
-    const competency = text.slice("Mock evidence for ".length);
-    return `Тестовое подтверждение по компетенции «${localizeCompetencyLabel(competency, locale)}»`;
-  }
   return text;
 }
 

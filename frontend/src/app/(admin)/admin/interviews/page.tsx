@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 
 import { AdminWorkspaceHeader } from "@/components/admin-workspace-header";
+import { Link } from "@/i18n/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { adminApi } from "@/lib/api";
 import type { AdminInterviewListItem } from "@/lib/types";
@@ -52,6 +53,7 @@ export default function AdminInterviewsPage() {
   }, [authLoading, load]);
 
   async function requeue(interviewId: string) {
+    if (!window.confirm(t("confirmRequeue"))) return;
     setBusyId(interviewId);
     setError("");
     try {
@@ -125,7 +127,7 @@ export default function AdminInterviewsPage() {
           <div className="mt-6 rounded-2xl border border-slate-700 bg-slate-900/60 px-5 py-8 text-center text-slate-400">{t("empty")}</div>
         ) : (
           <section className="ai-panel mt-6 overflow-hidden rounded-[1.75rem]">
-            <div className="grid grid-cols-[1.4fr_1fr_0.9fr_0.9fr_0.7fr_1fr_0.9fr] gap-4 border-b border-slate-800 px-6 py-4 text-xs uppercase tracking-[0.22em] text-slate-500">
+            <div className="grid grid-cols-[1.4fr_1fr_0.9fr_0.9fr_0.7fr_1fr_1.1fr] gap-4 border-b border-slate-800 px-6 py-4 text-xs uppercase tracking-[0.22em] text-slate-500">
               <div>{t("table.candidate")}</div>
               <div>{t("table.role")}</div>
               <div>{t("table.status")}</div>
@@ -136,7 +138,7 @@ export default function AdminInterviewsPage() {
             </div>
             <div className="divide-y divide-slate-800">
               {items.map((item) => (
-                <div key={item.id} className="grid grid-cols-[1.4fr_1fr_0.9fr_0.9fr_0.7fr_1fr_0.9fr] gap-4 px-6 py-4 text-sm">
+                <div key={item.id} className="grid grid-cols-[1.4fr_1fr_0.9fr_0.9fr_0.7fr_1fr_1.1fr] gap-4 px-6 py-4 text-sm">
                   <div>
                     <p className="font-medium text-white">{item.candidate_name}</p>
                     <p className="mt-1 text-slate-500">{item.candidate_email}</p>
@@ -146,7 +148,15 @@ export default function AdminInterviewsPage() {
                   <div className="text-slate-300">{t(`processing.${item.processing_state}` as never) || item.processing_state}</div>
                   <div className="text-white">{item.overall_score != null ? item.overall_score.toFixed(1) : "—"}</div>
                   <div className="text-slate-400">{formatDate(item.created_at, locale)}</div>
-                  <div className="flex justify-end">
+                  <div className="flex justify-end gap-2">
+                    {item.report_id && (
+                      <Link
+                        href={`/admin/reports/${item.report_id}`}
+                        className="rounded-full border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-xs font-semibold text-blue-200 transition hover:border-blue-400/50 hover:text-white"
+                      >
+                        {t("actions.openReport")}
+                      </Link>
+                    )}
                     <button
                       type="button"
                       onClick={() => requeue(item.id)}

@@ -14,10 +14,8 @@ _ALLOWED_PROCTORING_POLICY_MODES = {"observe_only", "strict_flagging"}
 
 def _runtime_provider_name() -> str:
     provider = settings.ai_provider
-    if provider == "gemini" and settings.GEMINI_API_KEY:
-        return "gemini"
-    if provider == "openrouter" and settings.OPENROUTER_API_KEY:
-        return "openrouter"
+    if provider == "openai" and settings.OPENAI_API_KEY:
+        return "openai"
     return "disabled"
 
 
@@ -57,7 +55,6 @@ def get_company_ai_settings_response(company: Company) -> dict[str, Any]:
         "message": "AI runtime is managed by platform admin.",
         "tts_provider": settings.TTS_PROVIDER,
         "tts_fallback_provider": settings.TTS_FALLBACK_PROVIDER,
-        "mock_ai_available": False,
         "runtime_applied_fields": [],
         "stored_preference_fields": [],
     }

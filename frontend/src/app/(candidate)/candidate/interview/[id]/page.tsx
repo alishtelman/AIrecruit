@@ -18,6 +18,7 @@ import type {
   InterviewMessage,
   InterviewReportStatusResponse,
   InterviewStage,
+  PracticalTask,
 } from "@/lib/types";
 
 const REPORT_POLL_INTERVAL_MS = 1500;
@@ -28,6 +29,16 @@ const PROCTORING_POLICY_MODE =
   process.env.NEXT_PUBLIC_PROCTORING_POLICY_MODE === "strict_flagging"
     ? "strict_flagging"
     : "observe_only";
+
+// Voice-first feature flags
+// NEXT_PUBLIC_ENABLE_VOICE_INTERVIEW — set to "true" to enable the voice UI toggle
+// NEXT_PUBLIC_DEFAULT_INTERVIEW_MODE — "voice" or "text" (default: "text" for safety)
+// NEXT_PUBLIC_VOICE_AUTO_SEND — "true" to auto-send after STT without confirm (default: false)
+const ENABLE_VOICE_INTERVIEW = process.env.NEXT_PUBLIC_ENABLE_VOICE_INTERVIEW === "true";
+const DEFAULT_INTERVIEW_MODE: "voice" | "text" =
+  process.env.NEXT_PUBLIC_DEFAULT_INTERVIEW_MODE === "voice" ? "voice" : "text";
+const VOICE_AUTO_SEND = process.env.NEXT_PUBLIC_VOICE_AUTO_SEND === "true";
+
 const CODING_TASK_LANGUAGES = ["python", "typescript", "javascript", "go", "java", "sql", "other"] as const;
 
 function estimateInterviewDuration(maxQuestions: number) {
@@ -100,7 +111,16 @@ export default function InterviewPage() {
   const [retryCountdownSeconds, setRetryCountdownSeconds] = useState<number | null>(null);
   const [pollRefreshCycle, setPollRefreshCycle] = useState(0);
   const [error, setError] = useState("");
-  const [answerMode, setAnswerMode] = useState<"text" | "voice">("text");
+  const [answerMode, setAnswerMode] = useState<"text" | "voice">(DEFAULT_INTERVIEW_MODE);
+  const answerModeRef = useRef<"text" | "voice">(DEFAULT_INTERVIEW_MODE);
+  const [showTranscript, setShowTranscript] = useState(false);
+  // transcriptPending: STT finished but candidate hasn't confirmed yet (VOICE_AUTO_SEND=false)
+  const [transcriptPending, setTranscriptPending] = useState(false);
+  const [practicalTask, setPracticalTask] = useState<PracticalTask | null>(null);
+  const [practicalModalOpen, setPracticalModalOpen] = useState(false);
+  const [practicalAnswer, setPracticalAnswer] = useState("");
+  const [practicalSubmitting, setPracticalSubmitting] = useState(false);
+  const [practicalStartTime, setPracticalStartTime] = useState<number | null>(null);
   const [latestTranscript, setLatestTranscript] = useState("");
   const [recordingUploadState, setRecordingUploadState] = useState<"idle" | "uploading" | "uploaded" | "failed" | "skipped">("idle");
   const [moduleSession, setModuleSession] = useState<InterviewModuleSession | null>(null);
@@ -154,10 +174,18 @@ export default function InterviewPage() {
     isSpeechActive,
     isMonitoringSupported: speechMonitoringSupported,
   } = useSpeechActivity(getWebcamStream, isRecording);
+  // Keep ref in sync with state so voice callback always has current value
+  useEffect(() => { answerModeRef.current = answerMode; }, [answerMode]);
+
   const { state: voiceState, start: startVoice, stop: stopVoice, errorMessage: voiceError, clearError: clearVoiceError } = useVoiceInput({
     onTranscript: (text) => {
       setLatestTranscript(text);
-      setInput((prev) => (prev ? `${prev} ${text}` : text));
+      // In voice mode, replace input entirely (one answer per recording session)
+      if (answerModeRef.current === "voice") {
+        setInput(text);
+      } else {
+        setInput((prev) => (prev ? `${prev} ${text}` : text));
+      }
     },
   });
 
@@ -246,7 +274,7 @@ export default function InterviewPage() {
       .getDetail(id)
       .then((data) => {
         setInterview(data);
-        setMessages(data.messages.filter((m) => m.role !== "system"));
+        setMessages(data.messages.filter((m) => m.role !== "system" && m.role !== "practical_submission"));
         setQuestionCount(data.question_count);
         setMaxQuestions(data.max_questions);
         setModuleSession(data.module_session ?? null);
@@ -608,6 +636,80 @@ export default function InterviewPage() {
     throw new Error(t("reportDelayed"));
   }
 
+  // Voice mode STT completion handling.
+  // VOICE_AUTO_SEND=false (default): set transcriptPending=true so candidate can review.
+  // VOICE_AUTO_SEND=true: fire handleSend immediately via ref (avoids stale closure).
+  const handleSendRef = useRef<() => void>(() => {});
+  const voiceAutoSendRef = useRef(false);
+
+  // Keep handleSendRef pointing to the latest handleSend (updated every render)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { handleSendRef.current = () => { void handleSend(); }; });
+
+  useEffect(() => {
+    if (answerModeRef.current !== "voice") return;
+    if (voiceState === "transcribing") {
+      voiceAutoSendRef.current = true;
+    }
+    if (voiceState === "idle" && voiceAutoSendRef.current) {
+      voiceAutoSendRef.current = false;
+      if (VOICE_AUTO_SEND) {
+        // Auto-send: small delay to let React flush the input state from the STT callback
+        setTimeout(() => { if (answerModeRef.current === "voice") handleSendRef.current(); }, 50);
+      } else {
+        // Manual confirm: show the transcript preview and wait for the candidate to press Send
+        setTranscriptPending(true);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceState]);
+
+  async function handlePracticalSubmit() {
+    if (!practicalTask || !id || practicalSubmitting) return;
+    if (!practicalAnswer.trim()) return;
+    setPracticalSubmitting(true);
+    setError("");
+    try {
+      const duration = practicalStartTime ? Math.round((Date.now() - practicalStartTime) / 1000) : null;
+      const res = await interviewApi.submitPracticalTask(id, {
+        task_id: practicalTask.task_id,
+        task_type: practicalTask.task_type,
+        answer: practicalAnswer,
+        language: practicalTask.language,
+        duration_seconds: duration,
+      });
+      setPracticalModalOpen(false);
+      setPracticalTask(null);
+      setPracticalAnswer("");
+      setPracticalStartTime(null);
+      setQuestionCount(res.question_count);
+      setMaxQuestions(res.max_questions);
+      setCurrentQuestion(res.current_question);
+      setIsFollowup(res.is_followup ?? false);
+      setQuestionType(res.question_type ?? "main");
+      setModuleSession(res.module_session ?? null);
+      setInterviewStage(res.interview_stage ?? null);
+      if (res.current_question) {
+        currentQNumRef.current = res.question_count;
+        questionStartTimeRef.current = Date.now();
+        const aiMsg: InterviewMessage = {
+          role: "assistant",
+          content: res.current_question,
+          created_at: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, aiMsg]);
+        setCanFinish(false);
+        speak(res.current_question, interviewLanguage);
+      } else {
+        setCanFinish(true);
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Ошибка отправки задания");
+    } finally {
+      setPracticalSubmitting(false);
+    }
+  }
+
   async function handleSend() {
     if (!input.trim() || sending || !id) return;
     const text = input.trim();
@@ -619,6 +721,7 @@ export default function InterviewPage() {
 
     setInput("");
     setLatestTranscript("");
+    setTranscriptPending(false);
     setSending(true);
     setError("");
     stop();
@@ -629,7 +732,9 @@ export default function InterviewPage() {
       content: text,
       created_at: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, optimistic]);
+    if (!introPending) {
+      setMessages((prev) => [...prev, optimistic]);
+    }
 
     try {
       const res = await interviewApi.sendMessage(id, { message: text });
@@ -652,13 +757,45 @@ export default function InterviewPage() {
         setMessages((prev) => [...prev, aiMsg]);
         setCanFinish(false);
         speak(res.current_question, interviewLanguage);
+        // Practical task: open modal after AI speaks the intro
+        if (res.question_delivery_type === "practical_task" && res.practical_task) {
+          setPracticalTask(res.practical_task);
+          setPracticalAnswer(res.practical_task.starter_code ?? "");
+          setPracticalStartTime(Date.now());
+          // Delay opening modal until TTS finishes intro (2s safety buffer)
+          setTimeout(() => setPracticalModalOpen(true), 2200);
+        }
       } else {
         setCanFinish(true);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t("sendFailed"));
-      setMessages((prev) => prev.slice(0, -1));
-      setInput(text);
+      // The answer is persisted server-side even when generating the next
+      // question fails, so do NOT drop the optimistic message (that made the
+      // candidate's reply look deleted). Re-sync from the server instead: this
+      // keeps the saved answer and picks up the next question if it was created.
+      try {
+        const data = await interviewApi.getDetail(id);
+        setMessages(data.messages.filter((m) => m.role !== "system" && m.role !== "practical_submission"));
+        setQuestionCount(data.question_count);
+        setMaxQuestions(data.max_questions);
+        const lastAssistant = [...data.messages]
+          .reverse()
+          .find((m) => m.role === "assistant");
+        const lastMsg = data.messages[data.messages.length - 1];
+        if (lastMsg?.role === "assistant" && lastAssistant) {
+          setCurrentQuestion(lastAssistant.content);
+        } else if (
+          data.question_count >= data.max_questions &&
+          lastMsg?.role === "candidate"
+        ) {
+          setCanFinish(true);
+          setCurrentQuestion(null);
+        }
+      } catch {
+        // If re-sync fails, keep the optimistic answer visible rather than
+        // deleting it; the user can retry.
+      }
     } finally {
       setSending(false);
     }
@@ -825,10 +962,26 @@ export default function InterviewPage() {
   }
 
   const roleLabel = startT(`roles.${interview.target_role}.label`);
-  const coreProgressPct = Math.round((questionCount / maxQuestions) * 100);
-  const assistantAskedCount = messages.filter((msg) => msg.role === "assistant").length;
+  const isIntroAssistantMessage = (content: string) => {
+    const normalized = content.trim().toLowerCase();
+    return (
+      normalized.startsWith("здравствуйте! я ai hr-интервьюер") ||
+      normalized.startsWith("hello! i’m your ai hr interviewer") ||
+      normalized.startsWith("hello! i'm your ai hr interviewer")
+    );
+  };
+  const assistantAskedCount = messages.filter((msg) => msg.role === "assistant" && !isIntroAssistantMessage(msg.content)).length;
   const candidateAnswerCount = messages.filter((msg) => msg.role === "candidate").length;
+  const introPending = interview.status === "in_progress" && questionCount === 0;
+  const visibleQuestionCount = Math.max(assistantAskedCount, questionCount);
+  const visibleProgressPct = Math.round((visibleQuestionCount / Math.max(maxQuestions, 1)) * 100);
   const voiceMode = answerMode === "voice";
+  // Derived voice status for UI indicators
+  const voiceStatus: "ai_speaking" | "listening" | "processing" | "idle" =
+    speaking ? "ai_speaking"
+    : voiceState === "recording" ? "listening"
+    : voiceState === "transcribing" || sending ? "processing"
+    : "idle";
   const reportAttempts = reportStatus?.diagnostics?.attempt_count ?? 0;
   const reportMaxAttempts = reportStatus?.diagnostics?.max_attempts ?? 0;
   const reportLastError = reportStatus?.diagnostics?.last_error;
@@ -901,10 +1054,12 @@ export default function InterviewPage() {
     ? new Date(codingTaskSavedAt).toLocaleTimeString()
     : null;
   const elapsedLabel = formatElapsedDuration(elapsedSeconds);
-  const currentQuestionLabel = t("question", {
-    current: Math.min(Math.max(questionCount, 1), Math.max(maxQuestions, 1)),
-    total: Math.max(maxQuestions, 1),
-  });
+  const currentQuestionLabel = introPending
+    ? t("introPending")
+    : t("question", {
+        current: Math.min(Math.max(visibleQuestionCount, 1), Math.max(maxQuestions, 1)),
+        total: Math.max(maxQuestions, 1),
+      });
   const askedInChatLabel = t("askedInChat", { count: assistantAskedCount });
   const answeredInChatLabel = t("answeredInChat", { count: candidateAnswerCount });
   const stageDisplayTitle =
@@ -1030,7 +1185,7 @@ export default function InterviewPage() {
             </div>
             <p className="mt-3 text-xs text-slate-400">
               {t("progressHint", {
-                percent: Math.min(100, Math.max(coreProgressPct, 0)),
+                percent: Math.min(100, Math.max(visibleProgressPct, 0)),
                 answered: candidateAnswerCount,
               })}
             </p>
@@ -1242,21 +1397,209 @@ export default function InterviewPage() {
           )}
 
           <div className="flex min-h-[65vh] flex-1 flex-col overflow-hidden rounded-[30px] border border-slate-800 bg-slate-900/80 shadow-[0_24px_80px_rgba(2,6,23,0.4)]">
+            {/* Header */}
             <div className="border-b border-slate-800/80 px-4 py-4 sm:px-6">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">{t("chatCardEyebrow")}</div>
                   <div className="mt-1 text-lg font-semibold text-white">{stageDisplayTitle}</div>
-                  <div className="mt-1 text-sm text-slate-400">{t("voiceHint")}</div>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  {voiceMode && (
+                    <button
+                      type="button"
+                      onClick={() => setShowTranscript((v) => !v)}
+                      className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors ${
+                        showTranscript
+                          ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-300"
+                          : "border-slate-700 bg-slate-900/60 text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      {showTranscript ? "↑ Скрыть чат" : "↓ Показать чат"}
+                    </button>
+                  )}
+                  {ENABLE_VOICE_INTERVIEW && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAnswerMode((m) => m === "voice" ? "text" : "voice");
+                        setTranscriptPending(false);
+                        setInput("");
+                      }}
+                      className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs text-slate-400 transition-colors hover:text-slate-200"
+                    >
+                      {voiceMode ? "Текстовый режим" : "Голосовой режим"}
+                    </button>
+                  )}
                   <StatusPill tone={isFollowup ? "purple" : "slate"}>{currentQuestionTypeLabel}</StatusPill>
                   {uploadStatusLabel && <StatusPill tone={recordingUploadState === "failed" ? "amber" : "slate"}>{uploadStatusLabel}</StatusPill>}
                 </div>
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+            {/* Voice-first main area — only when feature flag is enabled */}
+            {ENABLE_VOICE_INTERVIEW && voiceMode && !showTranscript && !canFinish && interview.status === "in_progress" && (
+              <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 py-10">
+                {/* Status indicator */}
+                <div className="flex flex-col items-center gap-2">
+                  <div className={`flex h-16 w-16 items-center justify-center rounded-full transition-all duration-300 ${
+                    voiceStatus === "ai_speaking" ? "bg-blue-500/20 shadow-[0_0_32px_rgba(59,130,246,0.4)]"
+                    : voiceStatus === "listening" ? "animate-pulse bg-red-500/20 shadow-[0_0_32px_rgba(239,68,68,0.4)]"
+                    : voiceStatus === "processing" ? "bg-amber-500/20 shadow-[0_0_24px_rgba(245,158,11,0.3)]"
+                    : "bg-slate-800"
+                  }`}>
+                    <span className="text-2xl">
+                      {voiceStatus === "ai_speaking" ? "🔊" : voiceStatus === "listening" ? "🎤" : voiceStatus === "processing" ? "⏳" : "🎙"}
+                    </span>
+                  </div>
+                  <div className="text-sm font-medium text-slate-300">
+                    {voiceStatus === "ai_speaking" ? "AI говорит..."
+                      : voiceStatus === "listening" ? "Слушаю..."
+                      : voiceStatus === "processing" ? "Обрабатываю..."
+                      : "Готов к ответу"}
+                  </div>
+                </div>
+
+                {/* Current question */}
+                {currentQuestion && (
+                  <div className="w-full max-w-xl rounded-2xl border border-blue-500/20 bg-blue-500/10 px-6 py-5 text-center">
+                    <div className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-blue-300">Вопрос</div>
+                    <p className="text-base leading-relaxed text-white">{currentQuestion}</p>
+                    <button
+                      type="button"
+                      onClick={() => speak(currentQuestion, interviewLanguage)}
+                      disabled={speaking}
+                      className="mt-4 rounded-full border border-blue-500/30 bg-slate-900/60 px-4 py-1.5 text-xs text-blue-300 transition-colors hover:bg-blue-500/20 disabled:opacity-40"
+                    >
+                      ▶ Повторить
+                    </button>
+                  </div>
+                )}
+
+                {introPending && (
+                  <div className="w-full max-w-xl rounded-2xl border border-slate-700 bg-slate-900/60 px-6 py-5 text-center text-sm text-slate-300">
+                    {t("introPending")}
+                  </div>
+                )}
+
+                {/* Transcript preview + confirm (when VOICE_AUTO_SEND=false and STT done) */}
+                {transcriptPending && input.trim() && !sending && (
+                  <div className="w-full max-w-xl space-y-3">
+                    <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-5 py-4">
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300">Ваш ответ</div>
+                      <p className="text-sm leading-relaxed text-white">{input}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => void handleSend()}
+                        disabled={sending}
+                        className="flex-1 rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
+                      >
+                        ✓ Отправить ответ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setInput("");
+                          setLatestTranscript("");
+                          setTranscriptPending(false);
+                        }}
+                        className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-300 transition-colors hover:border-slate-600"
+                      >
+                        ↺ Перезаписать
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Mic button — hidden while transcript is pending or AI is speaking or sending */}
+                {!sending && voiceStatus !== "ai_speaking" && !introPending && !transcriptPending && (
+                  <div className="flex flex-col items-center gap-3">
+                    <button
+                      type="button"
+                      onMouseDown={() => { setInput(""); setTranscriptPending(false); void startVoice(); }}
+                      onMouseUp={stopVoice}
+                      onTouchStart={() => { setInput(""); setTranscriptPending(false); void startVoice(); }}
+                      onTouchEnd={stopVoice}
+                      disabled={voiceState === "transcribing" || sending}
+                      className={`h-20 w-20 rounded-full border-2 text-3xl font-bold transition-all duration-200 select-none ${
+                        voiceState === "recording"
+                          ? "animate-pulse border-red-500 bg-red-500/20 text-red-300 shadow-[0_0_32px_rgba(239,68,68,0.5)]"
+                          : voiceState === "transcribing"
+                          ? "border-amber-500/50 bg-amber-500/10 text-amber-400 opacity-60"
+                          : "border-slate-600 bg-slate-800 text-slate-200 hover:border-slate-500 hover:bg-slate-700 active:scale-95"
+                      }`}
+                    >
+                      {voiceState === "recording" ? "●" : voiceState === "transcribing" ? "…" : "🎙"}
+                    </button>
+                    <p className="text-xs text-slate-500">
+                      {voiceState === "recording" ? "Говорите — отпустите чтобы завершить"
+                        : voiceState === "transcribing" ? "Распознаю речь..."
+                        : "Удержите кнопку и говорите"}
+                    </p>
+                  </div>
+                )}
+
+                {/* Intro "ready" prompt */}
+                {introPending && !transcriptPending && (
+                  <div className="flex flex-col items-center gap-3">
+                    <button
+                      type="button"
+                      onMouseDown={() => { setInput(""); setTranscriptPending(false); void startVoice(); }}
+                      onMouseUp={stopVoice}
+                      onTouchStart={() => { setInput(""); setTranscriptPending(false); void startVoice(); }}
+                      onTouchEnd={stopVoice}
+                      disabled={voiceState !== "idle"}
+                      className={`rounded-2xl border px-8 py-3 font-semibold transition-all ${
+                        voiceState === "recording"
+                          ? "animate-pulse border-red-500 bg-red-500/20 text-red-300"
+                          : voiceState === "transcribing"
+                          ? "border-amber-500/50 bg-amber-500/10 text-amber-400 opacity-60"
+                          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                      }`}
+                    >
+                      {voiceState === "recording" ? "🎤 Слушаю..." : voiceState === "transcribing" ? "Распознаю..." : "🎙 Я готов / Ready"}
+                    </button>
+                    <p className="text-xs text-slate-500">Скажите «Готов» или «Ready»</p>
+                  </div>
+                )}
+
+                {/* Intro confirm when transcript pending */}
+                {introPending && transcriptPending && input.trim() && (
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-5 py-3 text-sm text-emerald-200">
+                      Распознано: <span className="font-medium">{input}</span>
+                    </div>
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => void handleSend()}
+                        className="rounded-xl bg-emerald-600 px-6 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+                      >
+                        Отправить
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setInput(""); setTranscriptPending(false); }}
+                        className="rounded-xl border border-slate-700 px-5 py-2 text-sm text-slate-300 hover:border-slate-600"
+                      >
+                        Перезаписать
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {voiceError && (
+                  <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                    {voiceError}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Transcript / Chat panel */}
+            <div className={`flex-1 overflow-y-auto px-4 py-4 sm:px-6 ${ENABLE_VOICE_INTERVIEW && voiceMode && !showTranscript && !canFinish && interview.status === "in_progress" ? "hidden" : ""}`}>
               <div className="space-y-4">
                 {(overviewModuleSession || taskWorkspaceSession) && (
                   <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-5">
@@ -1457,8 +1800,6 @@ export default function InterviewPage() {
                     <div className="text-white font-semibold">{t("completeTitle")}</div>
                     <div className="mt-1 text-sm text-slate-300">
                       {t("completeDescription", {
-                        coreCount: questionCount,
-                        coreTotal: maxQuestions,
                         answeredCount: candidateAnswerCount,
                         askedCount: assistantAskedCount,
                       })}
@@ -1515,7 +1856,7 @@ export default function InterviewPage() {
               </div>
             </div>
 
-            {!canFinish && interview.status === "in_progress" && (
+            {!canFinish && interview.status === "in_progress" && !(ENABLE_VOICE_INTERVIEW && voiceMode) && (
               <div className="border-t border-slate-800/80 bg-slate-950/80 px-4 py-4 sm:px-6">
                 <form
                   className="space-y-3"
@@ -1637,6 +1978,116 @@ export default function InterviewPage() {
           </div>
         </section>
       </main>
+
+      {/* Practical Task Modal */}
+      {practicalModalOpen && practicalTask && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+          <div className="flex w-full max-w-2xl max-h-[90vh] flex-col overflow-hidden rounded-[28px] border border-slate-700 bg-slate-900 shadow-[0_32px_100px_rgba(2,6,23,0.6)]">
+            {/* Modal header */}
+            <div className="flex items-start justify-between gap-4 border-b border-slate-800 px-6 py-5">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.22em] text-amber-300">Практическое задание</div>
+                <div className="mt-1 text-lg font-semibold text-white">{practicalTask.title}</div>
+                {practicalTask.time_limit_minutes && (
+                  <div className="mt-1 text-xs text-slate-400">⏱ {practicalTask.time_limit_minutes} минут</div>
+                )}
+              </div>
+              <div className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs uppercase tracking-[0.16em] text-amber-300">
+                {practicalTask.task_type.replace(/_/g, " ")}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+              {/* Instructions */}
+              <div className="rounded-2xl border border-slate-700/80 bg-slate-950/50 px-5 py-4">
+                <div className="text-xs uppercase tracking-[0.16em] text-slate-500 mb-2">Задание</div>
+                <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-wrap">{practicalTask.instruction}</p>
+              </div>
+
+              {/* Examples */}
+              {practicalTask.examples && practicalTask.examples.length > 0 && (
+                <div>
+                  <div className="text-xs uppercase tracking-[0.16em] text-slate-500 mb-2">Примеры</div>
+                  <div className="space-y-2">
+                    {practicalTask.examples.map((ex, i) => (
+                      <div key={i} className="rounded-xl border border-slate-700 bg-slate-950/40 px-4 py-3 text-xs font-mono">
+                        {ex.description && <div className="text-slate-400 mb-1">{ex.description}</div>}
+                        {ex.input && <div className="text-slate-300"><span className="text-slate-500">Input: </span>{ex.input}</div>}
+                        {ex.output && <div className="text-slate-300"><span className="text-slate-500">Output: </span>{ex.output}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Evaluation criteria */}
+              {practicalTask.evaluation_criteria && practicalTask.evaluation_criteria.length > 0 && (
+                <div>
+                  <div className="text-xs uppercase tracking-[0.16em] text-slate-500 mb-2">Критерии оценки</div>
+                  <div className="flex flex-wrap gap-2">
+                    {practicalTask.evaluation_criteria.map((c) => (
+                      <span key={c} className="rounded-full border border-slate-700 bg-slate-800/60 px-3 py-1 text-xs text-slate-300">{c}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Answer area */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs uppercase tracking-[0.16em] text-slate-500">Ваше решение</div>
+                  {practicalTask.language && practicalTask.language !== "text" && (
+                    <span className="rounded-full border border-slate-700 bg-slate-800 px-3 py-1 text-xs uppercase tracking-[0.14em] text-slate-300">
+                      {practicalTask.language}
+                    </span>
+                  )}
+                </div>
+                <textarea
+                  value={practicalAnswer}
+                  onChange={(e) => setPracticalAnswer(e.target.value)}
+                  placeholder={
+                    practicalTask.task_type === "coding_task" || practicalTask.task_type === "debugging_task"
+                      ? "Напишите код здесь..."
+                      : practicalTask.task_type === "sql_task"
+                      ? "Напишите SQL-запрос здесь..."
+                      : "Напишите ответ здесь..."
+                  }
+                  rows={14}
+                  className={`w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm leading-6 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-y ${
+                    practicalTask.language && practicalTask.language !== "text" && practicalTask.language !== "other"
+                      ? "font-mono"
+                      : "font-sans"
+                  }`}
+                />
+              </div>
+            </div>
+
+            {/* Modal footer */}
+            <div className="flex items-center justify-between gap-4 border-t border-slate-800 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setPracticalModalOpen(false);
+                  setPracticalTask(null);
+                  setPracticalAnswer("");
+                }}
+                disabled={practicalSubmitting}
+                className="rounded-xl border border-slate-700 px-5 py-2.5 text-sm text-slate-300 transition-colors hover:border-slate-600 hover:text-white disabled:opacity-40"
+              >
+                Пропустить
+              </button>
+              <button
+                type="button"
+                onClick={() => void handlePracticalSubmit()}
+                disabled={practicalSubmitting || !practicalAnswer.trim()}
+                className="rounded-xl bg-amber-600 px-8 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {practicalSubmitting ? "Отправляю..." : "Отправить решение"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {(finishing || reportRetrying) && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-900/90 backdrop-blur-sm">

@@ -47,6 +47,13 @@ from app.ai.interviewer import (
     interviewer,
 )
 from app.ai.resume_profile import preprocess_resume
+from app.ai.practical_tasks import (
+    get_practical_task,
+    should_trigger_practical_task,
+)
+from app.ai.providers import get_llm_provider
+from app.ai.providers.base import ProviderChatError
+from app.schemas.interview import PracticalSubmissionRequest, PracticalTaskResponse
 from app.models.candidate import Candidate
 from app.models.interview import Interview, InterviewMessage
 from app.models.report import AssessmentReport
@@ -101,6 +108,9 @@ class MaxQuestionsReachedError(Exception):
 
 class MaxQuestionsNotReachedError(Exception):
     """Cannot finish before all questions have been asked."""
+
+
+MIN_MANUAL_FINISH_ANSWERS = 8
 
 
 class ReportRetryNotAllowedError(Exception):
@@ -168,6 +178,117 @@ def _default_interview_state_v2(
         "decision_traces": [],
         "interview_quality_metrics": _default_interview_quality_metrics(),
     }
+
+
+_ROLE_DISPLAY_LABELS: dict[str, dict[str, str]] = {
+    "backend_engineer": {"ru": "Backend-разработчик", "en": "Backend Engineer"},
+    "frontend_engineer": {"ru": "Frontend-разработчик", "en": "Frontend Engineer"},
+    "qa_engineer": {"ru": "QA-инженер", "en": "QA Engineer"},
+    "devops_engineer": {"ru": "DevOps-инженер", "en": "DevOps Engineer"},
+    "data_scientist": {"ru": "Data Scientist", "en": "Data Scientist"},
+    "product_manager": {"ru": "Продакт-менеджер", "en": "Product Manager"},
+    "mobile_engineer": {"ru": "Mobile-разработчик", "en": "Mobile Engineer"},
+    "designer": {"ru": "UX/UI-дизайнер", "en": "UX/UI Designer"},
+}
+
+
+_ROLE_INTERVIEW_BLUEPRINTS: dict[str, dict[str, list[str]]] = {
+    "backend_engineer": {
+        "ru": ["знакомство и backend-стек", "API и границы сервисов", "базы данных, транзакции и производительность", "архитектура, надёжность и безопасность", "debugging и коммуникация"],
+        "en": ["background and backend stack", "API and service boundaries", "databases, transactions, and performance", "architecture, reliability, and security", "debugging and communication"],
+    },
+    "frontend_engineer": {
+        "ru": ["знакомство и frontend-опыт", "React/Next.js и state management", "UI, формы и API-интеграции", "performance, accessibility и качество", "debugging и работа с дизайном"],
+        "en": ["background and frontend experience", "React/Next.js and state management", "UI, forms, and API integration", "performance, accessibility, and quality", "debugging and design collaboration"],
+    },
+    "qa_engineer": {
+        "ru": ["знакомство и опыт тестирования", "test design и test cases", "bug investigation и defect reporting", "API/UI/regression testing", "automation, CI/CD и коммуникация с разработкой"],
+        "en": ["background and testing experience", "test design and test cases", "bug investigation and defect reporting", "API/UI/regression testing", "automation, CI/CD, and developer communication"],
+    },
+    "devops_engineer": {
+        "ru": ["знакомство и инфраструктура", "CI/CD и релизы", "Docker/Kubernetes и cloud", "monitoring, incidents и rollback", "security, cost и reliability"],
+        "en": ["background and infrastructure", "CI/CD and releases", "Docker/Kubernetes and cloud", "monitoring, incidents, and rollback", "security, cost, and reliability"],
+    },
+    "data_scientist": {
+        "ru": ["знакомство и data science опыт", "постановка задачи и данные", "модели, валидация и метрики", "эксперименты, A/B и интерпретация", "data quality и бизнес-инсайты"],
+        "en": ["background and data science experience", "problem framing and data", "models, validation, and metrics", "experiments, A/B tests, and interpretation", "data quality and business insights"],
+    },
+    "product_manager": {
+        "ru": ["знакомство и релевантность продуктового опыта", "discovery и user needs", "prioritization и roadmap", "metrics, impact и business case", "stakeholders и trade-offs"],
+        "en": ["background and product relevance", "discovery and user needs", "prioritization and roadmap", "metrics, impact, and business case", "stakeholders and trade-offs"],
+    },
+    "mobile_engineer": {
+        "ru": ["знакомство и mobile-стек", "архитектура приложения и state", "crashes, performance и offline", "API-интеграции и релизы", "debugging, testing и UX edge cases"],
+        "en": ["background and mobile stack", "app architecture and state", "crashes, performance, and offline behavior", "API integration and releases", "debugging, testing, and UX edge cases"],
+    },
+    "designer": {
+        "ru": ["знакомство и дизайн-опыт", "user research и problem framing", "user flows, wireframes и прототипы", "design systems, accessibility и handoff", "метрики, usability и stakeholder feedback"],
+        "en": ["background and design experience", "user research and problem framing", "user flows, wireframes, and prototypes", "design systems, accessibility, and handoff", "metrics, usability, and stakeholder feedback"],
+    },
+}
+
+
+def _role_label(role: str, language: str) -> str:
+    lang = "en" if str(language or "").lower().startswith("en") else "ru"
+    labels = _ROLE_DISPLAY_LABELS.get(role, {})
+    return labels.get(lang) or role.replace("_", " ").title()
+
+
+def _role_interview_sections(role: str, language: str) -> list[str]:
+    lang = "en" if str(language or "").lower().startswith("en") else "ru"
+    blueprint = _ROLE_INTERVIEW_BLUEPRINTS.get(role) or _ROLE_INTERVIEW_BLUEPRINTS["backend_engineer"]
+    return list(blueprint.get(lang) or blueprint.get("ru") or [])
+
+
+def _build_interview_intro_message(*, role: str, language: str, max_questions: int) -> str:
+    label = _role_label(role, language)
+    sections = _role_interview_sections(role, language)
+    duration = max(25, min(60, max_questions * 2))
+    if str(language or "").lower().startswith("en"):
+        section_lines = "\n".join(f"{idx}. {section}" for idx, section in enumerate(sections, start=1))
+        return (
+            f"Hello! I’m your AI HR interviewer and I’ll run a structured interview for the “{label}” role.\n\n"
+            f"The interview will take about {duration} minutes and includes several blocks:\n"
+            f"{section_lines}\n\n"
+            "Please answer with concrete examples: what the situation was, what exactly you did, what result you got, and how you measured it.\n\n"
+            "If a question is unclear, you can ask me to rephrase it. If you want to move on, write “let’s move on”.\n\n"
+            "Ready to start?"
+        )
+    section_lines = "\n".join(f"{idx}. {section}" for idx, section in enumerate(sections, start=1))
+    return (
+        f"Здравствуйте! Я AI HR-интервьюер и проведу структурированное собеседование на роль «{label}».\n\n"
+        f"Интервью займет примерно {duration} минут и будет состоять из нескольких блоков:\n"
+        f"{section_lines}\n\n"
+        "Пожалуйста, отвечайте на конкретных примерах: какая была ситуация, что именно сделали вы, какой был результат и как вы это измерили.\n\n"
+        "Если вопрос непонятен, можно попросить переформулировать. Если хотите перейти дальше, напишите «давайте дальше».\n\n"
+        "Готовы начать?"
+    )
+
+
+def _is_start_confirmation(message: str) -> bool:
+    normalized = re.sub(r"[^a-zа-яё0-9 ]+", " ", str(message or "").strip().lower())
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized:
+        return False
+    confirmations = {
+        "готов",
+        "готова",
+        "да",
+        "давайте",
+        "давайте начнем",
+        "давайте начнём",
+        "начинаем",
+        "начнем",
+        "начнём",
+        "можно начинать",
+        "start",
+        "ready",
+        "yes",
+        "let s start",
+        "lets start",
+        "begin",
+    }
+    return normalized in confirmations or normalized.startswith(("готов ", "готова ", "ready ", "start "))
 
 
 def _merge_interview_state_v2_defaults(
@@ -275,6 +396,13 @@ def _update_resume_evidence(
         "рук.",
         "направления",
         "сопровожд",
+        "продукт",
+        "продакт",
+        "product",
+        "финтех",
+        "мобильн",
+        "перевод",
+        "платеж",
         "engineer",
         "manager",
         "lead",
@@ -288,6 +416,15 @@ def _update_resume_evidence(
         "дефект",
         "ошибк",
         "релиз",
+        "эксперимент",
+        "a/b",
+        "ab test",
+        "гипотез",
+        "воронк",
+        "drop-off",
+        "просел",
+        "просад",
+        "интервью с пользов",
         "case",
         "incident",
         "issue",
@@ -312,12 +449,40 @@ def _update_resume_evidence(
         "я собрал",
         "я наш",
         "я запуст",
+        "я вел",
+        "я вёл",
+        "я собир",
+        "я провел",
+        "я провёл",
+        "я сформулир",
+        "я приоритиз",
+        "я предлож",
+        "я координир",
+        "я обновлял",
+        "я выбирал",
+        "я проводил",
+        "я смотр",
+        "я фиксир",
+        "мы сделали",
+        "мы добавили",
+        "собрал данные",
+        "сформулировал",
+        "приоритизировал",
+        "проводил",
     )
     result_markers = (
         "сниз",
         "повыс",
         "улучш",
         "ускор",
+        "вырос",
+        "выросла",
+        "выросли",
+        "конверси",
+        "retention",
+        "жалоб",
+        "обращен",
+        "успешн",
         "принял на сопровожд",
         "не повторял",
         "стало лучше",
@@ -344,20 +509,38 @@ def _resume_evidence_score(resume_evidence: dict[str, Any]) -> int:
 
 
 def _resume_deep_dive_gate_opened(resume_evidence: dict[str, Any]) -> bool:
-    import sys
-    import os
-    from app.core.config import settings
-    is_mock = (
-        "pytest" in sys.modules
-        or settings.allow_mock_ai
-        or not settings.GEMINI_API_KEY
-        or os.getenv("MOCK_LLM", "").lower() in {"true", "1"}
-    )
-    if is_mock:
-        return True
     evidence = _normalize_resume_evidence(resume_evidence)
     return (
         bool(evidence.get("role_context"))
+        and bool(evidence.get("concrete_case"))
+        and bool(evidence.get("personal_actions"))
+    )
+
+
+def _resume_deep_dive_can_advance(
+    *,
+    resume_evidence: dict[str, Any],
+    resume_scored_turns: int,
+    answer_evaluation: dict[str, Any] | None = None,
+) -> bool:
+    evidence = _normalize_resume_evidence(resume_evidence)
+    scored_turns = max(0, int(resume_scored_turns or 0))
+    if _resume_deep_dive_gate_opened(evidence):
+        return True
+    if _resume_evidence_score(evidence) >= 3:
+        return True
+    if (
+        scored_turns >= 2
+        and bool(evidence.get("concrete_case"))
+        and (bool(evidence.get("personal_actions")) or bool(evidence.get("result_or_impact")))
+    ):
+        return True
+    if scored_turns >= 3:
+        return True
+    quality = str((answer_evaluation or {}).get("quality") or "").strip().lower()
+    return (
+        scored_turns >= 1
+        and quality in {"strong", "medium"}
         and bool(evidence.get("concrete_case"))
         and bool(evidence.get("personal_actions"))
     )
@@ -526,6 +709,9 @@ def _default_interview_quality_metrics() -> dict[str, int]:
     return {
         "total_turns": 0,
         "scored_questions": 0,
+        "answered_on_topic_count": 0,
+        "off_topic_answers_count": 0,
+        "skipped_or_control_intent_count": 0,
         "strategist_success_count": 0,
         "fallback_count": 0,
         "repeated_question_count": 0,
@@ -534,6 +720,8 @@ def _default_interview_quality_metrics() -> dict[str, int]:
         "technical_case_turns": 0,
         "pressure_followup_count": 0,
         "clarification_count": 0,
+        "relevance_reframe_count": 0,
+        "forced_topic_transition_count": 0,
     }
 
 
@@ -551,13 +739,32 @@ def _update_interview_quality_metrics(
     metrics: dict[str, int],
     trace: dict[str, Any] | None,
     should_count_as_answer: bool,
+    answer_relevance: str | None = None,
+    candidate_intent: str | None = None,
+    is_control_intent: bool = False,
     phase_after: str | None,
     policy_action: str | None,
+    relevance_guard_action: str | None = None,
 ) -> dict[str, int]:
     updated = _normalize_interview_quality_metrics(metrics)
     updated["total_turns"] += 1
     if should_count_as_answer:
         updated["scored_questions"] += 1
+        if str(answer_relevance or "").strip().lower() == "low":
+            updated["off_topic_answers_count"] += 1
+        else:
+            updated["answered_on_topic_count"] += 1
+    if is_control_intent or str(candidate_intent or "").strip().lower() in {
+        "end_interview",
+        "dont_know",
+        "clarification_request",
+        "request_example",
+        "confusion",
+        "meta_question",
+        "challenge_interviewer",
+        "request_resume_focus",
+    }:
+        updated["skipped_or_control_intent_count"] += 1
 
     trace_payload = trace or {}
     selected_generator = str(trace_payload.get("selected_generator") or "").strip().lower()
@@ -585,6 +792,13 @@ def _update_interview_quality_metrics(
         updated["pressure_followup_count"] += 1
     if normalized_policy_action in {"clarify", "answer_meta_then_redirect"}:
         updated["clarification_count"] += 1
+    normalized_relevance_guard_action = str(
+        relevance_guard_action or trace_payload.get("relevance_guard_action") or ""
+    ).strip().lower()
+    if normalized_relevance_guard_action == "reframe":
+        updated["relevance_reframe_count"] += 1
+    if normalized_relevance_guard_action in {"switch_topic", "forced_transition"}:
+        updated["forced_topic_transition_count"] += 1
 
     return updated
 
@@ -601,9 +815,84 @@ def _build_live_smoke_summary(metrics: dict[str, int]) -> str:
         f"semantic_repeats={payload['semantic_repeated_question_count']}, "
         f"resume_turns={payload['resume_phase_turns']}, "
         f"technical_turns={payload['technical_case_turns']}, "
+        f"on_topic={payload['answered_on_topic_count']}, "
+        f"off_topic={payload['off_topic_answers_count']}, "
+        f"control={payload['skipped_or_control_intent_count']}, "
         f"pressure_followups={payload['pressure_followup_count']}, "
-        f"clarifications={payload['clarification_count']}."
+        f"clarifications={payload['clarification_count']}, "
+        f"relevance_reframes={payload['relevance_reframe_count']}, "
+        f"forced_transitions={payload['forced_topic_transition_count']}."
     )
+
+
+def _build_last_llm_debug_payload(
+    *,
+    interview_id: uuid.UUID,
+    trace: dict[str, Any] | None,
+) -> dict[str, Any]:
+    payload = dict(trace or {})
+    created_at = str(payload.get("at") or datetime.utcnow().isoformat() + "Z")
+    source = str(payload.get("final_question_source") or payload.get("source") or "unknown").strip().lower()
+    provider_errors = list(payload.get("provider_errors") or [])
+    error = str(payload.get("error") or payload.get("strategist_error_reason") or "")
+    if not error and provider_errors:
+        error = "; ".join(str(item) for item in provider_errors if str(item).strip())
+    if source not in ("gemini", "openai") and not error:
+        error = str(payload.get("fallback_reason") or "")
+    return {
+        # Must be JSON-serializable: this payload is persisted into the
+        # interview_state JSON column. A raw uuid.UUID here raises
+        # "Object of type UUID is not JSON serializable" on commit, which
+        # rolled the whole turn back (500) and discarded the answer.
+        "interview_id": str(interview_id),
+        "provider": str(payload.get("ai_provider") or payload.get("provider") or "unknown"),
+        "model": str(payload.get("actual_model_used") or payload.get("requested_model") or payload.get("model") or "unknown"),
+        "requested_model": str(payload.get("requested_model") or ""),
+        "actual_model_used": str(payload.get("actual_model_used") or ""),
+        "source": source,
+        "selected_generator": str(payload.get("selected_generator") or ""),
+        "prompt_preview": str(payload.get("prompt_preview") or ""),
+        "raw_response_preview": str(payload.get("raw_response_preview") or ""),
+        "error": error,
+        "latency_ms": float(payload.get("provider_latency_ms") or 0.0),
+        "status": "success" if source in ("gemini", "openai") and not error else ("fallback" if source != "unknown" else "unknown"),
+        "fallback_reason": str(payload.get("fallback_reason") or ""),
+        "provider_attempts": list(payload.get("provider_attempts") or []),
+        "provider_errors": provider_errors,
+        "question_before_guardrails": payload.get("generated_question_before_guardrails"),
+        "question_after_guardrails": payload.get("generated_question_after_guardrails"),
+        "question_sanitized": bool(payload.get("question_sanitized")),
+        "question_truncated": bool(payload.get("question_truncated")),
+        "sanitizer_action": str(payload.get("sanitizer_action") or "none"),
+        "topic_group": payload.get("topic_group"),
+        "topic_group_streak_before": int(payload.get("topic_group_streak_before") or 0),
+        "topic_loop_guard_action": str(payload.get("topic_loop_guard_action") or "none"),
+        "topic_loop_guard_from": payload.get("topic_loop_guard_from"),
+        "topic_loop_guard_to": payload.get("topic_loop_guard_to"),
+        "strategist_json_valid": bool(payload.get("strategist_json_valid")),
+        "created_at": created_at,
+    }
+
+
+def _sanitize_interview_meta_for_report(raw_state: Any) -> dict[str, Any]:
+    """Build a JSON-safe, slimmed interview_meta for the assessor and for
+    persistence inside the report's full_report_json.
+
+    Strips heavy v2 debug artifacts (decision_traces, last_llm) that bloat the
+    stored report and serve no purpose in assessment, and runs the result
+    through a json round-trip with default=str so a stray non-serializable
+    value (UUID, datetime, etc.) can never 500 the report commit.
+    """
+    state = dict(raw_state) if isinstance(raw_state, dict) else {}
+    v2 = state.get(_INTERVIEW_STATE_V2_KEY)
+    if isinstance(v2, dict):
+        state[_INTERVIEW_STATE_V2_KEY] = {
+            k: v for k, v in v2.items() if k not in ("decision_traces", "last_llm")
+        }
+    try:
+        return json.loads(json.dumps(state, default=str))
+    except (TypeError, ValueError):
+        return {}
 
 async def _get_interview(
     db: AsyncSession,
@@ -635,13 +924,32 @@ def _build_progress_counters(
     core_question_count: int,
     messages: list[InterviewMessage],
 ) -> dict[str, int]:
-    asked_questions_count = sum(1 for message in messages if message.role == "assistant")
+    asked_questions_count = sum(
+        1
+        for message in messages
+        if message.role == "assistant" and not _looks_like_interview_intro_message(message.content)
+    )
     answered_questions_count = sum(1 for message in messages if message.role == "candidate")
     return {
         "core_question_count": max(core_question_count, 0),
         "asked_questions_count": max(asked_questions_count, 0),
         "answered_questions_count": max(answered_questions_count, 0),
     }
+
+
+def _looks_like_interview_intro_message(content: str | None) -> bool:
+    normalized = str(content or "").strip().lower()
+    return (
+        normalized.startswith("здравствуйте! я ai hr-интервьюер")
+        or normalized.startswith("hello! i’m your ai hr interviewer")
+        or normalized.startswith("hello! i'm your ai hr interviewer")
+    )
+
+
+def _count_visible_messages(messages: list[InterviewMessage]) -> tuple[int, int]:
+    assistant_count = sum(1 for message in messages if message.role == "assistant")
+    candidate_count = sum(1 for message in messages if message.role == "candidate")
+    return assistant_count, candidate_count
 
 
 async def _get_assessment_progress(
@@ -1961,14 +2269,39 @@ def _build_module_stage_map(interview: Interview) -> dict[int, dict[str, str]]:
     return stage_map
 
 
+# Roles that must never be forwarded to the LLM as part of chat history.
+# "practical_submission" stores raw code/answers for the assessor only —
+# OpenAI would reject or mishandle it as a chat turn.
+_LLM_EXCLUDED_ROLES = frozenset({"practical_submission"})
+_PRACTICAL_STATE_KEYS = frozenset({
+    "practical_task_triggered",
+    "practical_task_id",
+    "practical_task_type",
+    "practical_task_submitted",
+    "practical_submissions",
+    "practical_evaluations",
+    "practical_evaluation_status",
+    "practical_evaluation_model",
+    "practical_evaluation_latency_ms",
+    "practical_evaluation_error",
+})
+
+
 def _to_history(messages: list[InterviewMessage]) -> list[dict]:
-    return [{"role": m.role, "content": m.content} for m in messages]
+    return [
+        {"role": m.role, "content": m.content}
+        for m in messages
+        if m.role not in _LLM_EXCLUDED_ROLES
+        and not (m.role == "assistant" and _looks_like_interview_intro_message(m.content))
+    ]
 
 
 def _to_timestamps(messages: list[InterviewMessage]) -> list[dict]:
     return [
         {"role": m.role, "content": m.content, "created_at": m.created_at.isoformat()}
         for m in messages
+        if m.role not in _LLM_EXCLUDED_ROLES
+        and not (m.role == "assistant" and _looks_like_interview_intro_message(m.content))
     ]
 
 
@@ -2562,7 +2895,7 @@ _ADAPTIVE_MIN_QUESTIONS_FLOOR = 10
 _ADAPTIVE_EXTENSION_STEP = 4
 _INTERVIEW_SENIORITY_LEVELS = {"junior", "middle", "senior"}
 _DEFAULT_SYNC_REPORT_GENERATION_TIMEOUT_SECONDS = 8.0
-_DEFAULT_ASSESSMENT_TIMEOUT_SECONDS = 25.0
+_DEFAULT_ASSESSMENT_TIMEOUT_SECONDS = 90.0
 _DEFAULT_REPORT_MAX_AUTO_RETRIES = 3
 _DEFAULT_REPORT_RETRY_BASE_BACKOFF_SECONDS = 2
 _DEFAULT_REPORT_RETRY_MAX_BACKOFF_SECONDS = 12
@@ -3265,6 +3598,88 @@ def _append_transcript_summary(
     return summary[-20:]
 
 
+def _is_control_or_non_answer_intent(intent: str | None, *, is_move_on_request: bool = False) -> bool:
+    normalized = str(intent or "").strip().lower()
+    return is_move_on_request or normalized in {
+        "end_interview",
+        "dont_know",
+        "clarification_request",
+        "request_example",
+        "confusion",
+        "meta_question",
+        "challenge_interviewer",
+        "request_resume_focus",
+    }
+
+
+def _build_answer_relevance_redirect_question(
+    *,
+    language: str,
+    role: str,
+    topic: dict | None,
+) -> str:
+    competencies = [
+        str(item).strip()
+        for item in (topic or {}).get("competencies", [])
+        if str(item).strip()
+    ]
+    primary_competency = competencies[0] if competencies else ""
+    phase = str((topic or {}).get("phase") or "").strip().lower()
+    competency_key = primary_competency.lower()
+    is_ru = str(language or "").strip().lower().startswith("ru")
+    role_key = str(role or "").strip().lower()
+
+    if role_key == "product_manager":
+        if "research" in competency_key or "requirements" in competency_key or phase == "resume_followup":
+            return (
+                "Вы сейчас описали техническое восстановление или инцидент. Мне нужен именно продуктовый аспект: "
+                "как вы выяснили потребность пользователя или бизнеса, и как это изменило требования или приоритет?"
+                if is_ru
+                else "You described technical recovery or an incident. I need the product angle: how did you discover the user or business need, and how did it change requirements or priorities?"
+            )
+        if "strategy" in competency_key or "vision" in competency_key:
+            return (
+                "Это снова про операционное сопровождение. Давайте именно про продуктовую стратегию: какую возможность или направление вы выбирали, почему, и от чего отказались?"
+                if is_ru
+                else "That is still operational support. Let’s focus on product strategy: what opportunity or direction did you choose, why, and what did you decide not to do?"
+            )
+        if "prioritization" in competency_key:
+            return (
+                "Вы описали эскалацию. Мне нужна приоритизация: какие варианты были на столе, по каким критериям вы выбрали первый шаг, и какой trade-off приняли?"
+                if is_ru
+                else "You described escalation. I need prioritization: what options were on the table, what criteria drove the first step, and what trade-off did you accept?"
+            )
+        if "metrics" in competency_key:
+            return (
+                "Вы назвали метрики, но не связали их с решением. Какие 2–3 сигнала вы проверили первыми и какой порог менял ваше решение?"
+                if is_ru
+                else "You named metrics, but did not connect them to a decision. Which 2–3 signals did you check first, and what threshold changed your decision?"
+            )
+
+    return (
+        "Похоже, ответ ушёл в сторону от вопроса. Давайте точнее: ответьте именно на текущий аспект — что вы сделали лично, почему выбрали этот шаг и какой результат подтвердил решение?"
+        if is_ru
+        else "It looks like the answer moved away from the question. Let’s be precise: answer the current aspect — what did you personally do, why that step, and what result confirmed it?"
+    )
+
+
+def _should_force_role_topic_transition(
+    *,
+    role: str,
+    current_phase: str,
+    topic_turns: int,
+    answer_class: str,
+    answer_relevance: str,
+) -> bool:
+    role_key = str(role or "").strip().lower()
+    phase_key = str(current_phase or "").strip().lower()
+    if topic_turns >= 2:
+        return True
+    if role_key == "product_manager" and phase_key in {"intro", "resume_followup"}:
+        return topic_turns >= 1 and answer_class in {"strong", "partial"} and answer_relevance != "low"
+    return False
+
+
 
 
 def _merge_topic_signal(existing: str | None, incoming: str) -> str:
@@ -3455,31 +3870,160 @@ def _build_pressure_followup_question(
     )
 
 
-def _sanitize_chat_question(question: str | None, *, language: str) -> str | None:
-    if not question:
+_TRUNCATED_QUESTION_TAIL_RE = re.compile(
+    r"(?:^|\s)(?:и|или|а|а не|а не просто|что не|или нет|как|что|почему|для|по|по каким|по какому|по какой|какой|какие|какая|какое|and|or|or not|how|what|why|which|how did you|what did you|in the|with the|for the|to the|of the)$",
+    re.IGNORECASE,
+)
+
+
+def _fallback_complete_question(*, language: str) -> str:
+    return (
+        "Let's switch to a concrete complete example: what did you do personally, how did you choose the next step, and what result confirmed the decision?"
+        if str(language or "").strip().lower().startswith("en")
+        else "Давайте перейдём к конкретному полному примеру: что вы сделали лично, как выбрали следующий шаг и какой результат подтвердил решение?"
+    )
+
+
+def _looks_truncated_question(question: str, *, was_trimmed: bool) -> bool:
+    compact = re.sub(r"\s+", " ", str(question or "")).strip()
+    if not compact:
+        return False
+    stripped = compact.rstrip(" ?!.;,:—-").strip().lower()
+    if not stripped:
+        return False
+    if _TRUNCATED_QUESTION_TAIL_RE.search(stripped):
+        return True
+    if re.search(r"(?:^|\s)(?:чтобы|что бы)\s+\w+$", stripped, re.IGNORECASE):
+        return True
+    if re.search(r"(?:^|\s)что\s+\w+$", stripped, re.IGNORECASE):
+        return True
+    if re.search(r"(?:^|\s)по\s+каким\s+[\d–-]+$", stripped, re.IGNORECASE):
+        return True
+    if re.search(r"(?:^|\s)как\s+вы\s+(?:его|её|ее|их|это)$", stripped, re.IGNORECASE):
+        return True
+    if re.search(r"(?:^|\s)(?:кто у вас был|кто был)$", stripped, re.IGNORECASE):
+        return True
+    last_fragment = re.split(r"[,:;—-]", stripped)[-1].strip()
+    if was_trimmed and len(last_fragment.split()) <= 2:
+        return True
+    return False
+
+
+def _trim_truncated_question_tail(question: str) -> str | None:
+    compact = re.sub(r"\s+", " ", str(question or "")).strip()
+    if not compact:
         return None
+    stripped = compact.rstrip(" ?!.;,:—-").strip()
+    trimmed = stripped
+    for _ in range(3):
+        next_trimmed = re.sub(
+            r"(?:\s|[,:;—-])(?:и|или|а|а не|а не просто|что не|или нет|как|что|почему|для|по|по каким|по какому|по какой|какой|какие|какая|какое|and|or|or not|how|what|why|which|how did you|what did you|in the|with the|for the|to the|of the)\s*$",
+            "",
+            trimmed,
+            flags=re.IGNORECASE,
+        ).rstrip(" ,;:—-")
+        next_trimmed = re.sub(
+            r"(?:\s|[,:;—-])(?:чтобы|что бы)\s+\w+\s*$",
+            "",
+            next_trimmed,
+            flags=re.IGNORECASE,
+        ).rstrip(" ,;:—-")
+        next_trimmed = re.sub(
+            r"(?:\s|[,:;—-])что\s+\w+\s*$",
+            "",
+            next_trimmed,
+            flags=re.IGNORECASE,
+        ).rstrip(" ,;:—-")
+        next_trimmed = re.sub(
+            r"(?:\s|[,:;—-])по\s+каким\s+[\d–-]+\s*$",
+            "",
+            next_trimmed,
+            flags=re.IGNORECASE,
+        ).rstrip(" ,;:—-")
+        next_trimmed = re.sub(
+            r"(?:\s|[,:;—-])как\s+вы\s+(?:его|её|ее|их|это)\s*$",
+            "",
+            next_trimmed,
+            flags=re.IGNORECASE,
+        ).rstrip(" ,;:—-")
+        next_trimmed = re.sub(
+            r"(?:\s|[,:;—-])(?:и\s+)?(?:кто у вас был|кто был)\s*$",
+            "",
+            next_trimmed,
+            flags=re.IGNORECASE,
+        ).rstrip(" ,;:—-")
+        if next_trimmed == trimmed:
+            break
+        trimmed = next_trimmed
+    if len(trimmed.split()) >= 6:
+        return f"{trimmed}?"
+    return None
+
+
+def _sanitize_chat_question_with_metadata(
+    question: str | None,
+    *,
+    language: str,
+) -> tuple[str | None, dict[str, Any]]:
+    metadata: dict[str, Any] = {
+        "question_sanitized": False,
+        "question_truncated": False,
+        "sanitizer_action": "none",
+    }
+    if not question:
+        return None, metadata
 
     compact = re.sub(r"\s+", " ", str(question)).strip()
     if not compact:
-        return None
+        return None, metadata
+
+    original = compact
+    was_trimmed = False
+
+    if re.search(r"[.!]\?$", compact):
+        compact = compact[:-1].rstrip()
+        metadata["question_sanitized"] = True
+        metadata["sanitizer_action"] = "rewrite"
 
     if compact.count("?") > 1:
         fragments = [fragment.strip(" ,;:") for fragment in compact.split("?") if fragment.strip()]
         if fragments:
             compact = f"{fragments[-1]}?"
+            metadata["question_sanitized"] = compact != original
+            metadata["sanitizer_action"] = "rewrite"
 
     words = compact.split()
     if len(words) > _MAX_CHAT_QUESTION_WORDS:
         compact = " ".join(words[:_MAX_CHAT_QUESTION_WORDS]).rstrip(" ,.;:!?") + "?"
+        was_trimmed = True
 
     if len(compact) > 220:
         compact = compact[:220].rsplit(" ", 1)[0].rstrip(" ,.;:!?") + "?"
+        was_trimmed = True
+
+    if _looks_truncated_question(compact, was_trimmed=was_trimmed):
+        metadata["question_sanitized"] = True
+        metadata["question_truncated"] = True
+        metadata["sanitizer_action"] = "fallback_trim"
+        return _trim_truncated_question_tail(compact) or _fallback_complete_question(language=language), metadata
 
     if not compact.endswith("?"):
-        compact = compact.rstrip(" ,.;:") + "?"
+        if compact.endswith(("!", ".")):
+            compact = compact.rstrip()
+        elif _looks_truncated_question(compact, was_trimmed=was_trimmed):
+            metadata["question_sanitized"] = True
+            metadata["question_truncated"] = True
+            metadata["sanitizer_action"] = "fallback_trim"
+            return _trim_truncated_question_tail(compact) or _fallback_complete_question(language=language), metadata
+        else:
+            compact = compact.rstrip(" ,.;:") + "?"
 
     if compact:
         compact = compact[0].upper() + compact[1:]
+    if compact != original or was_trimmed:
+        metadata["question_sanitized"] = True
+        if metadata["sanitizer_action"] == "none":
+            metadata["sanitizer_action"] = "fallback_trim" if was_trimmed else "rewrite"
 
     lowered = compact.lower()
     has_ambiguous_reference = bool(
@@ -3487,26 +4031,25 @@ def _sanitize_chat_question(question: str | None, *, language: str) -> str | Non
     )
 
     if len(compact.split()) < 6 and has_ambiguous_reference:
-        return (
-            "Let's use a concrete example: a customer reports an operation error. What did you check first, what did you do personally, and how did you verify the result?"
-            if language == "en"
-            else "Давайте на примере: клиент сообщает об ошибке операции. Что вы проверили первым, что сделали лично вы и как подтвердили результат?"
-        )
+        metadata["question_sanitized"] = True
+        metadata["sanitizer_action"] = "fallback_trim"
+        return _fallback_complete_question(language=language), metadata
 
     if len(compact.split()) < 4:
-        return (
-            "Let's use a concrete example: a customer reports an operation error. What did you check first, what did you do personally, and how did you verify the result?"
-            if language == "en"
-            else "Давайте на примере: клиент сообщает об ошибке операции. Что вы проверили первым, что сделали лично вы и как подтвердили результат?"
-        )
+        metadata["question_sanitized"] = True
+        metadata["sanitizer_action"] = "fallback_trim"
+        return _fallback_complete_question(language=language), metadata
     if _is_ambiguous_short_question(compact, language=language):
-        return (
-            "Let's use a concrete example: a customer reports an operation error. What did you check first, what did you do personally, and how did you verify the result?"
-            if language == "en"
-            else "Давайте на примере: клиент сообщает об ошибке операции. Что вы проверили первым, что сделали лично вы и как подтвердили результат?"
-        )
+        metadata["question_sanitized"] = True
+        metadata["sanitizer_action"] = "fallback_trim"
+        return _fallback_complete_question(language=language), metadata
 
-    return compact
+    return compact, metadata
+
+
+def _sanitize_chat_question(question: str | None, *, language: str) -> str | None:
+    sanitized, _metadata = _sanitize_chat_question_with_metadata(question, language=language)
+    return sanitized
 
 
 def _is_cross_topic_reuse(answer: str, previous_answers: list[dict] | list[str], current_topic_index: int) -> bool:
@@ -3618,6 +4161,29 @@ def evaluate_answer_runtime_v2(
         "backend_engineer": ("api", "sql", "index", "transaction", "latency", "redis", "kafka"),
         "frontend_engineer": ("react", "vue", "ui", "css", "a11y", "render", "bundle"),
         "devops_engineer": ("ci/cd", "kubernetes", "docker", "helm", "slo", "observability"),
+        "product_manager": (
+            "метрик",
+            "воронк",
+            "retention",
+            "conversion",
+            "конверси",
+            "гипотез",
+            "discovery",
+            "roadmap",
+            "приорит",
+            "rice",
+            "mvp",
+            "a/b",
+            "эксперимент",
+            "пользоват",
+            "stakeholder",
+            "стейкхолдер",
+            "бизнес",
+            "guardrail",
+            "жалоб",
+        ),
+        "data_scientist": ("feature", "model", "метрик", "precision", "recall", "auc", "эксперимент"),
+        "mobile_engineer": ("ios", "android", "swift", "kotlin", "crash", "release", "store", "offline"),
     }
     role_markers = role_specific_tech_markers.get(role_hint, ())
     has_technical_detail = (
@@ -3860,6 +4426,121 @@ def _topic_signature_key(topic: dict | None) -> str:
     return "|".join([phase, block, tier, verification_target, primary_competency])
 
 
+def _topic_group_key(
+    topic: dict | None,
+    *,
+    role: str,
+    question_text: str | None = None,
+) -> str:
+    data = topic or {}
+    tokens = " ".join(
+        [
+            str(data.get("phase") or ""),
+            str(data.get("block") or ""),
+            str(data.get("tier") or ""),
+            str(data.get("verification_target") or ""),
+            " ".join(str(item) for item in data.get("competencies", []) if item),
+            str(question_text or ""),
+        ]
+    ).lower()
+    role_key = str(role or "").strip().lower()
+    if role_key == "product_manager":
+        explicit_discovery = any(marker in tokens for marker in ("research", "discovery", "requirement", "исслед", "требован", "потребност", "боль пользователя"))
+        technical_incident_marker = any(marker in tokens for marker in ("hotfix", "хотфикс", "grafana", "metric drop", "просела", "sla"))
+        if explicit_discovery and not technical_incident_marker:
+            return "discovery"
+        if any(marker in tokens for marker in ("incident", "инцидент", "hotfix", "хотфикс", "workaround", "фикс", "сбой", "релиз", "grafana", "метрик", "metric drop", "просела", "sla")):
+            return "incident_metrics"
+        if explicit_discovery:
+            return "discovery"
+        if any(marker in tokens for marker in ("roadmap", "роадмап", "дорожн", "backlog", "бэклог")):
+            return "roadmap"
+        if any(marker in tokens for marker in ("priorit", "приорит", "trade-off", "tradeoff", "регулятор", "conversion", "конверс", "ceo", "vip")):
+            return "prioritization"
+        if any(marker in tokens for marker in ("stakeholder", "стейкхол", "conflict", "конфликт", "business", "бизнес", "клиент")):
+            return "stakeholder_conflict"
+        if any(marker in tokens for marker in ("business case", "unit", "эконом", "выруч", "revenue", "cost", "roi")):
+            return "business_case"
+        if any(marker in tokens for marker in ("analytics", "data", "данн", "метрик", "metric")):
+            return "product_metrics"
+    signature = _topic_signature_key(topic)
+    return signature or "general"
+
+
+def _topic_group_streak(topic_group_history: list[str]) -> tuple[str, int]:
+    clean = [str(item).strip() for item in topic_group_history if str(item).strip()]
+    if not clean:
+        return "", 0
+    last_group = clean[-1]
+    streak = 0
+    for item in reversed(clean):
+        if item != last_group:
+            break
+        streak += 1
+    return last_group, streak
+
+
+def _find_next_topic_index_with_different_group(
+    topic_plan: list[dict],
+    *,
+    role: str,
+    start_index: int,
+    current_group: str,
+    asked_topics: list[str],
+) -> int | None:
+    if not topic_plan or not current_group:
+        return None
+    asked_set = {str(item).strip() for item in asked_topics if str(item).strip()}
+    ordered_indices = list(range(max(start_index, 0), len(topic_plan))) + list(range(0, max(start_index, 0)))
+    for idx in ordered_indices:
+        topic = topic_plan[idx]
+        if _topic_group_key(topic, role=role) == current_group:
+            continue
+        signature = _topic_signature_key(topic)
+        if signature and signature in asked_set:
+            continue
+        return idx
+    for idx in ordered_indices:
+        topic = topic_plan[idx]
+        if _topic_group_key(topic, role=role) != current_group:
+            return idx
+    return None
+
+
+def _build_topic_group_transition_question(
+    *,
+    role: str,
+    language: str,
+    repeated_group: str,
+) -> str | None:
+    if str(role or "").strip().lower() != "product_manager":
+        return None
+    is_en = str(language or "").strip().lower().startswith("en")
+    if repeated_group == "incident_metrics":
+        return (
+            "Thanks, the incident case is clear. Now let’s move to product discovery: how did you gather user needs and turn them into requirements or priorities?"
+            if is_en
+            else "Спасибо, кейс с инцидентом понятен. Теперь перейдём к product discovery: как вы собирали пользовательские потребности и превращали их в требования или приоритеты?"
+        )
+    if repeated_group == "prioritization":
+        return (
+            "Let’s switch from prioritization mechanics to roadmap thinking: how did you decide what not to build, and how did you explain that decision to stakeholders?"
+            if is_en
+            else "Давайте сменим угол с механики приоритизации на roadmap: как вы решали, что не делать, и как объясняли это стейкхолдерам?"
+        )
+    if repeated_group == "discovery":
+        return (
+            "Discovery is clear. Now move to business impact: how did you estimate whether the product change was worth doing?"
+            if is_en
+            else "Discovery понятен. Теперь перейдём к бизнес-эффекту: как вы оценивали, стоит ли продуктовая доработка усилий?"
+        )
+    return (
+        "Let’s switch competency: describe one product decision where you had to balance user value, business impact, and delivery risk."
+        if is_en
+        else "Давайте сменим компетенцию: опишите одно продуктовое решение, где вы балансировали ценность для пользователя, бизнес-эффект и риск разработки."
+    )
+
+
 def _question_text_fingerprint(text: str) -> set[str]:
     return {
         token.lower()
@@ -3889,6 +4570,27 @@ def _is_repeated_question_text(candidate: str, previous_questions: list[str], *,
         if _question_text_similarity(normalized_candidate, normalized_previous) >= threshold:
             return True
     return False
+
+
+def _is_question_repeat_candidate(
+    candidate: str,
+    previous_questions: list[str],
+    *,
+    current_question: str | None = None,
+    history_threshold: float = 0.62,
+    current_threshold: float = 0.66,
+) -> bool:
+    normalized_candidate = " ".join((candidate or "").strip().lower().split()).rstrip(" ?!.")
+    if not normalized_candidate:
+        return False
+    if _is_repeated_question_text(normalized_candidate, previous_questions, threshold=history_threshold):
+        return True
+    normalized_current = " ".join((current_question or "").strip().lower().split()).rstrip(" ?!.")
+    if not normalized_current:
+        return False
+    if normalized_candidate == normalized_current:
+        return True
+    return _question_text_similarity(normalized_candidate, normalized_current) >= current_threshold
 
 
 def _is_question_already_covered_in_transcript(
@@ -4096,7 +4798,6 @@ async def _select_next_question_decision_v2(
     reasoning_hints: dict[str, Any] | None = None,
     model_preference: str | None = None,
 ) -> dict[str, Any]:
-    _ = model_preference
     strategist_ctx = InterviewStrategistContext(
         role=role,
         language=language,
@@ -4117,7 +4818,19 @@ async def _select_next_question_decision_v2(
         reasoning_hints=dict(reasoning_hints or {}),
     )
 
-    decision = await decide_next_interview_action(strategist_ctx)
+    logger.info(
+        "interview_v2_question_generation status=start source=strategist provider=openai model=%s role=%s phase=%s history_items=%s asked_questions=%s last_answer_chars=%s",
+        model_preference or "runtime-default",
+        role,
+        str((interview_state_v2 or {}).get("phase") or ""),
+        len(transcript_summary or []),
+        len(asked_questions or []),
+        len(last_answer or ""),
+    )
+    try:
+        decision = await decide_next_interview_action(strategist_ctx, model_override=model_preference)
+    except TypeError:
+        decision = await decide_next_interview_action(strategist_ctx)
     action = str(decision.action or "ask_new_topic").strip()
     question_text = _sanitize_chat_question(decision.question_text, language=language) or ""
     target_competency = str(decision.target_competency or "").strip()
@@ -4127,6 +4840,19 @@ async def _select_next_question_decision_v2(
     reason = str(decision.reason or "v2_strategist").strip() or "v2_strategist"
     expected_signal = str(decision.expected_signal or "").strip()
     question_type, will_advance = _map_v2_action_to_legacy(action)
+    source = str(getattr(decision, "source", "") or "").strip().lower()
+    if not source:
+        source = str(getattr(decision, "ai_provider", "") or "openai").strip().lower() if bool(getattr(decision, "strategist_json_valid", False)) else "fallback"
+    logger.info(
+        "interview_v2_question_generation status=decision source=%s provider=%s model=%s latency_ms=%.1f json_valid=%s question_chars=%s error=%s",
+        source,
+        str(getattr(decision, "ai_provider", "") or "openai"),
+        str(getattr(decision, "actual_model_used", "") or model_preference or "runtime-default"),
+        float(getattr(decision, "provider_latency_ms", 0.0) or 0.0),
+        bool(getattr(decision, "strategist_json_valid", False)),
+        len(question_text or ""),
+        str(getattr(decision, "strategist_error_reason", "") or ""),
+    )
 
     return {
         "action": action,
@@ -4146,14 +4872,20 @@ async def _select_next_question_decision_v2(
         "strategist_repair_applied": bool(getattr(decision, "strategist_repair_applied", False)),
         "strategist_retry_used": bool(getattr(decision, "strategist_retry_used", False)),
         "strategist_error_reason": str(getattr(decision, "strategist_error_reason", "") or ""),
+        "source": source,
+        "prompt_preview": str(getattr(decision, "prompt_preview", "") or ""),
+        "raw_response_preview": str(getattr(decision, "raw_response_preview", "") or ""),
         "conversational_intent": str(getattr(decision, "conversational_intent", "") or "").strip().lower(),
         "information_target": str(getattr(decision, "information_target", "") or "").strip(),
         "ai_provider": str(getattr(decision, "ai_provider", "") or "").strip(),
         "requested_model": str(getattr(decision, "requested_model", "") or "").strip(),
         "actual_model_used": str(getattr(decision, "actual_model_used", "") or "").strip(),
+        "request_tokens_estimate": int(getattr(decision, "request_tokens_estimate", 0) or 0),
+        "response_tokens_estimate": int(getattr(decision, "response_tokens_estimate", 0) or 0),
+        "provider_latency_ms": float(getattr(decision, "provider_latency_ms", 0.0) or 0.0),
         "provider_attempts": list(getattr(decision, "provider_attempts", []) or []),
         "provider_errors": list(getattr(decision, "provider_errors", []) or []),
-        "openrouter_fallback_used": bool(getattr(decision, "openrouter_fallback_used", False)),
+        "provider_fallback_used": bool(getattr(decision, "provider_fallback_used", False)),
     }
 
 
@@ -4576,28 +5308,69 @@ async def _get_next_question_with_dev_fallback(
     except Exception as exc:
         record_ai_error(
             component="interviewer",
-            provider="grok",
+            provider="openai",
             model=str(model_preference or "runtime-default"),
             error=f"interviewer service call failed: {exc.__class__.__name__}",
         )
-        if settings.is_local_or_test:
-            logger.exception(
-                "Interviewer generation failed in local/test mode; using deterministic fallback",
-            )
-            try:
-                logger.warning(
-                    "ai_fallback component=interviewer from_provider=grok to_provider=mock reason=local_or_test_failure",
-                )
-                record_ai_success(
-                    component="interviewer",
-                    provider="mock",
-                    model="mock-interviewer",
-                    note="dev fallback activated",
-                )
-                return question
-            except Exception:
-                logger.exception("Deterministic interviewer fallback also failed")
+        logger.exception("Interviewer generation failed")
         raise RuntimeError("AI interviewer request failed") from exc
+
+
+async def _generate_initial_interview_question(
+    *,
+    interview: Interview,
+    resume: Resume,
+    topic_plan: list[dict],
+    resume_profile: dict,
+    module_context: dict[str, Any] | None,
+    template_questions: list[str] | None,
+    runtime_settings: dict[str, Any] | None,
+) -> str:
+    resume_context_for_interviewer = (
+        str(resume_profile.get("interview_resume_context") or "").strip()
+        or resume.raw_text
+    )
+    normalized_module_type = str((interview.interview_state or {}).get("module_type") or "").strip() or None
+    normalized_module_title = str((interview.interview_state or {}).get("module_title") or "").strip() or None
+    ctx = InterviewContext(
+        target_role=interview.target_role,
+        seniority_level=interview.seniority_level,
+        difficulty_tier=3,
+        question_number=1,
+        max_questions=interview.max_questions,
+        message_history=[],
+        resume_text=resume_context_for_interviewer,
+        template_questions=template_questions,
+        competency_targets=topic_plan[0]["competencies"] if topic_plan else None,
+        language=interview.language,
+        resume_anchor=topic_plan[0].get("resume_anchor") if topic_plan else None,
+        verification_target=topic_plan[0].get("verification_target") if topic_plan else None,
+        topic_phase=topic_plan[0].get("phase") if topic_plan else None,
+        question_block=topic_plan[0].get("block") if topic_plan else None,
+        question_tier=topic_plan[0].get("tier") if topic_plan else None,
+        lead_question=topic_plan[0].get("lead_question") if topic_plan else None,
+        allowed_probes=list(topic_plan[0].get("allowed_probes") or []) if topic_plan else [],
+        scored_metrics=list(topic_plan[0].get("scored_metrics") or []) if topic_plan else [],
+        candidate_memory=[],
+        current_topic=_topic_signature_key(topic_plan[0] if topic_plan else {}),
+        asked_topics=[],
+        transcript_summary=[],
+        module_type=normalized_module_type,
+        module_title=normalized_module_title,
+        module_scenario_id=topic_plan[0].get("scenario_id") if topic_plan else None,
+        module_scenario_title=topic_plan[0].get("scenario_title") if topic_plan else None,
+        module_scenario_prompt=topic_plan[0].get("scenario_prompt") if topic_plan else None,
+        module_stage_key=topic_plan[0].get("stage_key") if topic_plan else None,
+        module_stage_title=topic_plan[0].get("stage_title") if topic_plan else None,
+        module_stage_prompt=topic_plan[0].get("stage_prompt") if topic_plan else None,
+        module_stage_index=0,
+        module_stage_count=len((module_context or {}).get("stage_plan", [])) if module_context else 0,
+    )
+    first_question = await _get_next_question_with_dev_fallback(
+        ctx,
+        runtime_settings=runtime_settings,
+    )
+    return _sanitize_chat_question(first_question, language=interview.language) or first_question
 
 
 async def _assess_with_dev_fallback(
@@ -4631,7 +5404,7 @@ async def _assess_with_dev_fallback(
     except Exception as exc:
         record_ai_error(
             component="assessor",
-            provider="grok",
+            provider="openai",
             model=str(assessor_model_preference or "runtime-default"),
             error=f"assessor service call failed: {exc.__class__.__name__}",
         )
@@ -4850,72 +5623,27 @@ async def start_interview(
         content=plan_content,
     ))
 
-    # Generate and persist first question (always via LLM, template is guidance)
-    resume_context_for_interviewer = (
-        str(resume_profile.get("interview_resume_context") or "").strip()
-        or active_resume.raw_text
-    )
-
-    ctx = InterviewContext(
-        target_role=target_role,
-        seniority_level=normalized_seniority_level,
-        difficulty_tier=3,
-        question_number=1,
-        max_questions=max_q,
-        message_history=[],
-        resume_text=resume_context_for_interviewer,
-        template_questions=template.questions if template else None,
-        competency_targets=topic_plan[0]["competencies"] if topic_plan else None,
+    intro_message = _build_interview_intro_message(
+        role=target_role,
         language=language,
-        resume_anchor=topic_plan[0].get("resume_anchor") if topic_plan else None,
-        verification_target=topic_plan[0].get("verification_target") if topic_plan else None,
-        topic_phase=topic_plan[0].get("phase") if topic_plan else None,
-        question_block=topic_plan[0].get("block") if topic_plan else None,
-        question_tier=topic_plan[0].get("tier") if topic_plan else None,
-        lead_question=topic_plan[0].get("lead_question") if topic_plan else None,
-        allowed_probes=list(topic_plan[0].get("allowed_probes") or []) if topic_plan else [],
-        scored_metrics=list(topic_plan[0].get("scored_metrics") or []) if topic_plan else [],
-        candidate_memory=[],
-        current_topic=_topic_signature_key(topic_plan[0] if topic_plan else {}),
-        asked_topics=[],
-        transcript_summary=[],
-        module_type=normalized_module_type,
-        module_title=normalized_module_title,
-        module_scenario_id=topic_plan[0].get("scenario_id") if topic_plan else None,
-        module_scenario_title=topic_plan[0].get("scenario_title") if topic_plan else None,
-        module_scenario_prompt=topic_plan[0].get("scenario_prompt") if topic_plan else None,
-        module_stage_key=topic_plan[0].get("stage_key") if topic_plan else None,
-        module_stage_title=topic_plan[0].get("stage_title") if topic_plan else None,
-        module_stage_prompt=topic_plan[0].get("stage_prompt") if topic_plan else None,
-        module_stage_index=0,
-        module_stage_count=len(module_context.get("stage_plan", [])) if module_context else 0,
+        max_questions=max_q,
     )
-    first_question = await _get_next_question_with_dev_fallback(
-        ctx,
-        runtime_settings=safe_workspace_ai_settings,
-    )
-    first_question = _sanitize_chat_question(first_question, language=language) or first_question
 
     db.add(InterviewMessage(
         id=uuid.uuid4(),
         interview_id=interview.id,
         role="assistant",
-        content=first_question,
+        content=intro_message,
     ))
 
-    # question_count tracks core interview questions only
-    interview.question_count = 1
-    initial_asked_topics: list[str] = []
-    initial_asked_question_texts: list[str] = []
-    if topic_plan:
-        first_signature = _topic_signature_key(topic_plan[0])
-        if first_signature:
-            initial_asked_topics.append(first_signature)
-    if first_question:
-        initial_asked_question_texts.append(first_question)
+    # question_count tracks core interview questions only. The greeting is not a question.
+    interview.question_count = 0
     initial_state = {
-        "turn_count": 1,
-        "question_count": 1,
+        "phase": "waiting_for_start_confirmation",
+        "intro_shown": True,
+        "first_question_started": False,
+        "turn_count": 0,
+        "question_count": 0,
         "current_topic_index": 0,
         "topic_turns": 0,
         "clarification_turns": 0,
@@ -4935,8 +5663,9 @@ async def start_interview(
         "topic_closed_reasons": [],
         "topic_mastered_flags": [],
         "candidate_memory": [],
-        "asked_topics": initial_asked_topics,
-        "asked_question_texts": initial_asked_question_texts[-30:],
+        "asked_topics": [],
+        "topic_group_history": [],
+        "asked_question_texts": [],
         "transcript_summary": [],
         "qa_scenario_progress": {},
         "active_qa_scenario_id": None,
@@ -4954,6 +5683,16 @@ async def start_interview(
         "adaptive_role_max_cap": role_max_cap,
         "adaptive_last_decision": None,
         "seniority_level": normalized_seniority_level,
+        # Voice-first metadata — populated when mode is confirmed by frontend
+        "interview_mode": None,           # "voice" | "text" | None (unknown)
+        "voice_auto_send": None,          # True | False | None
+        # Practical task tracking
+        "practical_task_triggered": False,
+        "practical_task_id": None,
+        "practical_task_type": None,
+        "practical_submissions": [],
+        "practical_evaluations": [],
+        "practical_evaluation_status": None,
     }
     if safe_workspace_ai_settings:
         initial_state["workspace_ai_settings"] = {
@@ -4986,7 +5725,18 @@ async def start_interview(
             }
         )
     if True:
-        initial_state[_INTERVIEW_STATE_V2_KEY] = get_interview_state_v2(interview)
+        initial_state[_INTERVIEW_STATE_V2_KEY] = _merge_interview_state_v2_defaults(
+            {
+                "phase": "waiting_for_start_confirmation",
+                "role": target_role,
+                "language": language,
+                "asked_questions": [],
+                "decision_traces": [],
+                "last_llm": None,
+            },
+            role=target_role,
+            language=language,
+        )
     interview.interview_state = initial_state
     interview.status = "in_progress"
     await db.commit()
@@ -4998,9 +5748,9 @@ async def start_interview(
         question_count=interview.question_count,
         max_questions=interview.max_questions,
         core_question_count=interview.question_count,
-        asked_questions_count=1,
+        asked_questions_count=0,
         answered_questions_count=0,
-        current_question=first_question,
+        current_question=intro_message,
         language=interview.language,
         seniority_level=interview.seniority_level,
         interview_stage=_build_interview_stage_payload(interview),
@@ -5028,6 +5778,115 @@ async def add_candidate_message(
 
     # Guard: all questions answered and last message was from candidate → must finish
     messages = await _get_messages(db, interview.id)
+    state_for_intro = interview.interview_state if isinstance(interview.interview_state, dict) else {}
+    if (
+        bool(state_for_intro.get("intro_shown"))
+        and not bool(state_for_intro.get("first_question_started"))
+        and str(state_for_intro.get("phase") or "") == "waiting_for_start_confirmation"
+    ):
+        if not _is_start_confirmation(message):
+            return SendMessageResponse(
+                interview_id=interview.id,
+                status=interview.status,
+                question_count=interview.question_count,
+                max_questions=interview.max_questions,
+                core_question_count=0,
+                asked_questions_count=0,
+                answered_questions_count=0,
+                current_question=None,
+                is_followup=False,
+                question_type="intro",
+                interview_stage=_build_interview_stage_payload(interview),
+                module_session=_build_interview_module_session_payload(interview),
+            )
+
+        topic_plan: list[dict] = []
+        resume_profile: dict = {}
+        module_context: dict[str, Any] = {}
+        for msg in messages:
+            if msg.role == "system":
+                try:
+                    plan_data = json.loads(msg.content)
+                    topic_plan = plan_data.get("topic_plan", [])
+                    resume_profile = plan_data.get("resume_profile", {})
+                    raw_module_context = plan_data.get("module_context")
+                    module_context = raw_module_context if isinstance(raw_module_context, dict) else {}
+                    break
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+        template_questions: list[str] | None = None
+        if interview.template_id:
+            template = await db.scalar(
+                select(InterviewTemplate).where(InterviewTemplate.id == interview.template_id)
+            )
+            template_questions = template.questions if template else None
+        resume = await db.scalar(select(Resume).where(Resume.id == interview.resume_id))
+        if resume is None:
+            raise RuntimeError("Resume snapshot not found for interview")
+
+        first_question = await _generate_initial_interview_question(
+            interview=interview,
+            resume=resume,
+            topic_plan=topic_plan,
+            resume_profile=resume_profile,
+            module_context=module_context,
+            template_questions=template_questions,
+            runtime_settings=state_for_intro.get("workspace_ai_settings")
+            if isinstance(state_for_intro.get("workspace_ai_settings"), dict)
+            else None,
+        )
+        db.add(
+            InterviewMessage(
+                id=uuid.uuid4(),
+                interview_id=interview.id,
+                role="assistant",
+                content=first_question,
+            )
+        )
+        interview.question_count = 1
+        first_signature = _topic_signature_key(topic_plan[0] if topic_plan else {})
+        state_for_intro.update(
+            {
+                "phase": "in_progress",
+                "intro_shown": True,
+                "first_question_started": True,
+                "turn_count": 1,
+                "question_count": 1,
+                "current_topic_index": 0,
+                "asked_topics": [first_signature] if first_signature else [],
+                "topic_group_history": [
+                    _topic_group_key(topic_plan[0] if topic_plan else {}, role=interview.target_role, question_text=first_question)
+                ],
+                "asked_question_texts": [first_question] if first_question else [],
+            }
+        )
+        interview.interview_state = state_for_intro
+        update_interview_state_v2(
+            interview,
+            {
+                "phase": "intro",
+                "asked_questions": [first_question] if first_question else [],
+                "current_competency": _topic_primary_competency(topic_plan[0] if topic_plan else {}),
+                "current_scenario_id": (topic_plan[0] if topic_plan else {}).get("scenario_id"),
+            },
+        )
+        await db.commit()
+        return SendMessageResponse(
+            interview_id=interview.id,
+            status=interview.status,
+            question_count=interview.question_count,
+            max_questions=interview.max_questions,
+            core_question_count=1,
+            asked_questions_count=1,
+            answered_questions_count=0,
+            current_question=first_question,
+            is_followup=False,
+            question_type="main",
+            interview_stage=_build_interview_stage_payload(interview),
+            module_session=_build_interview_module_session_payload(interview),
+        )
+
     if (
         interview.question_count >= interview.max_questions
         and messages
@@ -5035,13 +5894,31 @@ async def add_candidate_message(
     ):
         raise MaxQuestionsReachedError()
 
-    # Persist candidate answer
-    db.add(InterviewMessage(
-        id=uuid.uuid4(),
-        interview_id=interview.id,
-        role="candidate",
-        content=message,
-    ))
+    # Persist candidate answer in its OWN transaction, before any LLM /
+    # next-question work. Previously the answer and the generated question were
+    # committed together at the end of this function; any exception raised while
+    # generating the next question rolled the whole transaction back, so the
+    # candidate's answer silently disappeared ("I answer, it thinks, then deletes
+    # my reply"). Committing here guarantees the answer is never lost.
+    answer_already_persisted = (
+        bool(messages)
+        and messages[-1].role == "candidate"
+        and messages[-1].content == message
+    )
+    if answer_already_persisted:
+        # Retry of a turn whose answer was already saved but whose question
+        # generation failed last time. Restore the pre-answer snapshot so all
+        # downstream logic (which treats `messages` as history excluding the
+        # current answer) stays consistent, and don't double-save the answer.
+        messages = messages[:-1]
+    else:
+        db.add(InterviewMessage(
+            id=uuid.uuid4(),
+            interview_id=interview.id,
+            role="candidate",
+            content=message,
+        ))
+        await db.commit()
 
     # Generate next question if quota not exhausted
     current_question: str | None = None
@@ -5080,6 +5957,11 @@ async def add_candidate_message(
 
         # ── Load persistent interview state ────────────────────────────────
         state: dict = interview.interview_state or {}
+        preserved_practical_state = {
+            key: state.get(key)
+            for key in _PRACTICAL_STATE_KEYS
+            if key in state
+        }
         engine_v2_enabled = True
         state_v2_before = get_interview_state_v2(interview)
         coding_task_artifact = _get_coding_task_artifact_state(state)
@@ -5103,6 +5985,11 @@ async def add_candidate_message(
         last_question_type: str = str(state.get("last_question_type", "main"))
         candidate_memory: list[str] = list(state.get("candidate_memory", []))
         asked_topics: list[str] = [str(item).strip() for item in state.get("asked_topics", []) if str(item).strip()]
+        topic_group_history: list[str] = [
+            str(item).strip()
+            for item in state.get("topic_group_history", [])
+            if str(item).strip()
+        ]
         asked_question_texts: list[str] = [
             str(item).strip()
             for item in state.get("asked_question_texts", [])
@@ -5240,7 +6127,16 @@ async def add_candidate_message(
             "actual_model_used": None,
             "provider_attempts": [],
             "provider_errors": [],
-            "openrouter_fallback_used": False,
+            "provider_fallback_used": False,
+            "request_tokens_estimate": 0,
+            "response_tokens_estimate": 0,
+            "provider_latency_ms": 0.0,
+            "source": "unknown",
+            "final_question_source": "unknown",
+            "fallback_reason": "",
+            "prompt_preview": "",
+            "raw_response_preview": "",
+            "error": "",
             "current_phase_before": current_phase_before_v2,
             "current_phase_after": None,
             "candidate_intent": None,
@@ -5256,9 +6152,17 @@ async def add_candidate_message(
             "information_target": None,
             "semantic_repeat_streak": 0,
             "semantic_repeat_detected": False,
+            "topic_group": None,
+            "topic_group_streak_before": 0,
+            "topic_loop_guard_action": "none",
+            "topic_loop_guard_from": None,
+            "topic_loop_guard_to": None,
             "selected_generator": None,
             "generated_question_before_guardrails": None,
             "generated_question_after_guardrails": None,
+            "question_sanitized": False,
+            "question_truncated": False,
+            "sanitizer_action": "none",
             "was_question_rejected_as_generic": False,
             "was_question_rejected_as_repeated": False,
             "scenario_id": active_qa_scenario_id,
@@ -5362,11 +6266,25 @@ async def add_candidate_message(
         )
         should_count_as_answer = bool(policy_decision.get("count_as_scored_answer", should_count_as_answer))
         should_advance_scenario = bool(policy_decision.get("advance_scenario", should_advance_scenario))
+        if candidate_intent_type == "end_interview":
+            should_end_now = True
+            adaptive_decision = "candidate_requested_manual_finish"
+            forced_closure_reason = "candidate_requested_manual_finish"
+            should_count_as_answer = False
+            should_advance_scenario = True
+            policy_decision["policy_action"] = "close_interview"
+            policy_decision["reason"] = "candidate_requested_manual_finish"
         runtime_answer_evaluation["should_count_as_answer"] = should_count_as_answer
         runtime_answer_evaluation["should_advance_scenario"] = should_advance_scenario
         if trace is not None:
             trace["policy_action"] = str(policy_decision.get("policy_action") or "")
             trace["policy_reason"] = str(policy_decision.get("reason") or "")
+        manual_finish_requested = candidate_intent_type == "end_interview"
+        candidate_requested_topic_change = manual_finish_requested or is_move_on_request
+        is_control_or_non_answer = _is_control_or_non_answer_intent(
+            candidate_intent_type,
+            is_move_on_request=is_move_on_request,
+        )
 
         while len(topic_reuse_flags) <= current_topic_index:
             topic_reuse_flags.append(False)
@@ -5431,6 +6349,13 @@ async def add_candidate_message(
             answer_relevance = "low"
         if answer_relevance == "low":
             topic_relevance_failures[current_topic_index] += 1
+        current_topic_relevance_failure_count = topic_relevance_failures[current_topic_index]
+        off_topic_answer = (
+            should_count_as_answer
+            and answer_relevance == "low"
+            and not is_control_or_non_answer
+            and not is_nonsense_answer
+        )
 
         answer_classes.append(answer_class)
         resume_topic_phase_for_evidence = current_topic_phase
@@ -5521,11 +6446,18 @@ async def add_candidate_message(
             strategist_model_preference = workspace_ai_settings.get("interviewer_model_preference")
         role_competency_map = get_role_core_competency_order(interview.target_role)
         resume_summary_for_strategy = str(resume_profile.get("interview_resume_context") or "").strip()
+        max_context_chars = getattr(settings, "LLM_MAX_CONTEXT_CHARS", 12000)
+        if len(resume_summary_for_strategy) > max_context_chars:
+            resume_summary_for_strategy = resume_summary_for_strategy[:max_context_chars] + "\n[Resume summary truncated...]"
         current_competency_for_guard = ""
         competencies_for_guard = current_target.get("competencies") if isinstance(current_target, dict) else None
         if isinstance(competencies_for_guard, list) and competencies_for_guard:
             current_competency_for_guard = str(competencies_for_guard[0] or "").strip()
-        resume_gate_passed_for_strategy = _resume_deep_dive_gate_opened(resume_evidence)
+        resume_gate_passed_for_strategy = _resume_deep_dive_can_advance(
+            resume_evidence=resume_evidence,
+            resume_scored_turns=resume_scored_turns_after,
+            answer_evaluation=runtime_answer_evaluation,
+        )
         resume_force_transition_for_strategy = _resume_deep_dive_force_transition(
             resume_scored_turns=resume_scored_turns_after,
         )
@@ -5570,33 +6502,68 @@ async def add_candidate_message(
             resume_evidence=resume_evidence,
             resume_context=resume_summary_for_strategy,
         )
-        raw_question_decision = await _select_next_question_decision_v2(
-            role=interview.target_role,
-            language=interview.language,
-            resume_summary=resume_summary_for_strategy,
-            role_competency_map=role_competency_map,
-            interview_state_v2=state_v2_before or get_interview_state_v2(interview),
-            last_question=current_question_text,
-            last_answer=message,
-            last_answer_evaluation=runtime_answer_evaluation,
-            transcript_summary=transcript_summary,
-            asked_questions=asked_question_texts,
-            available_scenarios=role_scenario_chains,
-            policy_action=strategy_policy_action,
-            candidate_intent=candidate_intent_type,
-            missing_signal=role_hint_competency,
-            pressure_goal="collect_concrete_example_personal_action_result",
-            reasoning_hints={
-                "resume_gate_passed": resume_gate_passed_for_strategy,
-                "resume_force_transition": resume_force_transition_for_strategy,
-                "resume_followup_hint": resume_followup_hint,
-                "pressure_followup_hint": pressure_hint,
-                "concrete_example_hint": concrete_example_hint,
-                "policy_reason": str(policy_decision.get("reason") or ""),
-                "intent_reason": str(candidate_intent.get("reason") or ""),
-            },
-            model_preference=strategist_model_preference,
-        )
+        try:
+            raw_question_decision = await _select_next_question_decision_v2(
+                role=interview.target_role,
+                language=interview.language,
+                resume_summary=resume_summary_for_strategy,
+                role_competency_map=role_competency_map,
+                interview_state_v2=state_v2_before or get_interview_state_v2(interview),
+                last_question=current_question_text,
+                last_answer=message,
+                last_answer_evaluation=runtime_answer_evaluation,
+                transcript_summary=transcript_summary,
+                asked_questions=asked_question_texts,
+                available_scenarios=role_scenario_chains,
+                policy_action=strategy_policy_action,
+                candidate_intent=candidate_intent_type,
+                missing_signal=role_hint_competency,
+                pressure_goal="collect_concrete_example_personal_action_result",
+                reasoning_hints={
+                    "resume_gate_passed": resume_gate_passed_for_strategy,
+                    "resume_force_transition": resume_force_transition_for_strategy,
+                    "resume_followup_hint": resume_followup_hint,
+                    "pressure_followup_hint": pressure_hint,
+                    "concrete_example_hint": concrete_example_hint,
+                    "policy_reason": str(policy_decision.get("reason") or ""),
+                    "intent_reason": str(candidate_intent.get("reason") or ""),
+                },
+                model_preference=strategist_model_preference,
+            )
+        except Exception as exc:
+            if trace is not None:
+                trace["selected_generator"] = "strategist"
+                trace["source"] = "error"
+                trace["final_question_source"] = "error"
+                trace["provider"] = "openai"
+                trace["ai_provider"] = "openai"
+                trace["error"] = str(exc)
+                trace["fallback_reason"] = f"LLM error: {str(exc)}"
+                trace["requested_model"] = strategist_model_preference or settings.OPENAI_MODEL
+                trace["actual_model_used"] = strategist_model_preference or settings.OPENAI_MODEL
+                trace["provider_errors"] = [str(exc)]
+                decision_traces_v2 = _append_v2_decision_trace(decision_traces_v2, trace, limit=20)
+
+            logger.error(
+                "interview_v2_question_generation status=error interview_id=%s source=error provider=openai model=%s fallback_reason=%s",
+                interview.id,
+                strategist_model_preference or settings.OPENAI_MODEL,
+                str(exc),
+            )
+            fallback_counter_v2 = max(0, int((state_v2_before or {}).get("fallback_counter", 0))) + 1
+            update_interview_state_v2(
+                interview,
+                {
+                    "phase": str((state_v2_before or {}).get("phase") or "intro"),
+                    "role": interview.target_role,
+                    "language": interview.language,
+                    "fallback_counter": fallback_counter_v2,
+                    "decision_traces": decision_traces_v2[-20:],
+                    "last_llm": _build_last_llm_debug_payload(interview_id=interview.id, trace=trace),
+                },
+            )
+            await db.commit()
+            raise RuntimeError(f"AI generation failed, please retry. Details: {exc}") from exc
         if trace is not None:
             trace["selected_generator"] = "strategist"
             trace["generated_question_before_guardrails"] = str(raw_question_decision.get("question_text") or "").strip() or None
@@ -5605,6 +6572,16 @@ async def add_candidate_message(
             trace["strategist_repair_applied"] = bool(raw_question_decision.get("strategist_repair_applied"))
             trace["strategist_retry_used"] = bool(raw_question_decision.get("strategist_retry_used"))
             trace["strategist_error_reason"] = str(raw_question_decision.get("strategist_error_reason") or "")
+            trace["source"] = str(raw_question_decision.get("source") or "unknown")
+            trace["final_question_source"] = trace["source"]
+            trace["fallback_reason"] = (
+                str(raw_question_decision.get("strategist_error_reason") or "")
+                if trace["source"] not in ("gemini", "openai")
+                else ""
+            )
+            trace["prompt_preview"] = str(raw_question_decision.get("prompt_preview") or "")
+            trace["raw_response_preview"] = str(raw_question_decision.get("raw_response_preview") or "")
+            trace["error"] = str(raw_question_decision.get("strategist_error_reason") or "")
             trace["ai_provider"] = str(raw_question_decision.get("ai_provider") or "")
             trace["requested_model"] = str(raw_question_decision.get("requested_model") or "")
             trace["actual_model_used"] = str(raw_question_decision.get("actual_model_used") or "")
@@ -5613,7 +6590,7 @@ async def add_candidate_message(
             trace["provider_latency_ms"] = float(raw_question_decision.get("provider_latency_ms") or 0.0)
             trace["provider_attempts"] = list(raw_question_decision.get("provider_attempts") or [])
             trace["provider_errors"] = list(raw_question_decision.get("provider_errors") or [])
-            trace["openrouter_fallback_used"] = bool(raw_question_decision.get("openrouter_fallback_used"))
+            trace["provider_fallback_used"] = bool(raw_question_decision.get("provider_fallback_used"))
 
         raw_action = str(raw_question_decision.get("action") or "").strip().lower()
         inferred_intent = _derive_conversational_intent(
@@ -5693,13 +6670,15 @@ async def add_candidate_message(
             trace["actual_model_used"] = str(question_decision.get("actual_model_used") or trace.get("actual_model_used") or "")
             trace["provider_attempts"] = list(question_decision.get("provider_attempts") or trace.get("provider_attempts") or [])
             trace["provider_errors"] = list(question_decision.get("provider_errors") or trace.get("provider_errors") or [])
-            trace["openrouter_fallback_used"] = bool(
-                question_decision.get("openrouter_fallback_used")
-                if "openrouter_fallback_used" in question_decision
-                else trace.get("openrouter_fallback_used")
+            trace["provider_fallback_used"] = bool(
+                question_decision.get("provider_fallback_used")
+                if "provider_fallback_used" in question_decision
+                else trace.get("provider_fallback_used")
             )
             if trace["was_question_rejected_as_generic"] or trace["was_question_rejected_as_repeated"]:
                 trace["selected_generator"] = "interviewer_redirect"
+                trace["final_question_source"] = "fallback"
+                trace["fallback_reason"] = str(question_decision.get("guardrail_reason") or "guardrail_replaced_llm_question")
 
             # If we asked a verification question and got a shallow answer → flag it
             if pending_verification and answer_class in {"generic", "evasive", "no_experience_honest"}:
@@ -5727,6 +6706,18 @@ async def add_candidate_message(
             and answer_class in {"generic", "evasive"}
         )
         topic_guard_closure_reason: str | None = None
+        force_topic_closure = False
+        topic_saturated = _should_force_role_topic_transition(
+            role=interview.target_role,
+            current_phase=current_topic_phase,
+            topic_turns=topic_turns,
+            answer_class=answer_class,
+            answer_relevance=answer_relevance,
+        )
+        topic_guard_requires_probe = False
+        ranked_claim_target = str(claim_target or "").strip().lower() or None
+        tech_to_verify = None
+        relevance_guard_action = "none"
 
         if is_move_on_request:
             question_type = "main"
@@ -5895,18 +6886,28 @@ async def add_candidate_message(
             topic_phase=current_topic_phase,
             question_type=question_type,
         )
-        resume_gate_passed = _resume_deep_dive_gate_opened(resume_evidence)
+        resume_gate_passed = _resume_deep_dive_can_advance(
+            resume_evidence=resume_evidence,
+            resume_scored_turns=resume_scored_turns_after,
+            answer_evaluation=runtime_answer_evaluation,
+        )
         resume_force_transition = _resume_deep_dive_force_transition(
             resume_scored_turns=resume_scored_turns_after,
         )
         resume_gate_forced = (
+            not candidate_requested_topic_change
+            and
             (
                 str(current_phase_before_v2 or "") == "resume_deep_dive"
                 or current_resume_phase in {"intro", "resume_deep_dive"}
             )
             and not resume_gate_passed
             and not resume_force_transition
-        ) or (policy_action == "resume_redirect" and not resume_force_transition)
+        ) or (
+            not candidate_requested_topic_change
+            and policy_action == "resume_redirect"
+            and not resume_force_transition
+        )
 
         if resume_force_transition and str(current_phase_before_v2 or "") in {"intro", "resume_deep_dive"}:
             decision_action = "switch_topic"
@@ -5981,6 +6982,40 @@ async def add_candidate_message(
             decision_scenario_case_id = active_qa_scenario_id
             decision_scenario_step_index = max(0, active_qa_scenario_step)
             decision_reason = f"{decision_reason}_forced_example_adaptation"
+
+        if (
+            off_topic_answer
+            and current_topic_relevance_failure_count <= 1
+            and not resume_gate_forced
+            and not forced_example_adaptation
+            and policy_action not in {"pressure_followup", "give_example_scenario", "clarify", "answer_meta_then_redirect", "resume_redirect"}
+        ):
+            decision_action = "clarify"
+            question_type = "clarification"
+            will_advance = False
+            should_end_now = False
+            should_advance_scenario = False
+            decision_question_text = _build_answer_relevance_redirect_question(
+                language=interview.language,
+                role=interview.target_role,
+                topic=current_target,
+            )
+            decision_scenario_case_id = active_qa_scenario_id
+            decision_scenario_step_index = max(0, active_qa_scenario_step)
+            decision_reason = f"{decision_reason}_off_topic_relevance_reframe"
+            relevance_guard_action = "reframe"
+        elif off_topic_answer and current_topic_relevance_failure_count >= 2:
+            decision_action = "switch_topic"
+            question_type = "main"
+            will_advance = True
+            should_end_now = False
+            should_advance_scenario = True
+            forced_closure_reason = forced_closure_reason or "repeated_off_topic_answer"
+            saturation_reason = None
+            decision_scenario_case_id = None
+            decision_scenario_step_index = 0
+            decision_reason = f"{decision_reason}_repeated_off_topic_force_transition"
+            relevance_guard_action = "switch_topic"
 
         post_policy_guarded = _apply_v2_question_guardrails(
             question_decision={
@@ -6085,6 +7120,7 @@ async def add_candidate_message(
             decision_reason = f"{decision_reason}_repeat_rejected_redirect"
         if trace is not None:
             trace["generated_question_after_guardrails"] = decision_question_text or None
+            trace["relevance_guard_action"] = relevance_guard_action
             trace["was_question_rejected_as_generic"] = bool(
                 trace.get("was_question_rejected_as_generic")
                 or rejected_generic
@@ -6095,6 +7131,14 @@ async def add_candidate_message(
             )
             if trace["was_question_rejected_as_generic"] or trace["was_question_rejected_as_repeated"]:
                 trace["selected_generator"] = "interviewer_redirect"
+                trace["final_question_source"] = "fallback"
+                trace["fallback_reason"] = str(post_policy_guarded.get("guardrail_reason") or "post_policy_guardrail_replaced_llm_question")
+            if relevance_guard_action == "reframe":
+                trace["selected_generator"] = "relevance_guard"
+                trace["final_question_source"] = "fallback"
+                trace["fallback_reason"] = "off_topic_answer_relevance_reframe"
+            elif relevance_guard_action == "switch_topic":
+                trace["fallback_reason"] = str(trace.get("fallback_reason") or "repeated_off_topic_answer_force_transition")
 
         if completed_scenario_case_id and completed_scenario_case_id not in qa_completed_scenarios:
             qa_completed_scenarios.append(completed_scenario_case_id)
@@ -6157,6 +7201,10 @@ async def add_candidate_message(
             lead_question = None
             allowed_probes: list[str] = []
             scored_metrics: list[str] = []
+            topic_loop_guard_action = "none"
+            topic_loop_guard_from: str | None = None
+            topic_loop_guard_to: str | None = None
+            topic_group_streak_before = _topic_group_streak(topic_group_history)[1]
             if topic_plan:
                 current_idx = max(current_topic_index, 0)
                 next_idx = interview.question_count
@@ -6176,6 +7224,26 @@ async def add_candidate_message(
                     target_idx = resolved_next_topic_index
                     if 0 <= target_idx < len(topic_plan):
                         target_topic = topic_plan[target_idx]
+                        previous_group, previous_group_streak = _topic_group_streak(topic_group_history)
+                        target_group = _topic_group_key(target_topic, role=interview.target_role)
+                        topic_group_streak_before = previous_group_streak
+                        if previous_group and previous_group == target_group and previous_group_streak >= 2:
+                            alternative_idx = _find_next_topic_index_with_different_group(
+                                topic_plan,
+                                role=interview.target_role,
+                                start_index=target_idx + 1,
+                                current_group=previous_group,
+                                asked_topics=asked_topics,
+                            )
+                            if alternative_idx is not None and 0 <= alternative_idx < len(topic_plan):
+                                topic_loop_guard_action = "switch_topic_group"
+                                topic_loop_guard_from = target_group
+                                target_idx = alternative_idx
+                                resolved_next_topic_index = alternative_idx
+                                target_topic = topic_plan[target_idx]
+                                topic_loop_guard_to = _topic_group_key(target_topic, role=interview.target_role)
+                                forced_closure_reason = forced_closure_reason or "topic_group_loop"
+                                decision_reason = f"{decision_reason}_topic_group_loop_guard"
                         target_signature = _topic_signature_key(target_topic)
                         target_phase = str(target_topic.get("phase") or "").strip().lower()
 
@@ -6251,6 +7319,13 @@ async def add_candidate_message(
                             closed_reason=forced_closure_reason or saturation_reason,
                             language=interview.language,
                         )
+                        if topic_loop_guard_action == "switch_topic_group":
+                            transition_hint = (
+                                "Спасибо, кейс с инцидентом понятен. Теперь перейдём к другой PM-компетенции и не продолжай тот же сценарий."
+                                if not str(interview.language or "").lower().startswith("en")
+                                else "Thanks, the incident case is clear. Now move to a different PM competency and do not continue the same scenario."
+                            )
+                            diversification_hint = f"{diversification_hint or ''} {transition_hint}".strip()
 
             # ── Build InterviewContext ──────────────────────────────────────
             q_number = interview.question_count + 1 if will_advance else max(interview.question_count, 1)
@@ -6304,7 +7379,19 @@ async def add_candidate_message(
                 module_stage_index=resolved_next_topic_index if resolved_next_topic_index is not None else current_topic_index,
                 module_stage_count=len(module_stage_plan) if module_stage_plan else 0,
             )
-            next_q = _sanitize_chat_question(decision_question_text, language=interview.language)
+            if trace is not None:
+                trace["topic_group_streak_before"] = topic_group_streak_before
+                trace["topic_loop_guard_action"] = topic_loop_guard_action
+                trace["topic_loop_guard_from"] = topic_loop_guard_from
+                trace["topic_loop_guard_to"] = topic_loop_guard_to
+            next_q, initial_sanitizer_metadata = _sanitize_chat_question_with_metadata(
+                decision_question_text,
+                language=interview.language,
+            )
+            if trace is not None:
+                trace["question_sanitized"] = bool(initial_sanitizer_metadata.get("question_sanitized"))
+                trace["question_truncated"] = bool(initial_sanitizer_metadata.get("question_truncated"))
+                trace["sanitizer_action"] = str(initial_sanitizer_metadata.get("sanitizer_action") or "none")
             if not next_q:
                 if candidate_intent_type in {
                     "clarification_request",
@@ -6320,7 +7407,7 @@ async def add_candidate_message(
                             resume_evidence=resume_evidence,
                             resume_context=resume_summary_for_strategy,
                         )
-                        if (not _resume_deep_dive_gate_opened(resume_evidence) and not resume_force_transition)
+                        if (not resume_gate_passed_for_strategy and not resume_force_transition)
                         else _runtime_followup_question_text(
                             language=interview.language,
                             followup_type="clarify",
@@ -6344,6 +7431,8 @@ async def add_candidate_message(
                     should_advance_scenario = False
                     if trace is not None:
                         trace["selected_generator"] = "interviewer_redirect"
+                        trace["final_question_source"] = "fallback"
+                        trace["fallback_reason"] = "empty_llm_question_redirect"
                 elif answer_class in {"generic", "evasive", "no_experience_honest"} or str(runtime_answer_evaluation.get("quality") or "") == "weak":
                     next_q = build_pressure_followup(
                         role=interview.target_role,
@@ -6362,6 +7451,8 @@ async def add_candidate_message(
                     should_advance_scenario = False
                     if trace is not None:
                         trace["selected_generator"] = "pressure_followup"
+                        trace["final_question_source"] = "fallback"
+                        trace["fallback_reason"] = "empty_llm_question_pressure_followup"
                 else:
                     next_q = _build_resume_deep_dive_followup(
                         language=interview.language,
@@ -6375,17 +7466,18 @@ async def add_candidate_message(
                     should_advance_scenario = False
                     if trace is not None:
                         trace["selected_generator"] = "resume_redirect"
+                        trace["final_question_source"] = "fallback"
+                        trace["fallback_reason"] = "empty_llm_question_resume_redirect"
                 next_q = _sanitize_chat_question(next_q, language=interview.language)
 
-            repeated_or_similar = False
-            if next_q and _is_repeated_question_text(next_q, asked_question_texts):
-                repeated_or_similar = True
-            if (
+            repeated_or_similar = bool(
                 next_q
-                and current_question_text
-                and _question_text_similarity(next_q, current_question_text) >= 0.72
-            ):
-                repeated_or_similar = True
+                and _is_question_repeat_candidate(
+                    next_q,
+                    asked_question_texts,
+                    current_question=current_question_text,
+                )
+            )
             if next_q and repeated_or_similar:
                 should_force_example = candidate_intent_type == "request_example" or no_case_streak_v2 >= 2
                 redirect_fallback = (
@@ -6418,7 +7510,11 @@ async def add_candidate_message(
                     fallback_question=redirect_fallback,
                 )
                 redirected = _sanitize_chat_question(redirected, language=interview.language)
-                if redirected and not _is_repeated_question_text(redirected, asked_question_texts):
+                if redirected and not _is_question_repeat_candidate(
+                    redirected,
+                    asked_question_texts,
+                    current_question=current_question_text,
+                ):
                     next_q = redirected
                     decision_reason = f"{decision_reason}_repeat_runtime_redirect"
                     question_type = "clarification"
@@ -6427,9 +7523,15 @@ async def add_candidate_message(
                     if trace is not None:
                         trace["selected_generator"] = "interviewer_redirect"
                         trace["was_question_rejected_as_repeated"] = True
+                        trace["final_question_source"] = "fallback"
+                        trace["fallback_reason"] = "repeat_runtime_redirect"
                 elif should_force_example:
                     diversified = _sanitize_chat_question(redirect_fallback, language=interview.language)
-                    if diversified and not _is_repeated_question_text(diversified, asked_question_texts):
+                    if diversified and not _is_question_repeat_candidate(
+                        diversified,
+                        asked_question_texts,
+                        current_question=current_question_text,
+                    ):
                         next_q = diversified
                         decision_reason = f"{decision_reason}_repeat_runtime_forced_example"
                         question_type = "clarification"
@@ -6438,6 +7540,39 @@ async def add_candidate_message(
                         if trace is not None:
                             trace["selected_generator"] = "pressure_followup"
                             trace["was_question_rejected_as_repeated"] = True
+                            trace["final_question_source"] = "fallback"
+                            trace["fallback_reason"] = "repeat_runtime_forced_example"
+                if next_q and _is_question_repeat_candidate(
+                    next_q,
+                    asked_question_texts,
+                    current_question=current_question_text,
+                ):
+                    repeated_group = _topic_group_key(
+                        current_target,
+                        role=interview.target_role,
+                        question_text=current_question_text or next_q,
+                    )
+                    transition_question = _build_topic_group_transition_question(
+                        role=interview.target_role,
+                        language=interview.language,
+                        repeated_group=repeated_group,
+                    )
+                    transition_question = _sanitize_chat_question(transition_question, language=interview.language)
+                    if transition_question and not _is_question_repeat_candidate(
+                        transition_question,
+                        asked_question_texts,
+                        current_question=current_question_text,
+                    ):
+                        next_q = transition_question
+                        decision_reason = f"{decision_reason}_repeat_runtime_topic_transition"
+                        question_type = "main"
+                        will_advance = True
+                        should_advance_scenario = True
+                        if trace is not None:
+                            trace["selected_generator"] = "topic_loop_guard"
+                            trace["was_question_rejected_as_repeated"] = True
+                            trace["final_question_source"] = "fallback"
+                            trace["fallback_reason"] = "repeat_runtime_topic_transition"
             if (
                 next_q
                 and _is_question_already_covered_in_transcript(next_q, transcript_summary)
@@ -6458,7 +7593,11 @@ async def add_candidate_message(
                     ),
                 )
                 redirected = _sanitize_chat_question(redirected, language=interview.language)
-                if redirected and not _is_repeated_question_text(redirected, asked_question_texts):
+                if redirected and not _is_question_repeat_candidate(
+                    redirected,
+                    asked_question_texts,
+                    current_question=current_question_text,
+                ):
                     next_q = redirected
                     decision_reason = f"{decision_reason}_transcript_runtime_redirect"
                     question_type = "clarification"
@@ -6466,6 +7605,8 @@ async def add_candidate_message(
                     should_advance_scenario = False
                     if trace is not None:
                         trace["selected_generator"] = "interviewer_redirect"
+                        trace["final_question_source"] = "fallback"
+                        trace["fallback_reason"] = "transcript_runtime_redirect"
 
         # ── Update DB state ─────────────────────────────────────────────────
         while len(topic_signals) <= current_topic_index:
@@ -6524,6 +7665,80 @@ async def add_candidate_message(
                     }
                 )
 
+        final_question_topic_group: str | None = None
+        if next_q:
+            sanitized_next_q, sanitizer_metadata = _sanitize_chat_question_with_metadata(
+                next_q,
+                language=interview.language,
+            )
+            next_q = sanitized_next_q
+            if trace is not None:
+                trace["question_sanitized"] = bool(
+                    trace.get("question_sanitized") or sanitizer_metadata.get("question_sanitized")
+                )
+                trace["question_truncated"] = bool(
+                    trace.get("question_truncated") or sanitizer_metadata.get("question_truncated")
+                )
+                trace["sanitizer_action"] = (
+                    str(sanitizer_metadata.get("sanitizer_action") or "none")
+                    if str(sanitizer_metadata.get("sanitizer_action") or "none") != "none"
+                    else str(trace.get("sanitizer_action") or "none")
+                )
+                trace["generated_question_after_guardrails"] = str(next_q or decision_question_text or "").strip() or None
+
+        if next_q:
+            topic_for_question = selected_target if will_advance else current_target
+            final_question_topic_group = _topic_group_key(
+                topic_for_question,
+                role=interview.target_role,
+                question_text=next_q,
+            )
+            previous_question_group, previous_question_group_streak = _topic_group_streak(topic_group_history)
+            if (
+                previous_question_group
+                and final_question_topic_group == previous_question_group
+                and previous_question_group_streak >= 2
+            ):
+                transition_question = _build_topic_group_transition_question(
+                    role=interview.target_role,
+                    language=interview.language,
+                    repeated_group=previous_question_group,
+                )
+                if transition_question:
+                    next_q, transition_sanitizer_metadata = _sanitize_chat_question_with_metadata(
+                        transition_question,
+                        language=interview.language,
+                    )
+                    final_question_topic_group = _topic_group_key(
+                        {},
+                        role=interview.target_role,
+                        question_text=next_q,
+                    )
+                    decision_reason = f"{decision_reason}_post_generation_topic_group_loop_guard"
+                    question_type = "main"
+                    will_advance = True
+                    should_advance_scenario = True
+                    if trace is not None:
+                        trace["selected_generator"] = "topic_loop_guard"
+                        trace["final_question_source"] = "fallback"
+                        trace["fallback_reason"] = "post_generation_topic_group_loop_guard"
+                        trace["topic_loop_guard_action"] = "rewrite_question_group"
+                        trace["topic_loop_guard_from"] = previous_question_group
+                        trace["topic_loop_guard_to"] = final_question_topic_group
+                        trace["question_sanitized"] = bool(
+                            trace.get("question_sanitized")
+                            or transition_sanitizer_metadata.get("question_sanitized")
+                        )
+                        trace["question_truncated"] = bool(
+                            trace.get("question_truncated")
+                            or transition_sanitizer_metadata.get("question_truncated")
+                        )
+                        if str(transition_sanitizer_metadata.get("sanitizer_action") or "none") != "none":
+                            trace["sanitizer_action"] = str(transition_sanitizer_metadata.get("sanitizer_action"))
+            topic_group_history.append(final_question_topic_group)
+            if trace is not None:
+                trace["topic_group"] = final_question_topic_group
+
         if next_q and question_type == "main":
             topic_for_question = selected_target if will_advance else current_target
             question_signature = _topic_signature_key(topic_for_question)
@@ -6542,13 +7757,14 @@ async def add_candidate_message(
                 "question_type": question_type,
                 "will_advance": will_advance,
                 "selected_topic_index": selected_topic_index_preference if selected_topic_index_preference is not None else current_topic_index,
-                "scenario_case_id": decision_scenario_case_id,
+                "scenario_case_id": str(decision_scenario_case_id) if decision_scenario_case_id else None,
                 "scenario_step_index": active_qa_scenario_step if decision_scenario_case_id else None,
-                "completed_scenario_case_id": completed_scenario_case_id,
+                "completed_scenario_case_id": str(completed_scenario_case_id) if completed_scenario_case_id else None,
                 "candidate_intent": candidate_intent_type,
                 "scored_answer": should_count_as_answer,
                 "conversational_intent": str(question_decision.get("conversational_intent") or ""),
                 "information_target": str(question_decision.get("information_target") or ""),
+                "topic_group": final_question_topic_group,
             }
         )
         if will_advance or not bool(runtime_answer_evaluation.get("pressure_followup_required")):
@@ -6581,6 +7797,7 @@ async def add_candidate_message(
             "topic_mastered_flags": topic_mastered_flags,
             "candidate_memory": candidate_memory,
             "asked_topics": asked_topics[-30:],
+            "topic_group_history": topic_group_history[-30:],
             "asked_question_texts": asked_question_texts[-30:],
             "transcript_summary": transcript_summary[-20:],
             "runtime_answer_evaluations": runtime_answer_evaluations[-80:],
@@ -6616,6 +7833,8 @@ async def add_candidate_message(
             "module_stage_index": current_topic_index if _is_staged_module_type(module_type) else module_stage_index,
             "module_question_history": module_question_history,
         }
+        if preserved_practical_state:
+            interview.interview_state.update(preserved_practical_state)
         if isinstance(workspace_ai_settings, dict) and workspace_ai_settings:
             interview.interview_state["workspace_ai_settings"] = {
                 "proctoring_policy_mode": workspace_ai_settings.get("proctoring_policy_mode"),
@@ -6689,7 +7908,11 @@ async def add_candidate_message(
             topic_phase=str((selected_target or current_target or {}).get("phase") or ""),
             question_type=question_type,
         )
-        resume_gate_passed_for_phase = _resume_deep_dive_gate_opened(resume_evidence)
+        resume_gate_passed_for_phase = _resume_deep_dive_can_advance(
+            resume_evidence=resume_evidence,
+            resume_scored_turns=resume_scored_turns_after,
+            answer_evaluation=runtime_answer_evaluation,
+        )
         resume_force_transition_for_phase = _resume_deep_dive_force_transition(
             resume_scored_turns=resume_scored_turns_after,
         )
@@ -6764,6 +7987,33 @@ async def add_candidate_message(
                 trace["why_phase_advanced"] = f"phase_hold:{decision_reason}"
             if not trace.get("selected_generator"):
                 trace["selected_generator"] = "strategist"
+            if str(trace.get("final_question_source") or "unknown") == "unknown":
+                src = str(trace.get("source") or "").strip().lower()
+                trace["final_question_source"] = (
+                    src
+                    if (
+                        src in ("gemini", "openai")
+                        and str(trace.get("selected_generator") or "") == "strategist"
+                        and bool(trace.get("strategist_json_valid"))
+                    )
+                    else "fallback"
+                )
+            if trace.get("final_question_source") not in ("gemini", "openai") and not trace.get("fallback_reason"):
+                trace["fallback_reason"] = str(trace.get("strategist_error_reason") or "question_replaced_by_non_llm_path")
+            provider_errors_for_trace = list(trace.get("provider_errors") or [])
+            trace["error"] = str(trace.get("strategist_error_reason") or "")
+            if not trace["error"] and provider_errors_for_trace:
+                trace["error"] = "; ".join(str(item) for item in provider_errors_for_trace if str(item).strip())
+            logger.info(
+                "interview_v2_question_generation status=final interview_id=%s source=%s selected_generator=%s provider=%s model=%s latency_ms=%.1f fallback_reason=%s",
+                interview.id,
+                trace.get("final_question_source"),
+                trace.get("selected_generator"),
+                trace.get("ai_provider") or trace.get("provider"),
+                trace.get("actual_model_used") or trace.get("requested_model") or trace.get("model"),
+                float(trace.get("provider_latency_ms") or 0.0),
+                trace.get("fallback_reason") or "",
+            )
             decision_traces_v2 = _append_v2_decision_trace(decision_traces_v2, trace, limit=20)
 
         fallback_counter_v2 = max(0, int((state_v2_before or {}).get("fallback_counter", 0)))
@@ -6778,8 +8028,12 @@ async def add_candidate_message(
             metrics=interview_quality_metrics_before,
             trace=trace,
             should_count_as_answer=should_count_as_answer,
+            answer_relevance=answer_relevance,
+            candidate_intent=candidate_intent_type,
+            is_control_intent=is_control_or_non_answer,
             phase_after=derived_phase,
             policy_action=str(policy_decision.get("policy_action") or ""),
+            relevance_guard_action=relevance_guard_action,
         )
         interview_quality_metrics["semantic_repeated_question_count"] = max(
             interview_quality_metrics.get("semantic_repeated_question_count", 0),
@@ -6825,6 +8079,7 @@ async def add_candidate_message(
                 "current_step_key": current_step_key,
                 "last_policy_decision": policy_decision,
                 "decision_traces": decision_traces_v2[-20:],
+                "last_llm": _build_last_llm_debug_payload(interview_id=interview.id, trace=trace),
                 "fallback_counter": fallback_counter_v2,
                 "interview_quality_metrics": interview_quality_metrics,
             },
@@ -6850,6 +8105,52 @@ async def add_candidate_message(
     asked_questions_count = base_assistant_count + (1 if current_question else 0)
     answered_questions_count = base_candidate_count + 1
 
+    # ── Practical task injection ───────────────────────────────────────────────
+    # Inject a mid-interview practical task when the role/stage policy allows it.
+    practical_task_obj: PracticalTaskResponse | None = None
+    question_delivery_type = "voice_only"
+    state_now: dict = dict(interview.interview_state) if isinstance(interview.interview_state, dict) else {}
+    has_practical_submission = any(
+        getattr(item, "role", None) == "practical_submission" for item in messages
+    )
+    already_triggered = (
+        bool(state_now.get("practical_task_triggered"))
+        or bool(state_now.get("practical_submissions"))
+        or has_practical_submission
+    )
+    # Use core interview progress for the policy window. Counting every
+    # candidate turn makes adaptive follow-ups burn through the 3–6 answer
+    # trigger window before the engine reaches a technical stage.
+    _answered_count = int(interview.question_count or 0)
+    # current stage key from v2 state (may be None for simple interviews)
+    _state_v2_now = get_interview_state_v2(interview)
+    _current_stage_key = str((_state_v2_now or {}).get("phase") or "").strip() if isinstance(_state_v2_now, dict) else ""
+    if (
+        current_question
+        and not already_triggered
+        and should_trigger_practical_task(
+            role=interview.target_role,
+            answered_count=_answered_count,
+            already_triggered=already_triggered,
+            current_stage_key=_current_stage_key,
+        )
+    ):
+        lang = getattr(interview, "language", None) or "ru"
+        task_data = get_practical_task(interview.target_role, lang)
+        if task_data:
+            practical_task_obj = PracticalTaskResponse(**task_data)
+            question_delivery_type = "practical_task"
+            # Override current_question with the voice intro for TTS
+            if task_data.get("voice_intro"):
+                current_question = task_data["voice_intro"]
+            # Persist flag so we never trigger twice
+            state_now["practical_task_triggered"] = True
+            state_now["practical_task_id"] = task_data["task_id"]
+            state_now["practical_task_type"] = task_data["task_type"]
+            interview.interview_state = state_now
+            await db.commit()
+            await db.refresh(interview)
+
     return SendMessageResponse(
         interview_id=interview.id,
         status="in_progress",
@@ -6863,7 +8164,242 @@ async def add_candidate_message(
         question_type=question_type,
         interview_stage=_build_interview_stage_payload(interview),
         module_session=_build_interview_module_session_payload(interview),
+        question_delivery_type=question_delivery_type,
+        practical_task=practical_task_obj,
     )
+
+
+async def _evaluate_practical_submission(
+    *,
+    task_type: str,
+    language: str | None,
+    answer: str,
+    role: str,
+    interview_language: str = "ru",
+) -> dict | None:
+    """
+    Call OpenAI to evaluate the practical task solution.
+
+    Returns a dict with evaluation fields + a trace block, or None if evaluation
+    fails/is skipped. Never raises — evaluation failure must not block the interview.
+
+    The returned dict always includes a 'trace' key so callers can persist
+    diagnostic info even when the LLM call fails.
+    """
+    import time as _time
+
+    if not answer.strip():
+        return None
+
+    try:
+        provider = get_llm_provider(settings)
+    except Exception as exc:
+        logger.warning("practical_task_evaluation_skipped no_provider error=%s", exc)
+        return None
+
+    model_name = getattr(provider, "configured_model", None) or "unknown"
+    answer_preview = answer[:3000]
+    lang_note = f" ({language})" if language and language not in ("text", "other", None) else ""
+
+    if interview_language == "ru":
+        system_prompt = (
+            "Ты опытный технический интервьюер. Оцени решение практического задания кандидата. "
+            "Ответь строго в JSON без markdown."
+        )
+        user_prompt = (
+            f"Роль кандидата: {role}\n"
+            f"Тип задания: {task_type}{lang_note}\n\n"
+            f"Решение кандидата:\n```\n{answer_preview}\n```\n\n"
+            "Оцени решение и верни JSON со следующими полями:\n"
+            "- practical_score: число от 0 до 10\n"
+            "- correctness: 'correct' | 'partial' | 'incorrect'\n"
+            "- completeness: 'complete' | 'partial' | 'minimal'\n"
+            "- edge_cases: 'handled' | 'partial' | 'missed' | 'not_applicable'\n"
+            "- code_quality: 'clean' | 'acceptable' | 'poor' | 'not_applicable'\n"
+            "- solution_quality_notes: краткая заметка (1-2 предложения)\n"
+            "- follow_up_question: один технический follow-up вопрос на основе решения (или null)\n"
+            "- risks: список рисков (пустой список если нет)\n"
+        )
+    else:
+        system_prompt = (
+            "You are an experienced technical interviewer. Evaluate the candidate's practical task solution. "
+            "Respond strictly in JSON without markdown."
+        )
+        user_prompt = (
+            f"Candidate role: {role}\n"
+            f"Task type: {task_type}{lang_note}\n\n"
+            f"Candidate solution:\n```\n{answer_preview}\n```\n\n"
+            "Evaluate the solution and return JSON with:\n"
+            "- practical_score: number 0–10\n"
+            "- correctness: 'correct' | 'partial' | 'incorrect'\n"
+            "- completeness: 'complete' | 'partial' | 'minimal'\n"
+            "- edge_cases: 'handled' | 'partial' | 'missed' | 'not_applicable'\n"
+            "- code_quality: 'clean' | 'acceptable' | 'poor' | 'not_applicable'\n"
+            "- solution_quality_notes: brief note (1-2 sentences)\n"
+            "- follow_up_question: one technical follow-up based on the solution (or null)\n"
+            "- risks: list of risks (empty list if none)\n"
+        )
+
+    t0 = _time.monotonic()
+    try:
+        result = await provider.chat_completion(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            model=None,  # use provider default
+            temperature=0.2,
+            max_tokens=400,
+            response_format={"type": "json_object"},
+            timeout=15.0,
+        )
+        latency_ms = round((_time.monotonic() - t0) * 1000)
+        raw = str(result.text or "").strip() if result else ""
+        if not raw:
+            return None
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = "\n".join(
+                line for line in raw.splitlines()
+                if not line.strip().startswith("```")
+            ).strip()
+        data = json.loads(raw)
+        return {
+            "practical_score": float(data.get("practical_score", 0)),
+            "correctness": str(data.get("correctness", "unknown")),
+            "completeness": str(data.get("completeness", "unknown")),
+            "edge_cases": str(data.get("edge_cases", "not_applicable")),
+            "code_quality": str(data.get("code_quality", "not_applicable")),
+            "solution_quality_notes": str(data.get("solution_quality_notes", "")),
+            "follow_up_question": data.get("follow_up_question"),
+            "risks": list(data.get("risks", [])),
+            "task_type": task_type,
+            "language": language,
+            # Trace block — always persisted so we know what happened
+            "trace": {
+                "status": "success",
+                "model": model_name,
+                "latency_ms": latency_ms,
+                "error": None,
+            },
+        }
+    except (ProviderChatError, json.JSONDecodeError, Exception) as exc:
+        latency_ms = round((_time.monotonic() - t0) * 1000)
+        error_msg = str(exc)[:500]
+        logger.warning(
+            "practical_task_evaluation_failed task_type=%s model=%s latency_ms=%d error=%s",
+            task_type, model_name, latency_ms, error_msg,
+        )
+        # Return a trace-only result so the caller can persist the failure reason
+        return {
+            "practical_score": None,
+            "correctness": "evaluation_failed",
+            "completeness": "evaluation_failed",
+            "edge_cases": "not_applicable",
+            "code_quality": "not_applicable",
+            "solution_quality_notes": "",
+            "follow_up_question": None,
+            "risks": [],
+            "task_type": task_type,
+            "language": language,
+            "trace": {
+                "status": "failed",
+                "model": model_name,
+                "latency_ms": latency_ms,
+                "error": error_msg,
+            },
+        }
+
+
+async def save_practical_submission(
+    db: AsyncSession,
+    candidate: Candidate,
+    interview_id: uuid.UUID,
+    body: PracticalSubmissionRequest,
+) -> SendMessageResponse:
+    """
+    Persist a practical task solution as a dedicated message type and continue
+    the interview with the next question.
+
+    Architecture:
+    - The raw solution is stored as role="practical_submission" (never seen by
+      the interview LLM, avoids confusing the question-generation pipeline).
+    - A brief summary is stored as role="candidate" so the LLM history shows
+      a clean transition without stray code snippets.
+    - OpenAI evaluation of the solution is stored in interview_state for the
+      assessor to include in the final report.
+    """
+    interview = await _get_interview(db, interview_id, candidate.id)
+
+    if interview.status != "in_progress":
+        if interview.status in ("report_generated", "completed"):
+            raise InterviewAlreadyFinishedError()
+        raise InterviewNotActiveError()
+
+    # ── 1. Persist raw submission as its own message type ─────────────────────
+    submission_content = body.answer[:8000]  # hard cap, not truncated for assessor
+    db.add(InterviewMessage(
+        id=uuid.uuid4(),
+        interview_id=interview.id,
+        role="practical_submission",   # distinct from "candidate" — not fed to LLM
+        content=submission_content,
+    ))
+
+    # ── 2. Persist metadata in interview_state ───────────────────────────────
+    state: dict = dict(interview.interview_state) if isinstance(interview.interview_state, dict) else {}
+    state["practical_task_triggered"] = True
+    state.setdefault("practical_task_id", body.task_id)
+    state.setdefault("practical_task_type", body.task_type)
+    state["practical_task_submitted"] = True
+    submission_record = {
+        "task_id": body.task_id,
+        "task_type": body.task_type,
+        "language": body.language,
+        "duration_seconds": body.duration_seconds,
+        "answer_length": len(body.answer),
+    }
+    # Append to list so multiple submissions can be tracked
+    submissions: list = list(state.get("practical_submissions", []))
+    submissions.append(submission_record)
+    state["practical_submissions"] = submissions
+    interview.interview_state = state
+    await db.commit()
+
+    # ── 3. LLM evaluation of the solution (stored for report, not shown to candidate)
+    evaluation = await _evaluate_practical_submission(
+        task_type=body.task_type,
+        language=body.language,
+        answer=body.answer,
+        role=interview.target_role,
+        interview_language=getattr(interview, "language", None) or "ru",
+    )
+    # Always persist — even on failure the trace block tells us what happened
+    if evaluation is not None:
+        state = dict(state)
+        evals: list = list(state.get("practical_evaluations", []))
+        evals.append({"task_id": body.task_id, **evaluation})
+        state["practical_evaluations"] = evals
+        # Top-level convenience fields for the assessor
+        trace = evaluation.get("trace", {})
+        state["practical_evaluation_status"] = trace.get("status", "unknown")
+        state["practical_evaluation_model"] = trace.get("model")
+        state["practical_evaluation_latency_ms"] = trace.get("latency_ms")
+        state["practical_evaluation_error"] = trace.get("error")
+        interview.interview_state = state
+        await db.commit()
+
+    # ── 4. Continue the interview via the normal pipeline ────────────────────
+    # A minimal candidate message signals task completion to the LLM without
+    # flooding the history with raw code. The LLM sees this as a natural
+    # transition and generates the next interview question.
+    task_label = body.task_type.replace("_", " ")
+    lang_note = f" ({body.language})" if body.language and body.language not in ("text", "other", None) else ""
+    summary_msg = (
+        f"[Практическое задание{lang_note}: {task_label} — выполнено]"
+        if (getattr(interview, "language", "ru") or "ru") != "en"
+        else f"[Practical task{lang_note}: {task_label} — submitted]"
+    )
+    return await add_candidate_message(db, candidate, interview_id, summary_msg)
 
 
 async def finish_interview(
@@ -6907,7 +8443,11 @@ async def finish_interview(
     if interview.status != "in_progress":
         raise InterviewNotActiveError()
 
-    if interview.question_count < interview.max_questions:
+    messages = await _get_messages(db, interview.id)
+    asked_questions_count, answered_questions_count = _count_visible_messages(messages)
+    plan_completed = interview.question_count >= interview.max_questions
+    manual_finish_allowed = answered_questions_count >= MIN_MANUAL_FINISH_ANSWERS
+    if not plan_completed and not manual_finish_allowed:
         raise MaxQuestionsNotReachedError()
 
     # Mark as processing and generate report asynchronously if needed.
@@ -6915,6 +8455,16 @@ async def finish_interview(
     finished_at = datetime.utcnow()
     interview.status = "report_processing"
     interview.completed_at = finished_at
+    if not plan_completed:
+        state = dict(interview.interview_state or {})
+        state["manual_finish"] = True
+        state["completion_reason"] = "manual_candidate_requested"
+        state["plan_completed"] = False
+        state["manual_finish_answer_count"] = answered_questions_count
+        state["manual_finish_question_count"] = asked_questions_count
+        state["manual_finish_min_answers"] = MIN_MANUAL_FINISH_ANSWERS
+        state["completed_at"] = finished_at.isoformat()
+        interview.interview_state = state
 
     if interview.company_assessment_id:
         from app.models.company_assessment import CompanyAssessment
@@ -7069,7 +8619,7 @@ async def _ensure_report_generated(
     messages = await _get_messages(db, interview.id)
     _update_report_diagnostics(interview, phase="assessing", status="processing")
     await db.commit()
-    report_interview_meta = dict(interview.interview_state or {})
+    report_interview_meta = _sanitize_interview_meta_for_report(interview.interview_state)
     report_interview_meta["workspace_ai_settings"] = await build_effective_workspace_ai_settings(db)
     result: AssessmentResult = await _assess_with_dev_fallback(
         target_role=interview.target_role,
@@ -7155,6 +8705,82 @@ async def _ensure_report_generated(
     result.full_report_json["unanswered_competencies"] = list(evidence_v2.get("unanswered_competencies", []))
     result.full_report_json["evidence_table"] = list(evidence_v2.get("evidence_table", []))
     result.full_report_json["human_followup_questions"] = human_followup_questions
+    report_state_v2 = (
+        report_interview_meta.get(_INTERVIEW_STATE_V2_KEY)
+        if isinstance(report_interview_meta, dict)
+        else None
+    )
+    interview_quality_metrics = _normalize_interview_quality_metrics(
+        (
+            report_interview_meta.get("interview_quality_metrics")
+            if isinstance(report_interview_meta, dict)
+            else None
+        )
+        or (
+            report_state_v2.get("interview_quality_metrics")
+            if isinstance(report_state_v2, dict)
+            else None
+        )
+    )
+    result.full_report_json["interview_quality_metrics"] = interview_quality_metrics
+    result.full_report_json["answer_quality_counters"] = {
+        "answered_on_topic_count": interview_quality_metrics["answered_on_topic_count"],
+        "off_topic_answers_count": interview_quality_metrics["off_topic_answers_count"],
+        "skipped_or_control_intent_count": interview_quality_metrics["skipped_or_control_intent_count"],
+        "relevance_reframe_count": interview_quality_metrics["relevance_reframe_count"],
+        "forced_topic_transition_count": interview_quality_metrics["forced_topic_transition_count"],
+    }
+
+    # ── Practical task section ────────────────────────────────────────────────
+    # Pulled from interview_state so it's always in sync with what was submitted.
+    _istate: dict = interview.interview_state if isinstance(interview.interview_state, dict) else {}
+    _practical_evals: list = list(_istate.get("practical_evaluations") or [])
+    _practical_subs: list = list(_istate.get("practical_submissions") or [])
+    _has_practical = bool(_practical_subs)
+
+    if _has_practical:
+        # Aggregate score across all practical tasks (average, or None if evaluation failed)
+        _scores = [
+            e.get("practical_score")
+            for e in _practical_evals
+            if isinstance(e.get("practical_score"), (int, float))
+        ]
+        _practical_avg_score = round(sum(_scores) / len(_scores), 1) if _scores else None
+
+        result.full_report_json["practical_section"] = {
+            "has_practical_tasks": True,
+            "practical_tasks_count": len(_practical_subs),
+            "submitted_tasks_count": len(_practical_subs),
+            "practical_score": _practical_avg_score,
+            "evaluation_status": _istate.get("practical_evaluation_status"),
+            "evaluation_model": _istate.get("practical_evaluation_model"),
+            "evaluation_latency_ms": _istate.get("practical_evaluation_latency_ms"),
+            "evaluation_error": _istate.get("practical_evaluation_error"),
+            "interview_mode": _istate.get("interview_mode"),
+            "tasks": [
+                {
+                    "task_id": e.get("task_id"),
+                    "task_type": e.get("task_type"),
+                    "language": e.get("language"),
+                    "practical_score": e.get("practical_score"),
+                    "correctness": e.get("correctness"),
+                    "completeness": e.get("completeness"),
+                    "edge_cases": e.get("edge_cases"),
+                    "code_quality": e.get("code_quality"),
+                    "solution_quality_notes": e.get("solution_quality_notes"),
+                    "follow_up_question": e.get("follow_up_question"),
+                    "risks": e.get("risks", []),
+                    "trace_status": (e.get("trace") or {}).get("status"),
+                }
+                for e in _practical_evals
+            ],
+        }
+    else:
+        result.full_report_json["practical_section"] = {
+            "has_practical_tasks": False,
+            "practical_tasks_count": 0,
+            "interview_mode": _istate.get("interview_mode"),
+        }
 
     report = AssessmentReport(
         id=uuid.uuid4(),
@@ -7715,7 +9341,8 @@ async def retry_interview_report_generation(
         raise ReportRetryNotAllowedError(
             "Interview is still in progress. Complete all questions before retrying report generation."
         )
-    if interview.question_count < interview.max_questions:
+    state = dict(interview.interview_state or {})
+    if interview.question_count < interview.max_questions and not bool(state.get("manual_finish")):
         raise ReportRetryNotAllowedError(
             "Interview is incomplete. Finish the interview before retrying report generation."
         )
@@ -7763,11 +9390,14 @@ async def get_interview_detail(
     if not report and interview.status in {"completed", "report_processing"}:
         _schedule_report_generation(interview.id)
 
-    # Exclude system messages from API response
+    # Exclude system messages and internal-only types from API response.
+    # "practical_submission" stores raw code/answers for the assessor — it is
+    # not a chat turn and should not appear in the candidate-facing transcript.
+    _API_EXCLUDED_ROLES = {"system", "practical_submission"}
     visible = [
         InterviewMessageResponse(role=m.role, content=m.content, created_at=m.created_at)
         for m in messages
-        if m.role != "system"
+        if m.role not in _API_EXCLUDED_ROLES
     ]
     progress_counters = _build_progress_counters(
         core_question_count=interview.question_count,
@@ -7815,6 +9445,22 @@ async def get_interview_debug_trace(
         "interview_quality_metrics": interview_quality_metrics,
         "live_smoke_summary": live_smoke_summary,
     }
+
+
+async def get_interview_last_llm_debug(
+    db: AsyncSession,
+    candidate: Candidate,
+    interview_id: uuid.UUID,
+) -> dict[str, Any]:
+    interview = await _get_interview(db, interview_id, candidate.id)
+    state_v2 = get_interview_state_v2(interview)
+    last_llm = state_v2.get("last_llm")
+    if isinstance(last_llm, dict):
+        return dict(last_llm)
+    traces_raw = state_v2.get("decision_traces")
+    traces = list(traces_raw) if isinstance(traces_raw, list) else []
+    trace = traces[-1] if traces and isinstance(traces[-1], dict) else None
+    return _build_last_llm_debug_payload(interview_id=interview.id, trace=trace)
 
 
 async def get_coding_task_artifact(
@@ -8251,4 +9897,3 @@ def _role_diversified_reframe_question(
         if language != "en"
         else "Okay, let's use one concrete work example: what happened and what was your first action?"
     )
-

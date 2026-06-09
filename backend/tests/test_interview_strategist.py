@@ -46,7 +46,7 @@ async def test_decide_next_interview_action_returns_valid_decision_with_non_empt
                 actual_model_used="gemini-2.5-flash",
                 provider_attempts=[],
                 provider_errors=[],
-                openrouter_fallback_used=False,
+                provider_fallback_used=False,
             )
     monkeypatch.setattr("app.ai.interview_strategist.strategist", _FakeStrategist())
 

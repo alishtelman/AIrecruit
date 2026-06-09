@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { AdminWorkspaceHeader } from "@/components/admin-workspace-header";
 import { useAuth } from "@/hooks/useAuth";
 import { adminApi } from "@/lib/api";
-import type { AdminOverview, AdminRecentCompany, AdminRecentInterview, AdminRecentReport, AdminRecentUser } from "@/lib/types";
+import type { AdminDailyTrendPoint, AdminOverview, AdminRecentCompany, AdminRecentInterview, AdminRecentReport, AdminRecentUser } from "@/lib/types";
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("ru-RU", {
@@ -44,6 +44,85 @@ function MetricCard({ label, value, helper }: { label: string; value: string; he
   );
 }
 
+function CompactMetric({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "ok" | "warn" }) {
+  const toneClass = tone === "ok" ? "text-emerald-300" : tone === "warn" ? "text-amber-300" : "text-white";
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-950/35 p-4">
+      <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <p className={`mt-2 text-2xl font-semibold ${toneClass}`}>{value}</p>
+    </div>
+  );
+}
+
+function TrendChart({
+  title,
+  subtitle,
+  trends,
+  locale,
+  labels,
+}: {
+  title: string;
+  subtitle: string;
+  trends: AdminDailyTrendPoint[];
+  locale: string;
+  labels: {
+    interviews: string;
+    reports: string;
+    candidates: string;
+    companies: string;
+  };
+}) {
+  const maxValue = Math.max(
+    1,
+    ...trends.flatMap((point) => [
+      point.interviews_started,
+      point.reports_generated,
+      point.candidates_created,
+      point.companies_created,
+    ])
+  );
+
+  return (
+    <section className="ai-panel rounded-[1.75rem] p-6">
+      <div className="mb-5">
+        <h2 className="text-xl font-semibold text-white">{title}</h2>
+        <p className="mt-1 text-sm text-slate-400">{subtitle}</p>
+      </div>
+      <div className="space-y-4">
+        {trends.map((point) => {
+          const day = new Intl.DateTimeFormat(locale, { day: "2-digit", month: "short" }).format(new Date(`${point.date}T00:00:00`));
+          return (
+            <div key={point.date} className="grid gap-3 md:grid-cols-[5rem_1fr] md:items-center">
+              <div className="text-sm font-medium text-slate-400">{day}</div>
+              <div className="grid gap-2 sm:grid-cols-4">
+                <TrendBar label={labels.interviews} value={point.interviews_started} max={maxValue} color="bg-blue-400" />
+                <TrendBar label={labels.reports} value={point.reports_generated} max={maxValue} color="bg-emerald-400" />
+                <TrendBar label={labels.candidates} value={point.candidates_created} max={maxValue} color="bg-cyan-300" />
+                <TrendBar label={labels.companies} value={point.companies_created} max={maxValue} color="bg-violet-300" />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function TrendBar({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
+  const width = `${Math.max(6, Math.round((value / max) * 100))}%`;
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-950/40 px-3 py-2">
+      <div className="mb-1 flex items-center justify-between gap-2 text-[11px] uppercase tracking-[0.14em] text-slate-500">
+        <span>{label}</span>
+        <span className="text-slate-300">{value}</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+        <div className={`h-full rounded-full ${color}`} style={{ width }} />
+      </div>
+    </div>
+  );
+}
+
 function SectionCard({
   title,
   subtitle,
@@ -66,6 +145,7 @@ function SectionCard({
 
 export default function AdminDashboardPage() {
   const t = useTranslations("admin.dashboard");
+  const locale = useLocale();
   const { user, loading: authLoading, logout } = useAuth({
     redirectTo: "/admin/login",
     allowedRoles: ["platform_admin"],
@@ -126,23 +206,40 @@ export default function AdminDashboardPage() {
           <div className="space-y-6">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <MetricCard label={t("metrics.users")} value={String(metrics?.total_users ?? 0)} helper={t("metrics.usersHelp")} />
-              <MetricCard label={t("metrics.candidates")} value={String(metrics?.active_candidates ?? 0)} helper={t("metrics.candidatesHelp")} />
-              <MetricCard label={t("metrics.companies")} value={String(metrics?.active_companies ?? 0)} helper={t("metrics.companiesHelp")} />
-              <MetricCard label={t("metrics.reports")} value={String(metrics?.reports_generated ?? 0)} helper={t("metrics.reportsHelp")} />
+              <MetricCard label={t("metrics.candidates")} value={String(metrics?.active_candidates ?? 0)} helper={t("metrics.candidatesHelp", { count: metrics?.candidates_added_7d ?? 0 })} />
+              <MetricCard label={t("metrics.companies")} value={String(metrics?.active_companies ?? 0)} helper={t("metrics.companiesHelp", { total: metrics?.total_companies ?? 0, count: metrics?.companies_added_7d ?? 0 })} />
+              <MetricCard label={t("metrics.reports")} value={String(metrics?.reports_generated ?? 0)} helper={t("metrics.reportsHelp", { count: metrics?.reports_generated_7d ?? 0 })} />
             </div>
+
+            <SectionCard title={t("ops.title")} subtitle={t("ops.subtitle")}>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                <CompactMetric label={t("ops.inProgress")} value={String(metrics?.interviews_in_progress ?? 0)} tone="ok" />
+                <CompactMetric label={t("ops.reportQueue")} value={String(metrics?.report_processing ?? 0)} tone={(metrics?.report_processing ?? 0) > 0 ? "warn" : "default"} />
+                <CompactMetric label={t("ops.failed")} value={String(metrics?.interviews_failed ?? 0)} tone={(metrics?.interviews_failed ?? 0) > 0 ? "warn" : "default"} />
+                <CompactMetric label={t("ops.completionRate")} value={`${metrics?.completion_rate_pct ?? 0}%`} />
+                <CompactMetric label={t("ops.avgScore")} value={metrics?.average_overall_score != null ? metrics.average_overall_score.toFixed(1) : "—"} />
+              </div>
+            </SectionCard>
+
+            <TrendChart
+              title={t("trends.title")}
+              subtitle={t("trends.subtitle")}
+              trends={overview.daily_trends}
+              locale={locale}
+              labels={{
+                interviews: t("trends.interviews"),
+                reports: t("trends.reports"),
+                candidates: t("trends.candidates"),
+                companies: t("trends.companies"),
+              }}
+            />
 
             <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
               <SectionCard title={t("runtime.title")} subtitle={t("runtime.subtitle")}>
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-3 sm:grid-cols-3">
                   <div className="rounded-2xl border border-slate-700 bg-slate-900/70 p-4">
                     <p className="text-xs uppercase tracking-[0.22em] text-slate-500">{t("runtime.environment")}</p>
                     <p className="mt-2 text-lg font-semibold text-white">{runtime?.app_env ?? "—"}</p>
-                  </div>
-                  <div className="rounded-2xl border border-slate-700 bg-slate-900/70 p-4">
-                    <p className="text-xs uppercase tracking-[0.22em] text-slate-500">{t("runtime.mockAi")}</p>
-                    <p className="mt-2 text-lg font-semibold text-white">
-                      {runtime?.mock_ai_enabled ? t("runtime.enabled") : t("runtime.disabled")}
-                    </p>
                   </div>
                   <div className="rounded-2xl border border-slate-700 bg-slate-900/70 p-4">
                     <p className="text-xs uppercase tracking-[0.22em] text-slate-500">{t("runtime.rateLimit")}</p>
