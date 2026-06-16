@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 
 
 class UserResponse(BaseModel):
@@ -26,3 +26,16 @@ class TokenResponse(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    account_type: str
+
+    @field_validator("account_type")
+    @classmethod
+    def normalize_account_type(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized in {"candidate", "company", "admin"}:
+            return normalized
+        if normalized in {"company_admin", "company_member"}:
+            return "company"
+        if normalized == "platform_admin":
+            return "admin"
+        raise ValueError("Unsupported login type")

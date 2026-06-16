@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, model_validator
 
@@ -38,6 +39,8 @@ class SkillTag(BaseModel):
     skill: str
     proficiency: str
     mentions_count: int = 1
+    status: Literal["confirmed", "mentioned", "development"] = "confirmed"
+    evidence: str | None = None
 
 
 class RedFlag(BaseModel):
@@ -61,6 +64,39 @@ class DevelopmentRoadmapPhase(BaseModel):
 
 class DevelopmentRoadmap(BaseModel):
     phases: list[DevelopmentRoadmapPhase] = []
+
+
+class CandidateReportView(BaseModel):
+    level_label: str | None = None
+    headline: str
+    human_summary: str | None = None
+    strengths: list[str] = []
+    growth_areas: list[str] = []
+    recommendations: list[str] = []
+    roadmap: DevelopmentRoadmap | None = None
+    confirmed_skills: list[SkillTag] = []
+    skills_to_develop: list[SkillTag] = []
+    mentioned_skills: list[SkillTag] = []
+
+
+class CompanyReportView(BaseModel):
+    hire_recommendation: str
+    score: float | None = None
+    key_risks: list[str] = []
+    evidence_items: list[str] = []
+    role_mismatch_notes: list[str] = []
+    competency_map: list[CompetencyScore] = []
+    per_question_analysis: list[QuestionAnalysis] = []
+
+
+class InternalDebugReportView(BaseModel):
+    signal_reliability: dict | None = None
+    ai_generation_probability: float | None = None
+    raw_flags: list[RedFlag] = []
+    evaluator_versions: dict = {}
+    prompt_version: str | None = None
+    parsed_answers: list[QuestionAnalysis] = []
+    confidence: dict = {}
 
 
 class InterviewSummaryModel(BaseModel):
@@ -370,6 +406,13 @@ class AssessmentReportResponse(BaseModel):
     practical_section: dict | None = None
     interview_quality_metrics: dict | None = None
     answer_quality_counters: dict | None = None
+    voice_section: dict | None = None
+    signal_reliability: dict | None = None
+    role_mismatch: dict | None = None
+    report_view: Literal["candidate", "company", "internal"] = "company"
+    candidate_report: CandidateReportView | None = None
+    company_report: CompanyReportView | None = None
+    internal_debug_report: InternalDebugReportView | None = None
 
     model_config = {"from_attributes": True}
 
@@ -408,6 +451,9 @@ class AssessmentReportResponse(BaseModel):
             _set_value(data, "practical_section", full_report_json.get("practical_section"))
             _set_value(data, "interview_quality_metrics", full_report_json.get("interview_quality_metrics"))
             _set_value(data, "answer_quality_counters", full_report_json.get("answer_quality_counters"))
+            _set_value(data, "voice_section", full_report_json.get("voice_section"))
+            _set_value(data, "signal_reliability", full_report_json.get("signal_reliability"))
+            _set_value(data, "role_mismatch", full_report_json.get("role_mismatch"))
 
             competency_scores = _get_value(data, "competency_scores")
             if isinstance(competency_scores, list) and isinstance(per_question_analysis, list):
@@ -1411,6 +1457,193 @@ class AssessmentReportResponse(BaseModel):
         )
         self.development_roadmap = _build_development_roadmap(self)
         return self
+
+
+def build_report_view(report: object, view: Literal["candidate", "company", "internal"]) -> AssessmentReportResponse:
+    response = AssessmentReportResponse.model_validate(report)
+    response.report_view = view
+    response.candidate_report = _build_candidate_report_view(response)
+    response.company_report = _build_company_report_view(response)
+    response.internal_debug_report = _build_internal_debug_report_view(response)
+    if view == "candidate":
+        return _sanitize_candidate_report_response(response)
+    if view == "company":
+        response.internal_debug_report = None
+        return response
+    return response
+
+
+def _clean_limited(items: list[str] | None, limit: int) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in items or []:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _friendly_headline(report: AssessmentReportResponse) -> str:
+    if isinstance(report.role_mismatch, dict) and report.role_mismatch.get("detected"):
+        return "Текущий опыт ближе к смежной роли — это можно развить в нужную сторону"
+    label = report.proficiency_label or report.proficiency_band
+    if label:
+        return f"Текущий ориентир по уровню: {label}"
+    if report.overall_score is None:
+        return "Отчёт готов: ниже собраны сильные стороны и следующие шаги"
+    if report.overall_score >= 7.5:
+        return "У тебя хорошо получилось показать релевантный опыт"
+    if report.overall_score >= 5.5:
+        return "Есть рабочая база, которую можно усилить практикой"
+    return "Отчёт показывает, какие темы стоит подтянуть в первую очередь"
+
+
+def _friendly_summary(text: str | None) -> str | None:
+    if not text:
+        return None
+    replacements = {
+        "insufficient signal": "пока недостаточно подтверждённых примеров",
+        "limited signal": "ограниченное количество подтверждённых примеров",
+        "evasive": "ответы были недостаточно конкретными",
+        "AI-generation probability": "технические диагностические признаки",
+        "red flags": "риски для роли",
+    }
+    result = text
+    for source, target in replacements.items():
+        result = result.replace(source, target)
+    return result
+
+
+def _split_skills(skill_tags: list[SkillTag] | None) -> tuple[list[SkillTag], list[SkillTag], list[SkillTag]]:
+    confirmed: list[SkillTag] = []
+    development: list[SkillTag] = []
+    mentioned: list[SkillTag] = []
+    for tag in skill_tags or []:
+        status = tag.status or "confirmed"
+        if status == "confirmed" and tag.evidence:
+            confirmed.append(tag)
+        elif status == "development":
+            development.append(tag)
+        else:
+            mentioned.append(tag.model_copy(update={"status": "mentioned"}))
+    return confirmed[:8], development[:8], mentioned[:8]
+
+
+def _build_candidate_report_view(report: AssessmentReportResponse) -> CandidateReportView:
+    confirmed, development, mentioned = _split_skills(report.skill_tags)
+    human_summary = _friendly_summary(report.interview_summary)
+    if isinstance(report.role_mismatch, dict) and report.role_mismatch.get("detected"):
+        soft_note = (
+            "Текущий опыт выглядит ближе к сопровождению и диагностике инцидентов, "
+            "чем к самостоятельной frontend-разработке. Следующий шаг — добрать "
+            "практику по JS/React/CSS на реальных UI-задачах."
+        )
+        human_summary = f"{soft_note} {human_summary or ''}".strip()
+    return CandidateReportView(
+        level_label=report.proficiency_label or report.proficiency_band,
+        headline=_friendly_headline(report),
+        human_summary=human_summary,
+        strengths=_clean_limited(report.strengths, 5),
+        growth_areas=_clean_limited(report.weaknesses, 5),
+        recommendations=_clean_limited(report.recommendations, 5),
+        roadmap=report.development_roadmap,
+        confirmed_skills=confirmed,
+        skills_to_develop=development,
+        mentioned_skills=mentioned,
+    )
+
+
+def _build_company_report_view(report: AssessmentReportResponse) -> CompanyReportView:
+    key_risks = [
+        *(flag.flag for flag in (report.red_flags or []) if flag.flag),
+        *(report.cheat_flags or []),
+    ]
+    evidence_items = [
+        item.evidence
+        for item in (report.competency_scores or [])
+        if str(item.evidence or "").strip()
+    ]
+    role_mismatch_notes = [
+        item
+        for item in [*(report.weaknesses or []), *key_risks]
+        if "role" in item.lower() or "роль" in item.lower() or "mismatch" in item.lower()
+    ]
+    if isinstance(report.role_mismatch, dict) and report.role_mismatch.get("detected"):
+        notes = report.role_mismatch.get("notes")
+        if isinstance(notes, list):
+            role_mismatch_notes.extend(str(item) for item in notes if str(item).strip())
+        mismatch_type = str(report.role_mismatch.get("mismatch_type") or "").strip()
+        if mismatch_type:
+            role_mismatch_notes.append(mismatch_type)
+    return CompanyReportView(
+        hire_recommendation=report.hiring_recommendation,
+        score=report.overall_score,
+        key_risks=_clean_limited(key_risks, 8),
+        evidence_items=_clean_limited(evidence_items, 10),
+        role_mismatch_notes=_clean_limited(role_mismatch_notes, 5),
+        competency_map=report.competency_scores or [],
+        per_question_analysis=report.per_question_analysis or [],
+    )
+
+
+def _build_internal_debug_report_view(report: AssessmentReportResponse) -> InternalDebugReportView:
+    ai_values = [
+        item.ai_likelihood
+        for item in (report.per_question_analysis or [])
+        if item.ai_likelihood is not None
+    ]
+    ai_probability = round(sum(ai_values) / len(ai_values), 3) if ai_values else None
+    return InternalDebugReportView(
+        signal_reliability=report.signal_reliability
+        or ((report.voice_section or {}).get("signal_reliability") if isinstance(report.voice_section, dict) else None)
+        or ((report.practical_section or {}).get("signal_reliability") if isinstance(report.practical_section, dict) else None)
+        or ((report.explainability_report or {}).get("signal_reliability") if isinstance(report.explainability_report, dict) else None),
+        ai_generation_probability=ai_probability,
+        raw_flags=report.red_flags or [],
+        evaluator_versions={
+            "model_version": report.model_version,
+            "decision_policy_version": report.decision_policy_version,
+        },
+        prompt_version=report.decision_policy_version,
+        parsed_answers=report.per_question_analysis or [],
+        confidence={
+            "overall_confidence": report.overall_confidence,
+            "confidence_verdict": report.confidence_verdict,
+            "confidence_reasons": report.confidence_reasons or [],
+            "evidence_coverage": report.evidence_coverage or {},
+        },
+    )
+
+
+def _sanitize_candidate_report_response(report: AssessmentReportResponse) -> AssessmentReportResponse:
+    report.red_flags = None
+    report.cheat_risk_score = None
+    report.cheat_flags = None
+    report.per_question_analysis = None
+    report.overall_confidence = None
+    report.confidence_verdict = None
+    report.competency_confidence = None
+    report.confidence_reasons = None
+    report.evidence_coverage = None
+    report.decision_policy_version = None
+    report.calibrated_scoring = None
+    report.explainability_report = None
+    report.interview_quality_metrics = None
+    report.answer_quality_counters = None
+    report.role_mismatch = None
+    report.company_report = None
+    report.internal_debug_report = None
+    if report.skill_tags:
+        confirmed, development, mentioned = _split_skills(report.skill_tags)
+        report.skill_tags = [*confirmed, *development, *mentioned]
+    return report
 
 
 def _build_development_roadmap(report: AssessmentReportResponse) -> DevelopmentRoadmap | None:

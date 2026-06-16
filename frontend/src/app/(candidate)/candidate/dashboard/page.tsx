@@ -7,6 +7,7 @@ import { Link } from "@/i18n/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { candidateApi } from "@/lib/api";
 import type { CandidateAccessRequest, CandidatePrivacy, ProfileVisibility } from "@/lib/types";
+import { CandidateShell } from "@/components/candidate-shell";
 
 type ActiveProfileVisibility = Exclude<ProfileVisibility, "private">;
 
@@ -26,7 +27,7 @@ interface Salary {
 export default function DashboardPage() {
   const t = useTranslations("candidateDashboard");
   const common = useTranslations("common");
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout } = useAuth({ allowedRoles: ["candidate"] });
   const [stats, setStats] = useState<Stats | null>(null);
   const [salary, setSalary] = useState<Salary>({ salary_min: null, salary_max: null, salary_currency: "USD" });
   const [salaryMin, setSalaryMin] = useState("");
@@ -142,16 +143,16 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-900 px-4 py-10">
+      <div className="min-h-screen bg-[#F4F5F7] px-4 py-10">
         <div className="max-w-4xl mx-auto space-y-4">
-          <div className="h-7 w-48 bg-slate-800 rounded animate-pulse" />
-          <div className="h-4 w-72 bg-slate-800 rounded animate-pulse" />
+          <div className="h-7 w-48 bg-slate-200 rounded animate-pulse" />
+          <div className="h-4 w-72 bg-slate-200 rounded animate-pulse" />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
             {[...Array(3)].map((_, i) => (
-              <div key={i} className="h-20 bg-slate-800 rounded-xl animate-pulse" />
+              <div key={i} className="h-20 bg-slate-200 rounded-xl animate-pulse" />
             ))}
           </div>
-          <div className="h-48 bg-slate-800 rounded-xl animate-pulse mt-4" />
+          <div className="h-48 bg-slate-200 rounded-xl animate-pulse mt-4" />
         </div>
       </div>
     );
@@ -189,209 +190,331 @@ export default function DashboardPage() {
     },
   };
 
+  const completedSteps = (step1Done ? 1 : 0) + (step2Done ? 1 : 0) + (step3Done ? 1 : 0);
+
   return (
-    <div className="ai-shell min-h-screen">
-      {/* Nav */}
-      <header className="ai-section border-b border-slate-800/80 bg-[rgba(5,12,24,0.72)] px-6 py-4 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-blue-400/20 bg-blue-500/10 text-sm font-semibold tracking-[0.16em] text-blue-200">
-              AR
+    <CandidateShell>
+      <div className="max-w-[960px] mx-auto py-6">
+        {/* Header and top badge row */}
+        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between mb-8">
+          <div>
+            <div className="text-xs uppercase tracking-widest text-[#9aa0ab] font-bold">
+              {t("workspaceKicker") || "Панель кандидата"}
             </div>
-            <div>
-              <div className="text-white font-semibold">{common("appName")}</div>
-              <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">{t("workspaceLabel")}</div>
-            </div>
+            <h1 className="text-[34px] font-bold font-manrope tracking-tight text-[#1A1C22] mt-1.5 leading-none">
+              {t("title") || "С возвращением"}, {user?.full_name?.split(" ")[0] || "Кандидат"}
+            </h1>
           </div>
-          <div className="flex items-center gap-4">
-            <LocaleSwitcher />
-            <span className="text-slate-400 text-sm">{user?.email}</span>
-            <Link href="/candidate/profile" className="text-slate-400 hover:text-white text-sm transition-colors">
-              {t("nav.profile")}
-            </Link>
-            <button onClick={logout} className="text-slate-400 hover:text-white text-sm transition-colors">
-              {common("actions.signOut")}
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="ai-section max-w-5xl mx-auto px-4 py-10">
-        <div className="mb-8 grid gap-6 lg:grid-cols-[1.15fr_0.85fr] lg:items-start">
-          <div className="ai-panel-strong rounded-[2rem] p-7">
-            <div className="ai-kicker mb-5">{t("workspaceKicker")}</div>
-            <h1 className="text-3xl font-semibold tracking-[-0.03em] text-white mb-2">{t("title")}</h1>
-            <p className="max-w-xl text-slate-400">{t("subtitle")}</p>
-          </div>
-          <div className="ai-panel rounded-[2rem] p-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-slate-500">{t("statusTitle")}</p>
-            <div className="mt-4 space-y-3">
-              <div className="flex items-center justify-between rounded-2xl border border-white/6 bg-white/[0.03] px-4 py-3">
-                <span className="text-sm text-slate-400">{t("profileState")}</span>
-                <span
-                  className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                    isProfileActive
-                      ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-300"
-                      : "border-slate-500/30 bg-slate-500/10 text-slate-300"
-                  }`}
-                >
-                  {isProfileActive ? t("active") : t("inactive")}
-                </span>
-              </div>
-              <div className="flex items-center justify-between rounded-2xl border border-white/6 bg-white/[0.03] px-4 py-3">
-                <span className="text-sm text-slate-400">{t("privacy.visibility")}</span>
-                <span className="text-sm font-medium text-white">{visibilityLabel}</span>
-              </div>
-            </div>
+          <div className="bg-white border border-[#E9EAEE] rounded-xl px-4 py-2.5 flex items-center gap-2.5 shadow-[0_1px_2px_rgba(20,22,30,0.04)]">
+            <span className={`w-2 h-2 rounded-full ${isProfileActive ? "bg-[#2F5BEA]" : "bg-slate-400"}`}></span>
+            <span className="text-sm font-semibold text-[#1A1C22]">
+              {isProfileActive ? "Профиль активен" : "Профиль неактивен"}
+            </span>
+            <span className="text-[#c7cad2]">·</span>
+            <span className="text-sm font-medium text-[#56596a]">
+              {visibilityLabel}
+            </span>
           </div>
         </div>
 
-        {/* Progress summary */}
-        {stats && (
-          <div className="grid grid-cols-1 gap-4 mb-8 md:grid-cols-3">
-            <StatBadge label={t("stats.resume")} done={step1Done} value={step1Done ? t("stats.uploaded") : t("stats.missing")} />
-            <StatBadge label={t("stats.interviews")} done={step2Done} value={t("stats.started", {count: stats.interview_count})} />
-            <StatBadge label={t("stats.reports")} done={step3Done} value={t("stats.completed", {count: stats.completed_count})} />
+        {/* Profile completion progress */}
+        <div className="candidate-card p-6 mb-4">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-[15px] text-[#1A1C22]">Готовность профиля</span>
+            <span className="font-manrope font-bold text-[15px] text-[#2F5BEA]">
+              {completedSteps} из 3 шагов
+            </span>
           </div>
-        )}
+          <div className="h-2 bg-[#EEF0F3] rounded-full overflow-hidden mt-3">
+            <div
+              className="h-full bg-[#2F5BEA] rounded-full transition-all duration-500"
+              style={{ width: `${(completedSteps / 3) * 100}%` }}
+            ></div>
+          </div>
+        </div>
 
-        {/* Salary Expectations */}
-        <div className="ai-panel rounded-[1.8rem] p-6 mb-6">
-          <h2 className="text-white font-semibold mb-4 text-sm uppercase tracking-[0.18em] text-slate-300">{t("salary.title")}</h2>
-          <div className="flex flex-wrap gap-3 items-end">
-            <div>
-              <label className="text-slate-400 text-xs mb-1 block">{t("salary.min")}</label>
-              <input
-                type="number"
-                placeholder="80000"
-                value={salaryMin}
-                onChange={(e) => setSalaryMin(e.target.value)}
-                className="ai-input w-36 rounded-xl px-3 py-2 text-sm"
-              />
+        {/* Adaptive banner */}
+        <div className="rounded-2xl border border-[#D6E0FD] bg-[linear-gradient(135deg,#FFFFFF_0%,#EEF2FF_62%,#EAF8FF_100%)] p-7 mb-6 flex flex-col md:flex-row md:items-center justify-between gap-6 relative overflow-hidden shadow-[0_18px_42px_rgba(47,91,234,0.10)]">
+          <div className="absolute bottom-[-60px] right-[-20px] w-[220px] h-[220px] rounded-full bg-gradient-to-tr from-[#2F5BEA]/15 to-transparent pointer-events-none"></div>
+          <div className="flex-1 min-w-[240px] relative z-1">
+            <div className="text-[11.5px] font-bold tracking-widest text-[#2F5BEA] uppercase">
+              {completedSteps === 0 ? "ШАГ 1" : completedSteps === 1 ? "СЛЕДУЮЩИЙ ШАГ" : "ГОТОВО"}
             </div>
-            <div>
-              <label className="text-slate-400 text-xs mb-1 block">{t("salary.max")}</label>
-              <input
-                type="number"
-                placeholder="120000"
-                value={salaryMax}
-                onChange={(e) => setSalaryMax(e.target.value)}
-                className="ai-input w-36 rounded-xl px-3 py-2 text-sm"
-              />
+            <h2 className="font-manrope font-bold text-2xl text-[#1A1C22] mt-2 mb-1.5">
+              {completedSteps === 0
+                ? "Загрузите ваше резюме"
+                : completedSteps === 1
+                ? "Пройдите ИИ-интервью"
+                : "Отчёт о навыках"}
+            </h2>
+            <p className="text-[14.5px] text-[#56596a] leading-relaxed max-w-[480px]">
+              {completedSteps === 0
+                ? "Для старта оценки и адаптивного подбора вопросов загрузите файл резюме."
+                : completedSteps === 1
+                ? "Резюме загружено. Пройдите ИИ-интервью под целевую роль, чтобы собрать отчёт."
+                : "Вы успешно завершили интервью. Ваш подтверждённый профиль и отчёты готовы к отправке работодателям."}
+            </p>
+          </div>
+          <Link
+            href={
+              completedSteps === 0
+                ? "/candidate/resume"
+                : completedSteps === 1
+                ? "/candidate/interview/start"
+                : "/candidate/reports"
+            }
+            className="relative z-1 candidate-btn-primary px-7 py-3.5 text-[15px] font-bold rounded-xl shadow-[0_8px_20px_rgba(47,91,234,0.4)] whitespace-nowrap"
+          >
+            {completedSteps === 0
+              ? "Загрузить резюме"
+              : completedSteps === 1
+              ? "Начать интервью →"
+              : "Посмотреть отчёты"}
+          </Link>
+        </div>
+
+        {/* Steps checklists */}
+        <div className="flex flex-col gap-3 mb-8">
+          <Link
+            href="/candidate/resume"
+            className="flex items-center gap-4 border rounded-2xl p-5 bg-white transition-all hover:border-slate-300 shadow-[0_1px_2px_rgba(20,22,30,0.04)]"
+          >
+            <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
+              step1Done
+                ? "bg-[#ECF0FE] text-[#2348C8] border border-[#D6E0FD]"
+                : "bg-[#2F5BEA]/10 text-[#2F5BEA] border border-[#2F5BEA]/20"
+            }`}>
+              {step1Done ? "✓" : "1"}
             </div>
+            <div className="flex-1">
+              <div className="font-bold text-[#1A1C22] text-[15.5px]">
+                {t("steps.uploadResume") || "Загрузить резюме"}
+              </div>
+              <div className="text-[#56596a] text-sm mt-0.5">
+                {step1Done ? "Резюме успешно загружено и проанализировано" : t("steps.uploadResumeDesc")}
+              </div>
+            </div>
+            <span className={`text-sm font-bold ${step1Done ? "text-[#2348C8]" : "text-[#2F5BEA]"}`}>
+              {step1Done ? "Готово" : "Начать →"}
+            </span>
+          </Link>
+
+          <Link
+            href={step1Done ? "/candidate/interview/start" : "#"}
+            className={`flex items-center gap-4 border rounded-2xl p-5 bg-white transition-all shadow-[0_1px_2px_rgba(20,22,30,0.04)] ${
+              !step1Done
+                ? "opacity-50 cursor-not-allowed pointer-events-none"
+                : "hover:border-slate-300"
+            }`}
+          >
+            <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
+              step2Done
+                ? "bg-[#ECF0FE] text-[#2348C8] border border-[#D6E0FD]"
+                : step1Done
+                ? "bg-[#2F5BEA]/10 text-[#2F5BEA] border border-[#2F5BEA]/20"
+                : "bg-slate-100 text-slate-400 border border-slate-200"
+            }`}>
+              {step2Done ? "✓" : "2"}
+            </div>
+            <div className="flex-1">
+              <div className="font-bold text-[#1A1C22] text-[15.5px]">
+                {t("steps.startInterview") || "Пройти ИИ-интервью"}
+              </div>
+              <div className="text-[#56596a] text-sm mt-0.5">
+                {step2Done
+                  ? `Успешно пройдено интервью: ${stats?.interview_count} раз(а)`
+                  : t("steps.startInterviewDesc")}
+              </div>
+            </div>
+            <span className={`text-sm font-bold ${step2Done ? "text-[#2348C8]" : step1Done ? "text-[#2F5BEA]" : "text-slate-400"}`}>
+              {step2Done ? "Пройдено" : step1Done ? "Сейчас" : "Заблокировано"}
+            </span>
+          </Link>
+
+          <Link
+            href={step2Done ? "/candidate/reports" : "#"}
+            className={`flex items-center gap-4 border rounded-2xl p-5 bg-white transition-all shadow-[0_1px_2px_rgba(20,22,30,0.04)] ${
+              !step2Done
+                ? "opacity-50 cursor-not-allowed pointer-events-none"
+                : "hover:border-slate-300"
+            }`}
+          >
+            <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
+              step3Done
+                ? "bg-[#ECF0FE] text-[#2348C8] border border-[#D6E0FD]"
+                : "bg-slate-100 text-slate-400 border border-slate-200"
+            }`}>
+              {step3Done ? "✓" : "3"}
+            </div>
+            <div className="flex-1">
+              <div className="font-bold text-[#1A1C22] text-[15.5px]">
+                {t("steps.viewReports") || "Получить отчёт по навыкам"}
+              </div>
+              <div className="text-[#56596a] text-sm mt-0.5">
+                {step3Done
+                  ? `Подготовлено отчетов по компетенциям: ${stats?.completed_count}`
+                  : t("steps.viewReportsDesc")}
+              </div>
+            </div>
+            <span className={`text-sm font-bold ${step3Done ? "text-[#2348C8]" : "text-slate-400"}`}>
+              {step3Done ? "Смотреть" : "Ожидает"}
+            </span>
+          </Link>
+        </div>
+
+        {/* Settings blocks */}
+        <h2 className="font-manrope font-bold text-xl text-[#1A1C22] mb-4">Настройки профиля</h2>
+        <div className="grid gap-6 md:grid-cols-2 mb-8">
+          {/* Salary Expectation card */}
+          <div className="candidate-card p-6 flex flex-col justify-between">
             <div>
-              <label className="text-slate-400 text-xs mb-1 block">{t("salary.currency")}</label>
-              <div className="relative">
-                <select
-                  value={salaryCurrency}
-                  onChange={(e) => setSalaryCurrency(e.target.value)}
-                  className="ai-select w-[136px] appearance-none rounded-xl px-3 py-2 pr-12 text-sm"
-                >
-                  {["USD", "EUR", "GBP", "RUB", "KZT"].map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-                <SelectChevron />
+              <h3 className="text-[16px] font-bold text-[#1A1C22] mb-1">{t("salary.title")}</h3>
+              <p className="text-xs text-[#56596a] mb-5">Укажите желаемый диапазон оплаты труда в удобной валюте.</p>
+              <div className="grid grid-cols-3 gap-3 items-end">
+                <div className="col-span-1">
+                  <label className="text-[#56596a] text-xs font-bold mb-1.5 block">{t("salary.min")}</label>
+                  <input
+                    type="number"
+                    placeholder="80000"
+                    value={salaryMin}
+                    onChange={(e) => setSalaryMin(e.target.value)}
+                    className="candidate-input w-full px-3 py-2.5 text-sm"
+                  />
+                </div>
+                <div className="col-span-1">
+                  <label className="text-[#56596a] text-xs font-bold mb-1.5 block">{t("salary.max")}</label>
+                  <input
+                    type="number"
+                    placeholder="120000"
+                    value={salaryMax}
+                    onChange={(e) => setSalaryMax(e.target.value)}
+                    className="candidate-input w-full px-3 py-2.5 text-sm"
+                  />
+                </div>
+                <div className="col-span-1">
+                  <label className="text-[#56596a] text-xs font-bold mb-1.5 block">{t("salary.currency")}</label>
+                  <div className="relative">
+                    <select
+                      value={salaryCurrency}
+                      onChange={(e) => setSalaryCurrency(e.target.value)}
+                      className="candidate-select w-full appearance-none px-3 py-2.5 pr-8 text-sm cursor-pointer"
+                    >
+                      {["USD", "EUR", "GBP", "RUB", "KZT"].map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                    <SelectChevron />
+                  </div>
+                </div>
               </div>
             </div>
             <button
               onClick={handleSaveSalary}
               disabled={savingSalary}
-              className="ai-button-primary rounded-xl px-4 py-2 text-sm text-white disabled:opacity-50"
+              className="mt-6 candidate-btn-primary w-full py-2.5 text-sm rounded-xl"
             >
               {salarySaved ? t("salary.saved") : savingSalary ? common("actions.saving") : common("actions.save")}
             </button>
           </div>
-        </div>
 
-        <div className="ai-panel rounded-[1.8rem] p-6 mb-6">
-          <h2 className="text-white font-semibold mb-4 text-sm uppercase tracking-[0.18em] text-slate-300">{t("privacy.title")}</h2>
-          <div className="flex flex-wrap gap-3 items-end">
-            <div className="min-w-[280px] max-w-md flex-1">
-              <label className="text-slate-400 text-xs mb-1 block">{t("privacy.profileStatus")}</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => handleProfileStatusChange(true)}
-                  className={`rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${
-                    isProfileActive
-                      ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                      : "border-slate-700 bg-slate-900/40 text-slate-400 hover:border-slate-600"
-                  }`}
-                >
-                  {t("privacy.profileActive")}
-                </button>
-                <button
-                  onClick={() => handleProfileStatusChange(false)}
-                  className={`rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${
-                    !isProfileActive
-                      ? "border-slate-500/40 bg-slate-500/15 text-slate-200"
-                      : "border-slate-700 bg-slate-900/40 text-slate-400 hover:border-slate-600"
-                  }`}
-                >
-                  {t("privacy.profileInactive")}
-                </button>
+          {/* Privacy Expectations Card */}
+          <div className="candidate-card p-6 flex flex-col justify-between">
+            <div>
+              <h3 className="text-[16px] font-bold text-[#1A1C22] mb-1">{t("privacy.title")}</h3>
+              <p className="text-xs text-[#56596a] mb-5">Управляйте видимостью ваших ИИ-отчетов для работодателей.</p>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[#56596a] text-xs font-bold mb-1.5 block">{t("privacy.profileStatus")}</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => handleProfileStatusChange(true)}
+                      className={`rounded-xl border py-2 text-xs font-bold transition-all ${
+                        isProfileActive
+                          ? "bg-[#ECF0FE] text-[#2348C8] border-[#D6E0FD]"
+                          : "bg-white text-slate-500 border-slate-200 hover:border-slate-400"
+                      }`}
+                    >
+                      {t("privacy.profileActive")}
+                    </button>
+                    <button
+                      onClick={() => handleProfileStatusChange(false)}
+                      className={`rounded-xl border py-2 text-xs font-bold transition-all ${
+                        !isProfileActive
+                          ? "bg-slate-100 text-[#1A1C22] border-slate-300"
+                          : "bg-white text-slate-500 border-slate-200 hover:border-slate-400"
+                      }`}
+                    >
+                      {t("privacy.profileInactive")}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[#56596a] text-xs font-bold mb-1.5 block">{t("privacy.visibility")}</label>
+                  <div className="relative">
+                    <select
+                      value={privacy.visibility}
+                      onChange={(e) => {
+                        const nextVisibility = e.target.value as ProfileVisibility;
+                        setPrivacy((current) => ({ ...current, visibility: nextVisibility }));
+                        if (nextVisibility !== "private") {
+                          setLastActiveVisibility(nextVisibility as ActiveProfileVisibility);
+                        }
+                      }}
+                      disabled={!isProfileActive}
+                      className="candidate-select w-full appearance-none px-4 py-2.5 pr-8 text-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <option value="marketplace">{t("privacy.marketplace")}</option>
+                      <option value="direct_link">{t("privacy.directLink")}</option>
+                      <option value="request_only">{t("privacy.requestOnly")}</option>
+                      <option value="private">{t("privacy.private")}</option>
+                    </select>
+                    <SelectChevron />
+                  </div>
+                  {!isProfileActive && (
+                    <p className="mt-1.5 text-[11px] text-slate-500">{t("privacy.inactiveHint")}</p>
+                  )}
+                </div>
               </div>
-            </div>
-            <div className="min-w-[280px] max-w-md flex-1">
-              <label className="text-slate-400 text-xs mb-1 block">{t("privacy.visibility")}</label>
-              <div className="relative">
-                <select
-                  value={privacy.visibility}
-                  onChange={(e) => {
-                    const nextVisibility = e.target.value as ProfileVisibility;
-                    setPrivacy((current) => ({ ...current, visibility: nextVisibility }));
-                    if (nextVisibility !== "private") {
-                      setLastActiveVisibility(nextVisibility as ActiveProfileVisibility);
-                    }
-                  }}
-                  disabled={!isProfileActive}
-                  className="ai-select w-full appearance-none rounded-xl px-4 py-2 pr-12 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <option value="marketplace">{t("privacy.marketplace")}</option>
-                  <option value="direct_link">{t("privacy.directLink")}</option>
-                  <option value="request_only">{t("privacy.requestOnly")}</option>
-                  <option value="private">{t("privacy.private")}</option>
-                </select>
-                <SelectChevron />
-              </div>
-              {!isProfileActive && (
-                <p className="mt-2 text-xs text-slate-500">{t("privacy.inactiveHint")}</p>
-              )}
             </div>
             <button
               onClick={handleSavePrivacy}
               disabled={savingPrivacy}
-              className="ai-button-primary rounded-xl px-4 py-2 text-sm text-white disabled:opacity-50"
+              className="mt-6 candidate-btn-primary w-full py-2.5 text-sm rounded-xl"
             >
               {privacySaved ? t("privacy.saved") : savingPrivacy ? common("actions.saving") : common("actions.save")}
             </button>
           </div>
-          <div className="mt-4 rounded-2xl border border-white/6 bg-slate-950/40 px-4 py-4">
-            <p className="text-white text-sm font-medium">{visibilityHelp[privacy.visibility].title}</p>
-            <p className="text-slate-400 text-sm mt-1">{visibilityHelp[privacy.visibility].body}</p>
-          </div>
+        </div>
+
+        {/* Detailed help block & links */}
+        <div className="candidate-card p-5 mb-6 bg-slate-50/50">
+          <p className="text-sm font-bold text-[#1A1C22]">{visibilityHelp[privacy.visibility].title}</p>
+          <p className="text-sm text-[#56596a] mt-1 leading-relaxed">{visibilityHelp[privacy.visibility].body}</p>
           {(privacy.visibility === "direct_link" || privacy.visibility === "request_only") && privacy.share_token && (
-            <div className="mt-4 rounded-2xl border border-blue-500/20 bg-blue-500/5 px-4 py-4">
-              <p className="text-blue-300 text-sm font-medium mb-1">
+            <div className="mt-4 border-t border-slate-100 pt-4">
+              <p className="text-xs font-bold text-[#2f5bea] uppercase tracking-wider">
                 {privacy.visibility === "direct_link" ? t("privacy.shareableLink") : t("privacy.requestLink")}
               </p>
-              <p className="text-slate-300 text-sm break-all">/candidate/share/{privacy.share_token}</p>
-              <p className="text-slate-400 text-sm mt-2">
+              <p className="text-sm font-semibold text-[#1A1C22] mt-1 break-all bg-slate-100 px-3 py-2 rounded-lg inline-block border border-slate-200">
+                {typeof window !== "undefined" ? window.location.origin : ""}/candidate/share/{privacy.share_token}
+              </p>
+              <p className="text-xs text-[#56596a] mt-2 leading-relaxed">
                 {privacy.visibility === "direct_link"
                   ? t("privacy.shareHelp.directLink")
                   : t("privacy.shareHelp.requestOnly")}
               </p>
-              <div className="mt-3 flex flex-wrap gap-3">
+              <div className="mt-3 flex gap-2">
                 <button
                   onClick={handleCopyShareLink}
-                  className="ai-button-primary rounded-xl px-3 py-2 text-sm text-white"
+                  className="candidate-btn-primary text-xs px-4 py-2 rounded-lg"
                 >
                   {copyState === "copied" ? common("status.copied") : copyState === "failed" ? common("status.copyFailed") : t("privacy.copyLink")}
                 </button>
                 <Link
                   href={`/candidate/share/${privacy.share_token}`}
                   target="_blank"
-                  className="ai-button-secondary rounded-xl px-3 py-2 text-sm"
+                  className="candidate-btn-secondary text-xs px-4 py-2 rounded-lg"
                 >
                   {t("privacy.openSharedProfile")}
                 </Link>
@@ -400,134 +523,65 @@ export default function DashboardPage() {
           )}
         </div>
 
-        <div className="ai-panel rounded-[1.8rem] p-6 mb-6">
-          <h2 className="text-white font-semibold mb-4 text-sm uppercase tracking-[0.18em] text-slate-300">{t("accessRequests.title")}</h2>
-          <p className="mb-4 max-w-3xl text-sm leading-6 text-slate-400">{t("accessRequests.description")}</p>
+        {/* Access Requests */}
+        <div className="candidate-card p-6">
+          <h3 className="text-[16px] font-bold text-[#1A1C22] mb-1">{t("accessRequests.title")}</h3>
+          <p className="text-xs text-[#56596a] mb-5">{t("accessRequests.description")}</p>
           {accessRequests.length === 0 ? (
-            <p className="text-slate-500 text-sm">{t("accessRequests.empty")}</p>
+            <p className="text-xs text-slate-400 italic py-2">{t("accessRequests.empty")}</p>
           ) : (
-            <div className="space-y-3">
+            <div className="divide-y divide-slate-100">
               {accessRequests.map((request) => (
-                <div key={request.request_id} className="rounded-2xl border border-white/6 bg-slate-950/40 px-4 py-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <p className="text-white text-sm font-medium">{request.company_name}</p>
-                      <p className="text-slate-400 text-xs mt-1">
-                        {t("accessRequests.requestedBy", {
-                          email: request.requested_by_email ?? t("accessRequests.companyMember"),
-                          date: new Date(request.updated_at).toLocaleString(),
-                        })}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`px-2.5 py-1 rounded-full text-xs border ${
-                        request.status === "approved"
-                          ? "bg-green-500/15 text-green-400 border-green-500/30"
-                          : request.status === "denied"
-                            ? "bg-red-500/15 text-red-400 border-red-500/30"
-                            : "bg-blue-500/15 text-blue-400 border-blue-500/30"
-                      }`}>
-                        {request.status === "approved"
-                          ? t("accessRequests.status.approved")
-                          : request.status === "denied"
-                            ? t("accessRequests.status.denied")
-                            : t("accessRequests.status.pending")}
-                      </span>
-                      {request.status === "pending" && (
-                        <>
-                          <button
-                            onClick={() => handleAccessRequestAction(request.request_id, "approve")}
-                            disabled={accessActionId === request.request_id}
-                            className="rounded-xl bg-green-600 px-3 py-2 text-xs text-white transition-colors hover:bg-green-500 disabled:opacity-50"
-                          >
-                            {t("accessRequests.approve")}
-                          </button>
-                          <button
-                            onClick={() => handleAccessRequestAction(request.request_id, "deny")}
-                            disabled={accessActionId === request.request_id}
-                            className="rounded-xl bg-slate-700 px-3 py-2 text-xs text-white transition-colors hover:bg-slate-600 disabled:opacity-50"
-                          >
-                            {t("accessRequests.deny")}
-                          </button>
-                        </>
-                      )}
-                    </div>
+                <div key={request.request_id} className="py-4 first:pt-0 last:pb-0 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-bold text-[#1a1c22]">{request.company_name}</p>
+                    <p className="text-xs text-[#56596a] mt-1">
+                      {t("accessRequests.requestedBy", {
+                        email: request.requested_by_email ?? t("accessRequests.companyMember"),
+                        date: new Date(request.updated_at).toLocaleString(),
+                      })}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${
+                      request.status === "approved"
+                        ? "bg-[#ECF0FE] text-[#2348C8] border-[#D6E0FD]"
+                        : request.status === "denied"
+                          ? "bg-red-50 text-red-600 border-red-100"
+                          : "bg-[#ECF0FE] text-[#2348C8] border-[#D6E0FD]"
+                    }`}>
+                      {request.status === "approved"
+                        ? t("accessRequests.status.approved")
+                        : request.status === "denied"
+                          ? t("accessRequests.status.denied")
+                          : t("accessRequests.status.pending")}
+                    </span>
+                    {request.status === "pending" && (
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => handleAccessRequestAction(request.request_id, "approve")}
+                          disabled={accessActionId === request.request_id}
+                          className="px-3 py-1.5 rounded-lg bg-[#2F5BEA] text-white text-xs font-bold hover:bg-[#2348C8] disabled:opacity-50"
+                        >
+                          {t("accessRequests.approve")}
+                        </button>
+                        <button
+                          onClick={() => handleAccessRequestAction(request.request_id, "deny")}
+                          disabled={accessActionId === request.request_id}
+                          className="px-3 py-1.5 rounded-lg bg-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-300 disabled:opacity-50"
+                        >
+                          {t("accessRequests.deny")}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
             </div>
           )}
         </div>
-
-        <div className="grid gap-4">
-          <StepCard
-            step={1}
-            href="/candidate/resume"
-            icon="CV"
-            label={t("steps.uploadResume")}
-            desc={t("steps.uploadResumeDesc")}
-            done={step1Done}
-          />
-          <StepCard
-            step={2}
-            href="/candidate/interview/start"
-            icon="AI"
-            label={t("steps.startInterview")}
-            desc={t("steps.startInterviewDesc")}
-            done={step2Done}
-            locked={!step1Done}
-          />
-          <StepCard
-            step={3}
-            href={stats?.latest_report_id ? `/candidate/reports/${stats.latest_report_id}` : "/candidate/reports"}
-            icon="REP"
-            label={t("steps.viewReports")}
-            desc={step3Done ? t("steps.reportsReady", {count: stats!.completed_count}) : t("steps.viewReportsDesc")}
-            done={step3Done}
-            locked={!step2Done}
-          />
-        </div>
-      </main>
-    </div>
-  );
-}
-
-function StatBadge({ label, done, value }: { label: string; done: boolean; value: string }) {
-  return (
-    <div className={`ai-stat rounded-[1.5rem] p-5 text-center ${done ? "border-green-500/20 bg-green-500/8" : ""}`}>
-      <div className={`text-[11px] font-medium uppercase tracking-[0.22em] mb-2 ${done ? "text-green-400" : "text-slate-500"}`}>{label}</div>
-      <div className={`text-sm font-semibold ${done ? "text-green-300" : "text-slate-300"}`}>{value}</div>
-    </div>
-  );
-}
-
-function StepCard({
-  step, href, icon, label, desc, done = false, locked = false,
-}: {
-  step: number; href: string; icon: string; label: string;
-  desc: string; done?: boolean; locked?: boolean;
-}) {
-  const base = "flex items-center gap-4 border rounded-[1.6rem] p-5 transition-all duration-200 group";
-  const style = locked
-    ? `${base} border-slate-800 bg-slate-950/60 opacity-50 cursor-not-allowed pointer-events-none`
-    : done
-    ? `${base} ai-panel border-green-500/20 bg-green-500/5 hover:bg-green-500/10`
-    : `${base} ai-panel hover:-translate-y-1 hover:border-slate-500`;
-
-  return (
-    <Link href={locked ? "#" : href} className={style}>
-      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 border ${
-        done ? "bg-green-500/20 border-green-500/40 text-green-400" : "bg-blue-500/10 border-blue-500/20 text-blue-400"
-      }`}>
-        {done ? "OK" : step}
       </div>
-      <span className="rounded-xl border border-white/6 bg-slate-950/50 px-2.5 py-1.5 text-xs font-semibold tracking-[0.18em] text-slate-300">{icon}</span>
-      <div className="flex-1">
-        <div className={`font-semibold transition-colors ${done ? "text-green-300" : "text-white group-hover:text-blue-400"}`}>{label}</div>
-        <div className="text-slate-400 text-sm">{desc}</div>
-      </div>
-      {!locked && <span className={`text-lg transition-colors ${done ? "text-green-500" : "text-slate-600 group-hover:text-blue-400"}`}>›</span>}
-    </Link>
+    </CandidateShell>
   );
 }
 

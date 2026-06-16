@@ -8,6 +8,7 @@ from app.services.interview_service import (
     _apply_v2_question_guardrails,
     _resume_deep_dive_can_advance,
     _resume_deep_dive_gate_opened,
+    _update_frontend_role_mismatch_state,
     _update_resume_evidence,
 )
 
@@ -142,6 +143,75 @@ def test_weak_answer_logs_gets_pressure_followup_and_no_scenario_advance():
     ).lower()
     assert "логи" in followup
     assert "id" in followup or "идентификатор" in followup
+
+
+def test_repeated_weak_answer_switches_topic_after_one_probe():
+    intent = classify_candidate_intent(
+        "посмотрю логи",
+        {"current_question": "Какие первые проверки сделаете?"},
+    )
+    policy = decide_interview_policy(
+        state={
+            "weak_answer_streak": 1,
+            "last_step_key": "frontend:react",
+            "current_step_key": "frontend:react",
+            "followups_on_current_competency": 1,
+        },
+        intent_result=intent,
+        answer_evaluation={"quality": "weak"},
+    )
+
+    assert policy["policy_action"] == "switch_topic"
+    assert policy["advance_scenario"] is True
+    assert policy["update_weak_answer_count"] is True
+
+
+def test_dont_know_acknowledges_gap_and_moves_on():
+    intent = classify_candidate_intent(
+        "не знаю, с React не работал",
+        {"current_question": "Как вы управляли состоянием в React?"},
+    )
+    policy = decide_interview_policy(
+        state={"weak_answer_streak": 0, "last_step_key": "frontend:react", "current_step_key": "frontend:react"},
+        intent_result=intent,
+        answer_evaluation={"quality": "weak"},
+    )
+
+    assert intent["intent"] == "dont_know"
+    assert policy["policy_action"] == "switch_topic"
+    assert policy["advance_scenario"] is True
+    assert policy["reason"] == "explicit_gap_acknowledged_switch_topic"
+
+
+def test_frontend_support_profile_triggers_role_mismatch_after_core_checks():
+    state = _update_frontend_role_mismatch_state(
+        previous=None,
+        role="frontend_engineer",
+        current_competency="UI Framework Mastery",
+        current_topic={"phase": "technical_case", "verification_target": "React"},
+        current_question="Как вы управляли состоянием в React?",
+        answer="Я руководил сопровождением мобильного банка, смотрел Grafana и логи.",
+        answer_class="generic",
+        answer_relevance="low",
+        resume_summary="Руководитель направления сопровождения мобильного приложения.",
+        transcript_summary=[],
+    )
+    state = _update_frontend_role_mismatch_state(
+        previous=state,
+        role="frontend_engineer",
+        current_competency="JavaScript/TypeScript Fundamentals",
+        current_topic={"phase": "technical_case", "verification_target": "JavaScript"},
+        current_question="Что будет с event loop при долгой синхронной задаче?",
+        answer="Не знаю, я этим не занимался.",
+        answer_class="no_experience_honest",
+        answer_relevance="low",
+        resume_summary="Руководитель направления сопровождения мобильного приложения.",
+        transcript_summary=["кандидат говорит про инциденты, Grafana и поддержку"],
+    )
+
+    assert state["detected"] is True
+    assert state["mismatch_type"] == "support_incident_vs_frontend"
+    assert state["frontend_weak_checks"] >= 2
 
 
 def test_pressure_followup_targets_missing_personal_action_result_and_forced_example():

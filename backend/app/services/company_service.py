@@ -1,4 +1,5 @@
 import logging
+import math
 import uuid
 from collections import defaultdict
 from datetime import datetime
@@ -33,6 +34,7 @@ from app.schemas.company import (
     AnalyticsTemplatePerformanceResponse,
     CandidateDetailResponse,
     CandidateListItemResponse,
+    CandidateListPageResponse,
     ReportWithRoleResponse,
 )
 from app.services.candidate_access_service import has_company_candidate_workspace_access
@@ -490,6 +492,52 @@ async def list_verified_candidates(
         hire_outcome=None,
         shortlist_id=None,
         sort=sort,
+    )
+
+
+async def list_verified_candidates_page(
+    db: AsyncSession,
+    company_id: uuid.UUID,
+    *,
+    q: str | None = None,
+    role: str | None = None,
+    skills: list[str] | None = None,
+    min_score: float | None = None,
+    recommendation: str | None = None,
+    salary_min: int | None = None,
+    salary_max: int | None = None,
+    hire_outcome: str | None = None,
+    shortlist_id: uuid.UUID | None = None,
+    sort: str = "score_desc",
+    page: int = 1,
+    page_size: int = 10,
+) -> CandidateListPageResponse:
+    items = await list_verified_candidates(
+        db,
+        company_id=company_id,
+        q=q,
+        role=role,
+        skills=skills,
+        min_score=min_score,
+        recommendation=recommendation,
+        salary_min=salary_min,
+        salary_max=salary_max,
+        hire_outcome=hire_outcome,
+        shortlist_id=shortlist_id,
+        sort=sort,
+    )
+    safe_page_size = min(max(page_size, 1), 50)
+    total = len(items)
+    total_pages = math.ceil(total / safe_page_size) if total else 0
+    safe_page = min(max(page, 1), total_pages) if total_pages else 1
+    start = (safe_page - 1) * safe_page_size
+
+    return CandidateListPageResponse(
+        items=items[start : start + safe_page_size],
+        total=total,
+        page=safe_page,
+        page_size=safe_page_size,
+        total_pages=total_pages,
     )
 
 

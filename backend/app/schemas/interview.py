@@ -102,6 +102,12 @@ class WrittenArtifactResponse(BaseModel):
 
 class SendMessageRequest(BaseModel):
     message: str
+    input_mode: Literal["voice", "text"] = "text"
+    transcript_confirmed: bool | None = None
+    transcript_quality: Literal["good", "low", "empty", "failed"] | None = None
+    audio_available: bool | None = None
+    audio_duration_ms: int | None = None
+    audio_size_bytes: int | None = None
 
     @field_validator("message")
     @classmethod
@@ -112,21 +118,32 @@ class SendMessageRequest(BaseModel):
 
 
 class PracticalTaskResponse(BaseModel):
-    """A mid-interview practical task opened in the frontend modal."""
-    task_id: str
-    task_type: str  # coding_task | sql_task | qa_test_case_task | debugging_task | product_case_task | business_case_task
+    """
+    A mid-interview practical task — sent to the frontend.
+
+    SECURITY CONTRACT:
+      - expected_solution must NEVER appear here (backend-only)
+      - evaluation_rubric must NEVER appear here (backend-only)
+      - starter_code is OK — it's the boilerplate the candidate edits FROM SCRATCH
+    """
+    task_id: str          # UUID for this submission (changes each trigger)
+    stable_id: str = ""   # stable bank ID used by the backend evaluator
+    task_type: str        # coding_task | sql_task | qa_test_case_task | debugging_task | system_design_task | product_case_task
     title: str
     instruction: str
-    language: str | None = None  # python | javascript | sql | text | other
-    starter_code: str | None = None
+    language: str | None = None     # python | javascript | sql | text | other
+    starter_code: str | None = None # shown as a readonly reference/boilerplate; answer starts EMPTY
     examples: list[dict] = []
     time_limit_minutes: int = 10
-    evaluation_criteria: list[str] = []
-    voice_intro: str | None = None  # what the AI says before opening the modal
+    evaluation_criteria: list[str] = []  # labels only, no scores
+    voice_intro: str | None = None  # what the AI speaks before opening the modal
+    task_index: int = 1             # 1-based position within this interview's plan
+    task_total: int = 1             # total tasks planned for this interview
 
 
 class PracticalSubmissionRequest(BaseModel):
     task_id: str
+    stable_id: str = ""             # stable bank ID for evaluator lookup
     task_type: str
     answer: str
     language: str | None = None
@@ -135,8 +152,19 @@ class PracticalSubmissionRequest(BaseModel):
     @field_validator("answer")
     @classmethod
     def answer_not_empty(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("answer cannot be empty")
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("Practical task answer cannot be empty")
+        # Reject trivially unchanged placeholder answers
+        _placeholder_phrases = {
+            "# implement here",
+            "# your code here",
+            "# write here",
+            "# add single event listener here using delegation",
+            "pass",
+        }
+        if stripped.lower() in _placeholder_phrases:
+            raise ValueError("Answer appears to be an unchanged placeholder — please write your solution")
         return v
 
 

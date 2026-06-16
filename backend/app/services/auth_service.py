@@ -21,6 +21,23 @@ class InvalidCredentialsError(Exception):
     pass
 
 
+class RoleMismatchError(Exception):
+    pass
+
+
+LOGIN_ROLE_MISMATCH_DETAIL = "Account does not match this login type"
+
+
+def login_account_type_allows_role(account_type: str, role: str) -> bool:
+    if account_type == "candidate":
+        return role == "candidate"
+    if account_type == "company":
+        return role in {"company_admin", "company_member"}
+    if account_type == "admin":
+        return role == "platform_admin"
+    return False
+
+
 async def ensure_platform_admin(
     db: AsyncSession,
     email: str | None = None,
@@ -112,13 +129,18 @@ async def login(
     db: AsyncSession,
     email: str,
     password: str,
+    account_type: str,
 ) -> TokenResponse:
-    await ensure_platform_admin(db, email=email)
+    email = email.lower().strip()
+    if account_type == "admin":
+        await ensure_platform_admin(db, email=email)
     user = await db.scalar(select(User).where(User.email == email))
     if not user or not verify_password(password, user.hashed_password):
         raise InvalidCredentialsError()
     if not user.is_active:
         raise InvalidCredentialsError()
+    if not login_account_type_allows_role(account_type, user.role):
+        raise RoleMismatchError()
 
     token = create_access_token(subject=str(user.id), role=user.role)
     return TokenResponse(access_token=token)

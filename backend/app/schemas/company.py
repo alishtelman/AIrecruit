@@ -146,6 +146,14 @@ class CandidateListItemResponse(BaseModel):
     red_flag_count: int = 0
 
 
+class CandidateListPageResponse(BaseModel):
+    items: list[CandidateListItemResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
 # ── Candidate detail (company view) ───────────────────────────────────────────
 
 class ReportWithRoleResponse(BaseModel):

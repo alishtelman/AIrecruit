@@ -79,19 +79,19 @@ export default function SharedCandidatePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <p className="text-slate-400">{t("loading")}</p>
+      <div className="flex min-h-screen items-center justify-center bg-[#F4F5F7]">
+        <p className="font-semibold text-[#56596a]">{t("loading")}</p>
       </div>
     );
   }
 
   if (error || !profile) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
-        <div className="max-w-lg rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center">
-          <p className="text-red-300 font-semibold mb-2">{t("errors.unavailable")}</p>
-          <p className="text-slate-400 text-sm">{error ?? t("errors.noLongerAvailable")}</p>
-          <Link href="/" className="inline-block mt-6 text-blue-400 hover:text-blue-300 text-sm">
+      <div className="flex min-h-screen items-center justify-center bg-[#F4F5F7] px-4">
+        <div className="max-w-lg rounded-3xl border border-[#E9EAEE] bg-white p-8 text-center shadow-[0_20px_50px_rgba(20,22,30,0.06)]">
+          <p className="mb-2 font-bold text-red-700">{t("errors.unavailable")}</p>
+          <p className="text-sm text-[#56596a]">{error ?? t("errors.noLongerAvailable")}</p>
+          <Link href="/" className="mt-6 inline-block text-sm font-bold text-[#2F5BEA] hover:underline">
             {t("errors.returnHome")}
           </Link>
         </div>
@@ -100,36 +100,41 @@ export default function SharedCandidatePage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
-      <div className="max-w-5xl mx-auto px-4 py-12">
-        <div className="rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-blue-950/40 p-8 mb-8">
-          <p className="text-blue-300 text-sm uppercase tracking-[0.2em] mb-3">{t("kicker")}</p>
-          <h1 className="text-4xl font-bold mb-3">{profile.full_name}</h1>
-          <p className="text-slate-300 max-w-2xl">
+    <div className="min-h-screen bg-[#F4F5F7] text-[#1A1C22]">
+      <div className="mx-auto max-w-5xl px-4 py-12">
+        <Link href="/" className="mb-6 inline-flex items-center gap-3 text-sm font-bold text-[#56596a] hover:text-[#1A1C22]">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#14161B] font-manrope text-xs tracking-[0.16em] text-[#7E9BFF]">AR</span>
+          AI Recruit
+        </Link>
+
+        <div className="mb-8 overflow-hidden rounded-[2rem] border border-[#D6E0FD] bg-[linear-gradient(135deg,#FFFFFF_0%,#EEF2FF_62%,#EAF8FF_100%)] p-8 shadow-[0_24px_60px_rgba(47,91,234,0.12)]">
+          <p className="mb-3 text-sm font-bold uppercase tracking-[0.2em] text-[#2F5BEA]">{t("kicker")}</p>
+          <h1 className="mb-3 font-manrope text-4xl font-bold tracking-tight text-[#1A1C22]">{profile.full_name}</h1>
+          <p className="max-w-2xl text-[#56596a]">
             {profile.requires_approval
               ? t("requestOnlyDescription")
               : t("publicDescription")}
           </p>
-          <div className="mt-6 inline-flex items-center rounded-full border border-slate-700 bg-slate-900/80 px-4 py-2 text-sm text-slate-300">
+          <div className="mt-6 inline-flex items-center rounded-full border border-[#D6E0FD] bg-white/70 px-4 py-2 text-sm font-semibold text-[#2348C8]">
             {t("salaryExpectation")}: {formatSalary(profile, t("notShared"))}
           </div>
         </div>
 
         {profile.requires_approval && (
-          <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-6 mb-6">
-            <p className="text-blue-300 font-medium mb-2">{t("requestOnlyTitle")}</p>
-            <p className="text-slate-300 text-sm">{t("requestOnlyHelp")}</p>
+          <div className="mb-6 rounded-3xl border border-[#D6E0FD] bg-white p-6 shadow-[0_12px_30px_rgba(20,22,30,0.04)]">
+            <p className="mb-2 font-bold text-[#2348C8]">{t("requestOnlyTitle")}</p>
+            <p className="text-sm leading-6 text-[#56596a]">{t("requestOnlyHelp")}</p>
             {(viewer?.role === "company_admin" || viewer?.role === "company_member") ? (
               <div className="mt-4 flex flex-wrap items-center gap-3">
                 {accessStatus?.request_status === "approved" ? (
                   <>
-                    <span className="px-3 py-1 rounded-full text-xs border bg-green-500/15 text-green-400 border-green-500/30">
+                    <span className="rounded-full border border-[#D6E0FD] bg-[#ECF0FE] px-3 py-1 text-xs font-bold text-[#2348C8]">
                       {t("access.approved")}
                     </span>
                     {accessStatus.can_open_company_workspace && (
                       <Link
                         href={`/company/candidates/${profile.candidate_id}`}
-                        className="px-3 py-2 bg-green-600 hover:bg-green-500 text-white text-sm rounded-lg transition-colors"
+                        className="candidate-btn-primary rounded-xl px-4 py-2 text-sm font-bold"
                       >
                         {t("access.openWorkspace")}
                       </Link>
@@ -139,10 +144,10 @@ export default function SharedCandidatePage() {
                   <>
                     <span className={`px-3 py-1 rounded-full text-xs border ${
                       accessStatus?.request_status === "pending"
-                        ? "bg-blue-500/15 text-blue-400 border-blue-500/30"
+                        ? "bg-[#ECF0FE] text-[#2348C8] border-[#D6E0FD]"
                         : accessStatus?.request_status === "denied"
-                          ? "bg-red-500/15 text-red-400 border-red-500/30"
-                          : "bg-slate-700 text-slate-300 border-slate-600"
+                          ? "bg-red-50 text-red-700 border-red-200"
+                          : "bg-slate-50 text-[#56596a] border-slate-200"
                     }`}>
                       {accessStatus?.request_status === "pending"
                         ? t("access.pending")
@@ -153,7 +158,7 @@ export default function SharedCandidatePage() {
                     <button
                       onClick={handleRequestAccess}
                       disabled={requestingAccess || accessStatus?.request_status === "pending"}
-                      className="px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+                      className="candidate-btn-primary rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
                     >
                       {requestingAccess ? t("access.requesting") : accessStatus?.request_status === "denied" ? t("access.requestAgain") : t("access.request")}
                     </button>
@@ -161,15 +166,15 @@ export default function SharedCandidatePage() {
                 )}
               </div>
             ) : (
-              <p className="text-slate-400 text-sm mt-4">{t("access.signInHint")}</p>
+              <p className="mt-4 text-sm text-[#56596a]">{t("access.signInHint")}</p>
             )}
           </div>
         )}
 
         <div className="space-y-5">
           {profile.reports.length === 0 ? (
-            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-              <p className="text-slate-400">
+            <div className="rounded-3xl border border-[#E9EAEE] bg-white p-6 shadow-[0_12px_30px_rgba(20,22,30,0.04)]">
+              <p className="text-[#56596a]">
                 {profile.requires_approval
                   ? t("reports.hidden")
                   : t("reports.empty")}
@@ -177,25 +182,25 @@ export default function SharedCandidatePage() {
             </div>
           ) : (
             profile.reports.map((report) => (
-              <div key={report.report_id} className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+              <div key={report.report_id} className="rounded-3xl border border-[#E9EAEE] bg-white p-6 shadow-[0_12px_30px_rgba(20,22,30,0.04)]">
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div>
-                    <p className="text-sm text-blue-300 mb-1">{startT(`roles.${report.target_role}.label`)}</p>
-                    <h2 className="text-2xl font-semibold">{report.overall_score != null ? `${report.overall_score.toFixed(1)}/10 ${t("reports.overall")}` : reportT("title")}</h2>
-                    <p className="text-slate-400 text-sm mt-2">{report.interview_summary ?? t("reports.noSummary")}</p>
+                    <p className="mb-1 text-sm font-bold text-[#2F5BEA]">{startT(`roles.${report.target_role}.label`)}</p>
+                    <h2 className="font-manrope text-2xl font-bold text-[#1A1C22]">{report.overall_score != null ? `${report.overall_score.toFixed(1)}/10 ${t("reports.overall")}` : reportT("title")}</h2>
+                    <p className="mt-2 text-sm leading-6 text-[#56596a]">{report.interview_summary ?? t("reports.noSummary")}</p>
                   </div>
-                  <div className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 min-w-[180px]">
-                    <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">{reportT("recommendation")}</p>
-                    <p className="text-white font-medium">{reportT(`labels.${report.hiring_recommendation === "strong_yes" ? "strongYes" : report.hiring_recommendation}`)}</p>
+                  <div className="min-w-[180px] rounded-2xl border border-[#E9EAEE] bg-[#FAFBFC] px-4 py-3">
+                    <p className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-400">{reportT("recommendation")}</p>
+                    <p className="font-bold text-[#1A1C22]">{reportT(`labels.${report.hiring_recommendation === "strong_yes" ? "strongYes" : report.hiring_recommendation}`)}</p>
                   </div>
                 </div>
 
                 {report.skill_tags && report.skill_tags.length > 0 && (
                   <div className="mt-5">
-                    <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">{t("reports.keySkills")}</p>
+                    <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">{t("reports.keySkills")}</p>
                     <div className="flex flex-wrap gap-2">
                       {report.skill_tags.slice(0, 8).map((tag) => (
-                        <span key={`${report.report_id}-${tag.skill}`} className="rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1 text-sm text-blue-200">
+                        <span key={`${report.report_id}-${tag.skill}`} className="rounded-full border border-[#D6E0FD] bg-[#ECF0FE] px-3 py-1 text-sm font-semibold text-[#2348C8]">
                           {tag.skill}
                         </span>
                       ))}
@@ -205,14 +210,14 @@ export default function SharedCandidatePage() {
 
                 <div className="grid gap-4 md:grid-cols-2 mt-5">
                   <div>
-                    <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">{reportT("strengths")}</p>
-                    <ul className="space-y-2 text-sm text-slate-300">
+                    <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">{reportT("strengths")}</p>
+                    <ul className="space-y-2 text-sm text-[#56596a]">
                       {report.strengths.length === 0 ? <li>{t("reports.noStrengths")}</li> : report.strengths.map((item) => <li key={item}>• {item}</li>)}
                     </ul>
                   </div>
                   <div>
-                    <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">{reportT("recommendations")}</p>
-                    <ul className="space-y-2 text-sm text-slate-300">
+                    <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">{reportT("recommendations")}</p>
+                    <ul className="space-y-2 text-sm text-[#56596a]">
                       {report.recommendations.length === 0 ? <li>{t("reports.noRecommendations")}</li> : report.recommendations.map((item) => <li key={item}>• {item}</li>)}
                     </ul>
                   </div>

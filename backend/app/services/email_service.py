@@ -12,9 +12,18 @@ logger = logging.getLogger(__name__)
 RESEND_URL = "https://api.resend.com/emails"
 
 
+def _mask_email(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if "@" not in normalized:
+        return "<invalid>"
+    local, domain = normalized.split("@", 1)
+    visible = local[:2] if len(local) > 2 else local[:1]
+    return f"{visible}***@{domain}"
+
+
 async def _send(to: str, subject: str, html: str) -> None:
     if not settings.RESEND_API_KEY:
-        logger.debug("RESEND_API_KEY not set — skipping email to %s", to)
+        logger.debug("RESEND_API_KEY not set — skipping email to %s", _mask_email(to))
         return
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -29,9 +38,9 @@ async def _send(to: str, subject: str, html: str) -> None:
                 },
             )
             if resp.status_code >= 400:
-                logger.warning("Resend error %s: %s", resp.status_code, resp.text)
+                logger.warning("Resend error %s", resp.status_code)
     except Exception as exc:
-        logger.warning("Failed to send email to %s: %s", to, exc)
+        logger.warning("Failed to send email to %s: %s", _mask_email(to), exc)
 
 
 # ── Templates ─────────────────────────────────────────────────────────────────

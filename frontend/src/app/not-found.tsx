@@ -4,21 +4,21 @@ import { getTranslations } from "next-intl/server";
 export default async function NotFound() {
   const t = await getTranslations("systemPages.notFound");
   return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center px-4">
-      <div className="text-center">
-        <div className="text-6xl font-bold text-slate-700 mb-4">404</div>
-        <h1 className="text-2xl font-bold text-white mb-2">{t("title")}</h1>
-        <p className="text-slate-400 mb-8">{t("description")}</p>
+    <div className="flex min-h-screen items-center justify-center bg-[#F4F5F7] px-4">
+      <div className="w-full max-w-lg rounded-[2rem] border border-[#E9EAEE] bg-white p-8 text-center shadow-[0_24px_70px_rgba(20,22,30,0.08)]">
+        <div className="mb-4 font-manrope text-6xl font-bold text-[#D6E0FD]">404</div>
+        <h1 className="mb-2 font-manrope text-2xl font-bold text-[#1A1C22]">{t("title")}</h1>
+        <p className="mb-8 text-[#56596a]">{t("description")}</p>
         <div className="flex gap-3 justify-center">
           <Link
             href="/candidate/dashboard"
-            className="bg-blue-600 hover:bg-blue-500 text-white font-semibold px-5 py-2.5 rounded-lg transition-colors"
+            className="candidate-btn-primary rounded-xl px-5 py-2.5 font-bold"
           >
             {t("candidate")}
           </Link>
           <Link
             href="/company/dashboard"
-            className="bg-slate-700 hover:bg-slate-600 text-white font-semibold px-5 py-2.5 rounded-lg transition-colors"
+            className="candidate-btn-secondary rounded-xl px-5 py-2.5 font-bold"
           >
             {t("company")}
           </Link>

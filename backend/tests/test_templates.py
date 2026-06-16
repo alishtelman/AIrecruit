@@ -131,7 +131,7 @@ async def test_delete_other_company_template(
         "email": email2, "password": "testpass123", "company_name": "Other Corp",
     })
     resp2 = await client.post("/api/v1/auth/login", json={
-        "email": email2, "password": "testpass123",
+        "email": email2, "password": "testpass123", "account_type": "company",
     })
     other_token = resp2.json()["access_token"]
 

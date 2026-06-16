@@ -19,6 +19,8 @@ from app.schemas.user import LoginRequest, TokenResponse, UserResponse
 from app.services.auth_service import (
     EmailAlreadyExistsError,
     InvalidCredentialsError,
+    LOGIN_ROLE_MISMATCH_DETAIL,
+    RoleMismatchError,
     login,
     register_candidate,
     register_company,
@@ -30,6 +32,17 @@ from app.services.platform_settings_service import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 audit_logger = logging.getLogger("security.audit")
+
+
+def _mask_email(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if "@" not in normalized:
+        return "<invalid>"
+    local, domain = normalized.split("@", 1)
+    if not local or not domain:
+        return "<invalid>"
+    visible = local[:2] if len(local) > 2 else local[:1]
+    return f"{visible}***@{domain}"
 
 
 def _set_auth_cookie(response: Response, access_token: str) -> None:
@@ -148,7 +161,7 @@ async def user_login(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        token_response = await login(db, body.email, body.password)
+        token_response = await login(db, body.email, body.password, account_type=body.account_type)
         _set_auth_cookie(response, token_response.access_token)
         return token_response
     except InvalidCredentialsError:
@@ -156,11 +169,23 @@ async def user_login(
         audit_logger.warning(
             "login_failed ip=%s email=%s",
             client_ip,
-            body.email,
+            _mask_email(body.email),
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
+        )
+    except RoleMismatchError:
+        client_ip = request.client.host if request.client else "unknown"
+        audit_logger.warning(
+            "login_failed ip=%s email=%s reason=role_mismatch account_type=%s",
+            client_ip,
+            _mask_email(body.email),
+            body.account_type,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=LOGIN_ROLE_MISMATCH_DETAIL,
         )
 
 

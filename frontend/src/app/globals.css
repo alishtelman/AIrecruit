@@ -169,3 +169,469 @@ body {
     backdrop-filter: blur(16px);
   }
 }
+
+/* Candidate Redesign - Light Theme and Styles */
+.candidate-shell-light {
+  background-color: #F4F5F7;
+  color: #1A1C22;
+  font-family: var(--font-hanken-grotesk), system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+.candidate-sidebar {
+  background-color: #14161B;
+  color: #E7E9EE;
+  font-family: var(--font-hanken-grotesk), system-ui, sans-serif;
+}
+
+.candidate-card {
+  background: #ffffff;
+  border: 1px solid #E9EAEE;
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(20, 22, 30, 0.04);
+}
+
+.candidate-btn-primary {
+  background-color: #2F5BEA;
+  color: #ffffff;
+  border: none;
+  font-weight: 600;
+  transition: background-color 150ms ease;
+}
+
+.candidate-btn-primary:hover {
+  background-color: #2348C8;
+}
+
+.candidate-btn-secondary {
+  background-color: #ffffff;
+  color: #1A1C22;
+  border: 1px solid #E0E1E6;
+  font-weight: 600;
+  transition: border-color 150ms ease;
+}
+
+.candidate-btn-secondary:hover {
+  border-color: #14161B;
+}
+
+.candidate-badge-success {
+  background-color: #E7F6EC;
+  color: #16A34A;
+  border: 1px solid rgba(22, 163, 74, 0.15);
+}
+
+.candidate-badge-info {
+  background-color: #ECF0FE;
+  color: #2348C8;
+  border: 1px solid #D6E0FD;
+}
+
+.candidate-badge-neutral {
+  background-color: #F7F8FA;
+  border: 1px solid #ECEDF0;
+  color: #696d78;
+}
+
+.candidate-input, .candidate-select {
+  border: 1px solid #E0E1E6;
+  border-radius: 10px;
+  background-color: #FAFBFC;
+  color: #1A1C22;
+  transition: border-color 150ms ease;
+}
+
+.candidate-input:focus, .candidate-select:focus {
+  outline: none;
+  border-color: #2F5BEA;
+}
+
+/* Workspace redesign bridge: keeps existing company/admin markup but moves content to the new light SaaS system. */
+.ai-shell {
+  background:
+    radial-gradient(circle at 12% 8%, rgba(47, 91, 234, 0.09), transparent 26%),
+    radial-gradient(circle at 88% 12%, rgba(6, 182, 212, 0.08), transparent 24%),
+    linear-gradient(180deg, #F8FAFC 0%, #F4F5F7 100%) !important;
+  color: #1A1C22;
+}
+
+.ai-shell::before {
+  opacity: 0.35;
+  background:
+    linear-gradient(rgba(47, 91, 234, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(47, 91, 234, 0.045) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+.ai-panel,
+.ai-panel-strong,
+.ai-stat {
+  border-color: #E9EAEE !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  color: #1A1C22;
+  box-shadow: 0 14px 36px rgba(20, 22, 30, 0.06) !important;
+}
+
+.ai-shell .text-white,
+.ai-panel .text-white,
+.ai-panel-strong .text-white,
+.ai-stat .text-white {
+  color: #1A1C22 !important;
+}
+
+.ai-shell .text-slate-100,
+.ai-shell .text-slate-200,
+.ai-shell .text-slate-300 {
+  color: #1A1C22 !important;
+}
+
+.ai-shell .text-slate-400,
+.ai-shell .text-slate-500,
+.ai-shell .text-slate-600 {
+  color: #56596a !important;
+}
+
+.ai-shell .text-cyan-300,
+.ai-shell .text-cyan-400,
+.ai-shell .text-blue-300,
+.ai-shell .text-blue-400,
+.ai-shell .text-emerald-100,
+.ai-shell .text-emerald-200,
+.ai-shell .text-emerald-300,
+.ai-shell .text-emerald-400,
+.ai-shell .text-green-300,
+.ai-shell .text-green-400,
+.ai-shell .text-green-500,
+.ai-shell .text-purple-300,
+.ai-shell .text-purple-400 {
+  color: #2348C8 !important;
+}
+
+.ai-shell .border-slate-700,
+.ai-shell .border-slate-800,
+.ai-shell .border-slate-900,
+.ai-shell .border-slate-950,
+.ai-shell .border-white\/8,
+.ai-shell .border-white\/10,
+.ai-shell .border-white\/6 {
+  border-color: #E0E1E6 !important;
+}
+
+.ai-shell .border-blue-500\/30,
+.ai-shell .border-blue-500\/20,
+.ai-shell .border-cyan-400\/20,
+.ai-shell .border-cyan-500\/15,
+.ai-shell .border-emerald-400\/20,
+.ai-shell .border-emerald-500\/30,
+.ai-shell .border-emerald-500\/25,
+.ai-shell .border-emerald-500\/20,
+.ai-shell .border-green-500\/50,
+.ai-shell .border-green-500\/30,
+.ai-shell .border-green-500\/20,
+.ai-shell .border-purple-500\/20,
+.ai-shell .border-sky-400\/30,
+.ai-shell .border-sky-400\/20,
+.ai-shell .border-sky-500\/15,
+.ai-shell .border-violet-500\/15 {
+  border-color: #D6E0FD !important;
+}
+
+.ai-shell .bg-slate-950\/25,
+.ai-shell .bg-slate-950\/35,
+.ai-shell .bg-slate-950\/40,
+.ai-shell .bg-slate-950\/60,
+.ai-shell .bg-slate-950\/70,
+.ai-shell .bg-slate-950,
+.ai-shell .bg-slate-900,
+.ai-shell .bg-slate-900\/50,
+.ai-shell .bg-slate-900\/60,
+.ai-shell .bg-slate-900\/70,
+.ai-shell .bg-slate-900\/80,
+.ai-shell .bg-slate-800 {
+  background-color: #FAFBFC !important;
+}
+
+.ai-shell .bg-blue-500\/20,
+.ai-shell .bg-blue-500\/15,
+.ai-shell .bg-blue-500\/10,
+.ai-shell .bg-blue-500\/5,
+.ai-shell .bg-cyan-500\/10,
+.ai-shell .bg-emerald-950\/40,
+.ai-shell .bg-emerald-500\/20,
+.ai-shell .bg-emerald-500\/15,
+.ai-shell .bg-emerald-500\/10,
+.ai-shell .bg-emerald-500\/5,
+.ai-shell .bg-green-500\/30,
+.ai-shell .bg-green-500\/20,
+.ai-shell .bg-green-500\/15,
+.ai-shell .bg-green-500\/10,
+.ai-shell .bg-green-500\/5,
+.ai-shell .bg-purple-500\/10,
+.ai-shell .bg-sky-950\/40,
+.ai-shell .bg-violet-500\/10 {
+  background-color: #ECF0FE !important;
+}
+
+.ai-shell .bg-emerald-600,
+.ai-shell .bg-emerald-500,
+.ai-shell .bg-green-500,
+.ai-shell button.bg-emerald-600,
+.ai-shell button.bg-emerald-500 {
+  background-color: #2F5BEA !important;
+  color: #ffffff !important;
+}
+
+.ai-shell .hover\:bg-emerald-500:hover,
+.ai-shell .hover\:bg-emerald-500\/25:hover,
+.ai-shell .hover\:bg-green-500\/30:hover {
+  background-color: #2348C8 !important;
+  color: #ffffff !important;
+}
+
+.ai-input,
+.ai-select,
+.ai-shell input,
+.ai-shell textarea,
+.ai-shell select {
+  border-color: #E0E1E6 !important;
+  background: #FAFBFC !important;
+  color: #1A1C22 !important;
+}
+
+.ai-input:focus,
+.ai-select:focus,
+.ai-shell input:focus,
+.ai-shell textarea:focus,
+.ai-shell select:focus {
+  border-color: #2F5BEA !important;
+  box-shadow: 0 0 0 3px rgba(47, 91, 234, 0.12) !important;
+}
+
+.ai-kicker {
+  border-color: rgba(47, 91, 234, 0.2) !important;
+  background: #EEF2FF !important;
+  color: #2F5BEA !important;
+}
+
+/* Employee invite page light bridge: keeps the complex assessment logic intact while matching the SaaS visual language. */
+.employee-invite-light {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(47, 91, 234, 0.09), transparent 26%),
+    radial-gradient(circle at 88% 12%, rgba(6, 182, 212, 0.08), transparent 24%),
+    linear-gradient(180deg, #F8FAFC 0%, #F4F5F7 100%);
+  color: #1A1C22;
+}
+
+.employee-invite-light .bg-slate-950,
+.employee-invite-light .bg-slate-950\/80,
+.employee-invite-light .bg-slate-950\/70,
+.employee-invite-light .bg-slate-950\/60,
+.employee-invite-light .bg-slate-900,
+.employee-invite-light .bg-slate-900\/60,
+.employee-invite-light .bg-slate-900\/50,
+.employee-invite-light .bg-slate-900\/40 {
+  background-color: #ffffff !important;
+}
+
+.employee-invite-light .border-slate-800,
+.employee-invite-light .border-slate-700 {
+  border-color: #E9EAEE !important;
+}
+
+.employee-invite-light .text-white,
+.employee-invite-light .text-slate-200,
+.employee-invite-light .text-slate-300 {
+  color: #1A1C22 !important;
+}
+
+.employee-invite-light .text-slate-400,
+.employee-invite-light .text-slate-500 {
+  color: #56596a !important;
+}
+
+.employee-invite-light .text-emerald-200,
+.employee-invite-light .text-emerald-300,
+.employee-invite-light .text-emerald-400 {
+  color: #2348C8 !important;
+}
+
+.employee-invite-light .bg-emerald-500,
+.employee-invite-light .bg-emerald-500\/15,
+.employee-invite-light .bg-emerald-500\/10 {
+  background-color: #ECF0FE !important;
+}
+
+.employee-invite-light .border-emerald-500\/30,
+.employee-invite-light .border-emerald-500\/20,
+.employee-invite-light .border-emerald-400\/50 {
+  border-color: #D6E0FD !important;
+}
+
+.employee-invite-light button.bg-emerald-500 {
+  background-color: #2F5BEA !important;
+  color: #ffffff !important;
+}
+
+.employee-invite-light button.bg-emerald-500:hover {
+  background-color: #2348C8 !important;
+}
+
+.employee-invite-light .shadow-black\/20,
+.employee-invite-light .shadow-2xl {
+  box-shadow: 0 20px 50px rgba(20, 22, 30, 0.06) !important;
+}
+
+/* Interview cockpit light bridge: preserves the voice/state machine while moving UX to the reference SaaS style. */
+.interview-cockpit-light {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 10% 10%, rgba(47, 91, 234, 0.1), transparent 24%),
+    radial-gradient(circle at 88% 14%, rgba(6, 182, 212, 0.08), transparent 24%),
+    linear-gradient(180deg, #F8FAFC 0%, #F4F5F7 100%);
+  color: #1A1C22;
+}
+
+.interview-cockpit-light header {
+  border-color: #E9EAEE !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  box-shadow: 0 10px 30px rgba(20, 22, 30, 0.05);
+}
+
+.interview-cockpit-light .bg-slate-950:not(.fixed),
+.interview-cockpit-light .bg-slate-950\/90:not(.fixed),
+.interview-cockpit-light .bg-slate-950\/80:not(.fixed),
+.interview-cockpit-light .bg-slate-950\/70:not(.fixed),
+.interview-cockpit-light .bg-slate-950\/60:not(.fixed),
+.interview-cockpit-light .bg-slate-950\/50:not(.fixed),
+.interview-cockpit-light .bg-slate-950\/40:not(.fixed),
+.interview-cockpit-light .bg-slate-900:not(.fixed),
+.interview-cockpit-light .bg-slate-900\/90:not(.fixed),
+.interview-cockpit-light .bg-slate-900\/80:not(.fixed),
+.interview-cockpit-light .bg-slate-900\/70:not(.fixed),
+.interview-cockpit-light .bg-slate-900\/60:not(.fixed),
+.interview-cockpit-light .bg-slate-900\/50:not(.fixed),
+.interview-cockpit-light .bg-slate-900\/40:not(.fixed),
+.interview-cockpit-light .bg-slate-905:not(.fixed),
+.interview-cockpit-light .bg-slate-800:not(.fixed),
+.interview-cockpit-light .bg-slate-800\/80:not(.fixed),
+.interview-cockpit-light .bg-slate-800\/60:not(.fixed),
+.interview-cockpit-light .bg-slate-800\/50:not(.fixed) {
+  background-color: #ffffff !important;
+}
+
+.interview-cockpit-light aside > div,
+.interview-cockpit-light section > div,
+.interview-cockpit-light .shadow-xl,
+.interview-cockpit-light .shadow-2xl {
+  box-shadow: 0 18px 46px rgba(20, 22, 30, 0.06) !important;
+}
+
+.interview-cockpit-light .border-slate-900,
+.interview-cockpit-light .border-slate-900\/80,
+.interview-cockpit-light .border-slate-900\/60,
+.interview-cockpit-light .border-slate-905,
+.interview-cockpit-light .border-slate-805,
+.interview-cockpit-light .border-slate-800,
+.interview-cockpit-light .border-slate-800\/80,
+.interview-cockpit-light .border-slate-800\/60,
+.interview-cockpit-light .border-slate-800\/50,
+.interview-cockpit-light .border-slate-700,
+.interview-cockpit-light .border-slate-700\/80,
+.interview-cockpit-light .border-slate-700\/60 {
+  border-color: #E0E1E6 !important;
+}
+
+.interview-cockpit-light .text-white,
+.interview-cockpit-light .text-slate-100,
+.interview-cockpit-light .text-slate-200,
+.interview-cockpit-light .text-slate-300 {
+  color: #1A1C22 !important;
+}
+
+.interview-cockpit-light .text-slate-400,
+.interview-cockpit-light .text-slate-405,
+.interview-cockpit-light .text-slate-500,
+.interview-cockpit-light .text-slate-600 {
+  color: #56596a !important;
+}
+
+.interview-cockpit-light .text-cyan-100,
+.interview-cockpit-light .text-cyan-200,
+.interview-cockpit-light .text-cyan-300,
+.interview-cockpit-light .text-cyan-400,
+.interview-cockpit-light .text-emerald-100,
+.interview-cockpit-light .text-emerald-200,
+.interview-cockpit-light .text-emerald-300,
+.interview-cockpit-light .text-emerald-400,
+.interview-cockpit-light .text-purple-200,
+.interview-cockpit-light .text-purple-300,
+.interview-cockpit-light .text-blue-200,
+.interview-cockpit-light .text-blue-300 {
+  color: #2348C8 !important;
+}
+
+.interview-cockpit-light .bg-emerald-600,
+.interview-cockpit-light .bg-emerald-500,
+.interview-cockpit-light .bg-blue-650,
+.interview-cockpit-light .bg-blue-600,
+.interview-cockpit-light .hover\:bg-emerald-500:hover,
+.interview-cockpit-light .hover\:bg-blue-600:hover,
+.interview-cockpit-light .hover\:bg-blue-500:hover {
+  background-color: #2F5BEA !important;
+  color: #ffffff !important;
+}
+
+.interview-cockpit-light .bg-blue-500\/20,
+.interview-cockpit-light .bg-blue-500\/15,
+.interview-cockpit-light .bg-blue-500\/10,
+.interview-cockpit-light .bg-blue-500\/5,
+.interview-cockpit-light .bg-emerald-500\/20,
+.interview-cockpit-light .bg-emerald-500\/15,
+.interview-cockpit-light .bg-emerald-500\/10,
+.interview-cockpit-light .bg-emerald-500\/5,
+.interview-cockpit-light .bg-cyan-500\/10,
+.interview-cockpit-light .bg-purple-500\/10 {
+  background-color: #ECF0FE !important;
+}
+
+.interview-cockpit-light .border-blue-500\/30,
+.interview-cockpit-light .border-blue-500\/20,
+.interview-cockpit-light .border-blue-500\/15,
+.interview-cockpit-light .border-emerald-500\/30,
+.interview-cockpit-light .border-emerald-500\/20,
+.interview-cockpit-light .border-cyan-500\/20,
+.interview-cockpit-light .border-purple-500\/20 {
+  border-color: #D6E0FD !important;
+}
+
+.interview-cockpit-light .bg-red-650,
+.interview-cockpit-light .bg-red-600 {
+  background-color: #EF4444 !important;
+}
+
+.interview-cockpit-light textarea,
+.interview-cockpit-light input,
+.interview-cockpit-light select {
+  border-color: #E0E1E6 !important;
+  background: #FAFBFC !important;
+  color: #1A1C22 !important;
+}
+
+.interview-cockpit-light textarea::placeholder,
+.interview-cockpit-light input::placeholder {
+  color: #8A8EA0 !important;
+}
+
+.interview-cockpit-light textarea:focus,
+.interview-cockpit-light input:focus,
+.interview-cockpit-light select:focus {
+  border-color: #2F5BEA !important;
+  box-shadow: 0 0 0 3px rgba(47, 91, 234, 0.12) !important;
+}
+
+.interview-cockpit-light .fixed.bg-slate-950\/80,
+.interview-cockpit-light .fixed.bg-slate-950\/70,
+.interview-cockpit-light .fixed.bg-slate-950\/60 {
+  background-color: rgba(10, 14, 26, 0.72) !important;
+}

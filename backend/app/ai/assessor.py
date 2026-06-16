@@ -90,6 +90,22 @@ _COMPETENCY_LABELS_RU: dict[str, str] = {
     "Ownership & Growth Mindset": "Ответственность и развитие",
 }
 
+_SUPPORT_INCIDENT_RE = re.compile(
+    r"\b(support|incident|incidents|monitoring|grafana|logs?|helpdesk|operations?|production support)\b"
+    r"|сопровожд|инцидент|эксплуатац|мониторинг|графан|логи|поддержк|руководител[ья] сопровождения",
+    re.IGNORECASE,
+)
+_FRONTEND_CORE_EVIDENCE_RE = re.compile(
+    r"react|next|vue|angular|javascript|typescript|css|html|dom|browser|component|hook|usestate|"
+    r"setstate|usememo|usecallback|redux|zustand|webpack|vite|devtools|"
+    r"реакт|ангуляр|компонент|хук|верстк|браузер|состояни|стейт",
+    re.IGNORECASE,
+)
+_FRONTEND_CORE_COMPETENCY_RE = re.compile(
+    r"ui framework|react|frontend|web performance|css|responsive|javascript|typescript|accessibility|testing|quality",
+    re.IGNORECASE,
+)
+
 
 def _normalized_report_language(language: str | None) -> str:
     return "en" if (language or "").lower().startswith("en") else "ru"
@@ -5378,6 +5394,9 @@ def _aggregate_skills(
             return True
         return name in generic_terms
 
+    def _keep_unconfirmed_mention(name: str) -> bool:
+        return bool(_FRONTEND_CORE_EVIDENCE_RE.search(name))
+
     candidate_answers = [
         str(msg.get("content", "") or "")
         for msg in (message_history or [])
@@ -5388,41 +5407,40 @@ def _aggregate_skills(
     for answer in candidate_answers:
         candidate_tech_mentions.update(extract_mentioned_technologies(answer))
 
-    def _skill_has_candidate_evidence(skill: str) -> bool:
+    def _skill_candidate_evidence(skill: str) -> tuple[bool, str | None]:
         if not candidate_answers:
             # Backward-compatible fallback for cases where we only have pass1.
-            return True
+            return False, None
         pattern = re.compile(rf"\b{re.escape(skill)}\b")
+        fallback_window: str | None = None
         for answer in candidate_answers:
             answer_lower = answer.lower()
             for match in pattern.finditer(answer_lower):
                 start = max(0, match.start() - 80)
                 end = min(len(answer_lower), match.end() + 80)
                 window = answer_lower[start:end]
-                if any(marker in window for marker in action_markers):
-                    return True
-                if any(marker in window for marker in context_markers):
-                    return True
-                if re.search(r"\d", window):
-                    return True
+                fallback_window = fallback_window or answer[max(0, match.start() - 80):min(len(answer), match.end() + 80)].strip()
+                has_action = any(marker in window for marker in action_markers)
+                has_context = any(marker in window for marker in context_markers) or bool(re.search(r"\d", window))
+                if has_action and has_context:
+                    return True, fallback_window
 
         if skill in candidate_tech_mentions:
             # Extracted mention exists but without local action context.
-            # Require repeated explicit mentions to avoid false-positive single hits.
-            return sum(1 for answer in candidate_answers if pattern.search(answer.lower())) >= 2
+            return False, fallback_window
 
         matches = list(pattern.finditer(candidate_corpus))
         if not matches:
-            return False
-        if len(matches) >= 2:
-            return True
+            return False, None
         for match in matches:
             start = max(0, match.start() - 80)
             end = min(len(candidate_corpus), match.end() + 80)
             window = candidate_corpus[start:end]
-            if any(marker in window for marker in action_markers):
-                return True
-        return False
+            if any(marker in window for marker in action_markers) and (
+                any(marker in window for marker in context_markers) or bool(re.search(r"\d", window))
+            ):
+                return True, candidate_corpus[start:end].strip()
+        return False, fallback_window
 
     skill_map: dict[str, dict] = {}
     for q in per_question:
@@ -5433,14 +5451,30 @@ def _aggregate_skills(
             name = _normalize_skill_name(str(sm.get("skill", "")))
             if _is_noise_skill(name):
                 continue
-            if not _skill_has_candidate_evidence(name):
+            has_evidence, evidence_summary = _skill_candidate_evidence(name)
+            if not has_evidence and not candidate_answers:
+                question_evidence = str(q.get("evidence") or "").strip()
+                evidence_lower = question_evidence.lower()
+                if name in evidence_lower and any(marker in evidence_lower for marker in action_markers):
+                    has_evidence = True
+                    evidence_summary = question_evidence[:220]
+            if candidate_answers and not has_evidence and not _keep_unconfirmed_mention(name):
                 continue
             prof = str(sm.get("proficiency", "intermediate")).lower()
             if prof not in proficiency_order:
                 prof = "intermediate"
+            status = "confirmed" if has_evidence and question_confidence >= 0.75 else "mentioned"
+            if status != "confirmed" and prof == "beginner":
+                status = "development"
             if name in skill_map:
                 skill_map[name]["mentions_count"] += 1
                 skill_map[name]["confidence_sum"] += question_confidence
+                if status == "confirmed":
+                    skill_map[name]["status"] = "confirmed"
+                elif skill_map[name]["status"] != "confirmed" and status == "development":
+                    skill_map[name]["status"] = "development"
+                if evidence_summary and not skill_map[name].get("evidence"):
+                    skill_map[name]["evidence"] = evidence_summary
                 if proficiency_order.index(prof) > proficiency_order.index(skill_map[name]["proficiency"]):
                     skill_map[name]["proficiency"] = prof
             else:
@@ -5449,13 +5483,15 @@ def _aggregate_skills(
                     "proficiency": prof,
                     "mentions_count": 1,
                     "confidence_sum": question_confidence,
+                    "status": status,
+                    "evidence": evidence_summary if status == "confirmed" else None,
                 }
 
     filtered: list[dict] = []
     for data in skill_map.values():
         avg_confidence = data["confidence_sum"] / data["mentions_count"]
-        # Single low-confidence mention is often noisy extraction.
-        if data["mentions_count"] == 1 and avg_confidence < 0.75:
+        # Single low-confidence non-evidence mention is often noisy extraction.
+        if data["status"] != "confirmed" and data["mentions_count"] == 1 and avg_confidence < 0.75:
             continue
         if avg_confidence < 0.65:
             continue
@@ -5464,10 +5500,110 @@ def _aggregate_skills(
                 "skill": data["skill"],
                 "proficiency": data["proficiency"],
                 "mentions_count": data["mentions_count"],
+                "status": data["status"],
+                "evidence": data.get("evidence"),
             }
         )
 
     return sorted(filtered, key=lambda x: x["mentions_count"], reverse=True)
+
+
+def _detect_role_mismatch(
+    *,
+    target_role: str,
+    message_history: list[dict] | None,
+    per_question_analysis: list[dict],
+) -> dict[str, Any]:
+    """Detect likely role mismatch from evidence, currently focused on Frontend interviews."""
+    if target_role != "frontend_engineer":
+        return {
+            "detected": False,
+            "mismatch_type": None,
+            "confidence": 0.0,
+            "support_incident_evidence": [],
+            "frontend_core_evidence_count": 0,
+            "frontend_weak_checks": 0,
+            "notes": [],
+        }
+
+    candidate_answers = [
+        str(msg.get("content", "") or "")
+        for msg in (message_history or [])
+        if str(msg.get("role", "")) == "candidate" and str(msg.get("content", "")).strip()
+    ]
+    support_evidence: list[str] = []
+    for answer in candidate_answers:
+        if _SUPPORT_INCIDENT_RE.search(answer):
+            support_evidence.append(answer[:240])
+
+    frontend_core_evidence_count = 0
+    frontend_weak_checks = 0
+    for item in per_question_analysis or []:
+        targeted = " ".join(str(value) for value in item.get("targeted_competencies", [])).lower()
+        evidence = str(item.get("evidence") or "")
+        answer_quality = _to_float(item.get("answer_quality"), 0.0)
+        depth = str(item.get("depth") or "surface").lower()
+        specificity = str(item.get("specificity") or "low").lower()
+        is_frontend_core = bool(
+            _FRONTEND_CORE_COMPETENCY_RE.search(targeted)
+            or _FRONTEND_CORE_EVIDENCE_RE.search(evidence)
+        )
+        if not is_frontend_core:
+            continue
+        has_frontend_evidence = (
+            bool(_FRONTEND_CORE_EVIDENCE_RE.search(evidence))
+            and answer_quality >= 6.5
+            and depth in {"adequate", "strong", "expert"}
+            and specificity in {"medium", "high"}
+        )
+        if has_frontend_evidence:
+            frontend_core_evidence_count += 1
+        elif answer_quality <= 5.0 or depth in {"surface", "none"} or specificity == "low":
+            frontend_weak_checks += 1
+
+    support_signal_count = len(support_evidence)
+    detected = support_signal_count >= 1 and frontend_core_evidence_count == 0 and frontend_weak_checks >= 2
+    confidence = 0.0
+    if detected:
+        confidence = min(0.95, 0.55 + support_signal_count * 0.1 + frontend_weak_checks * 0.08)
+    return {
+        "detected": detected,
+        "mismatch_type": "support_incident_vs_frontend" if detected else None,
+        "confidence": round(confidence, 2),
+        "support_incident_evidence": support_evidence[:3],
+        "frontend_core_evidence_count": frontend_core_evidence_count,
+        "frontend_weak_checks": frontend_weak_checks,
+        "notes": [
+            "Candidate evidence fits support/incident diagnostics more than frontend development."
+        ]
+        if detected
+        else [],
+    }
+
+
+def _apply_role_mismatch_caps(
+    *,
+    target_role: str,
+    competency_scores: list[dict],
+    role_mismatch: dict[str, Any],
+) -> list[str]:
+    if target_role != "frontend_engineer" or not bool(role_mismatch.get("detected")):
+        return []
+    penalties: list[str] = []
+    for item in competency_scores:
+        competency = str(item.get("competency") or "")
+        category = str(item.get("category") or "")
+        if category in {"technical_core", "technical_breadth"} and _FRONTEND_CORE_COMPETENCY_RE.search(competency):
+            old_score = _to_float(item.get("score"), 0.0)
+            capped = min(old_score, 4.0)
+            if capped < old_score:
+                item["score"] = capped
+                item["reasoning"] = (
+                    f"{str(item.get('reasoning') or '').strip()} "
+                    "Role mismatch cap: support/incident answers did not confirm frontend-core delivery evidence."
+                ).strip()
+                penalties.append(f"role_mismatch_cap:{competency}:{old_score}->{capped}")
+    return penalties
 
 
 def _compute_cheat_risk(
@@ -6247,7 +6383,10 @@ class LLMAssessor:
             "- НЕ давай answer_quality > 3 для ответов короче 10 слов\n"
             "- НЕ давай answer_quality > 5 для ответов без единого конкретного примера\n"
             "- НЕ давай answer_quality > 8 без конкретного механизма, личного вклада или trade-off рассуждения\n"
-            "- НЕ записывай в skills_mentioned широкие термины (api, backend, database) без личного опыта\n\n"
+            "- НЕ записывай в skills_mentioned широкие термины (api, backend, database) без личного опыта\n"
+            "- Для Frontend: слова React/Angular/setState/DevTools/CSS/Grid сами по себе НЕ подтверждают навык. Нужен пример личной разработки, отладки или изменения UI с проверкой результата.\n"
+            "- Для Frontend: сопровождение мобильного приложения, Grafana/логи/incident management учитывай как support/incident diagnostics, а НЕ как frontend development.\n"
+            "- Практический блок без кода/артефакта/конкретного решения НЕ засчитывай как практический технический навык.\n\n"
             "Шкала answer_quality: 1-3 = нет ответа/слишком коротко/уклонение, "
             "4-5 = поверхностно/без примеров, 5-6 = рабочие знания с примерами, "
             "7-8 = конкретика + trade-offs + результаты, 9-10 = экспертное мышление.\n"
@@ -6338,6 +6477,14 @@ class LLMAssessor:
             "- Слабые кандидаты: 3-5. Средние: 5-6. Хорошие: 7-8. Исключительные: 9-10.\n"
             "- При сомнении — снижай. Цена false-positive выше чем false-negative.\n"
             "- Не давай credit за намерения — только за доказанные знания и опыт.\n\n"
+            "## ROLE MISMATCH И FRONTEND-SPECIFIC ПРАВИЛА\n\n"
+            "- Если целевая роль Frontend, а ответы в основном про support/incident/monitoring/Grafana/logs/операционное сопровождение, отметь role mismatch.\n"
+            "- После 1–2 слабых frontend-core проверок НЕ выдавай высокий frontend score за support answers.\n"
+            "- UI Framework Mastery, JavaScript/TypeScript, CSS, Accessibility и Testing не могут быть >4 без доказанного личного frontend-примера.\n"
+            "- Фраза «React/Angular», «Реактангуляр», «setState», «DevTools» без примера = mentioned/no evidence, не confirmed skill.\n"
+            "- «Я добавил grid» без деталей разметки, responsive-поведения, ограничений или проверки результата = слабый CSS evidence, не сильный CSS skill.\n"
+            "- Incident diagnostics можно учитывать отдельно в problem_solving/debugging, но не как подтверждение frontend-core.\n"
+            "- Практическое задание без кода или конкретного письменного решения не повышает technical_core.\n\n"
             "## ОЦЕНКА МЯГКИХ НАВЫКОВ, КОММУНИКАЦИИ И РЕШЕНИЯ ЗАДАЧ (Pass 2)\n\n"
             "При выставлении оценок по компетенциям категорий 'communication', 'problem_solving' и 'behavioral', опирайся на анализ вопросов (Pass 1) и следуй строгим критериям:\n\n"
             "1. КОММУНИКАЦИЯ (competencies in 'communication' category):\n"
@@ -6392,6 +6539,16 @@ class LLMAssessor:
                 raise RuntimeError("AI assessment failed completely") from exc
 
         comp_scores = data.get("competency_scores", [])
+        role_mismatch = _detect_role_mismatch(
+            target_role=target_role,
+            message_history=message_history,
+            per_question_analysis=pass1_data,
+        )
+        role_mismatch_penalties = _apply_role_mismatch_caps(
+            target_role=target_role,
+            competency_scores=comp_scores,
+            role_mismatch=role_mismatch,
+        )
         raw_aggregates = _compute_aggregates(comp_scores, target_role)
 
         # v2-strict: compute answer quality metrics and apply hard score penalties
@@ -6410,12 +6567,23 @@ class LLMAssessor:
             {"flag": f, "evidence": "auto-detected by scoring engine", "severity": "medium"}
             for f in answer_metrics["generated_red_flags"]
         ]
+        if bool(role_mismatch.get("detected")):
+            generated_flags.append(
+                {
+                    "flag": "role mismatch: support/incident profile vs frontend role",
+                    "evidence": "; ".join(role_mismatch.get("support_incident_evidence") or [])
+                    or "support/incident evidence without confirmed frontend-core delivery",
+                    "severity": "high",
+                }
+            )
         all_red_flags = llm_red_flags + generated_flags
 
         # Clamp hiring_recommendation to match penalized overall score
         overall = aggregates["overall_score"]
         llm_rec = data.get("hiring_recommendation", "maybe")
-        if overall <= 5.0 and llm_rec in ("yes", "strong_yes"):
+        if bool(role_mismatch.get("detected")) and target_role == "frontend_engineer" and llm_rec in {"yes", "strong_yes"}:
+            hiring_rec = "maybe" if overall >= 5.0 else "no"
+        elif overall <= 5.0 and llm_rec in ("yes", "strong_yes"):
             hiring_rec = "no"
         elif overall <= 6.9 and llm_rec == "strong_yes":
             hiring_rec = "maybe"
@@ -6450,7 +6618,9 @@ class LLMAssessor:
             "answer_quality_score": answer_metrics["answer_quality_score"],
             "depth_score": answer_metrics["depth_score"],
             "consistency_score": response_consistency,
-            "score_penalties": penalties,
+            "score_penalties": [*penalties, *role_mismatch_penalties],
+            "role_mismatch": role_mismatch,
+            "role_mismatch_penalties": role_mismatch_penalties,
             "answer_metrics": {
                 "avg_word_count": answer_metrics["avg_word_count"],
                 "short_answer_ratio": answer_metrics["short_answer_ratio"],
@@ -6484,7 +6654,7 @@ class LLMAssessor:
             answer_quality_score=answer_metrics["answer_quality_score"],
             depth_score=answer_metrics["depth_score"],
             consistency_score=_to_float(response_consistency),
-            score_penalties=penalties,
+            score_penalties=[*penalties, *role_mismatch_penalties],
         )
 
     async def _legacy_assess(

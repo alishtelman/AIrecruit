@@ -5,28 +5,29 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { useAuth } from "@/hooks/useAuth";
+import { CandidateShell } from "@/components/candidate-shell";
 import { reportApi } from "@/lib/api";
 import type { AssessmentReport, HiringRecommendation, CompetencyScore, SkillTag, RedFlag, QuestionAnalysis, ReportSummaryBlock, SystemDesignStageSummary, SystemDesignRubricScore, BehavioralInterviewStageSummary, BehavioralInterviewRubricScore, DevelopmentRoadmapPhase, CodingTaskStageSummary, CodingTaskRubricScore, CodingTaskCoverageCheck, SqlLiveStageSummary, SqlLiveRubricScore } from "@/lib/types";
 
 const CATEGORY_COLORS: Record<string, string> = {
-  technical_core: "bg-blue-500/15 text-blue-400 border-blue-500/30",
-  technical_breadth: "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
-  problem_solving: "bg-purple-500/15 text-purple-400 border-purple-500/30",
-  communication: "bg-green-500/15 text-green-400 border-green-500/30",
-  behavioral: "bg-orange-500/15 text-orange-400 border-orange-500/30",
+  technical_core: "bg-blue-50 text-blue-800 border-blue-200",
+  technical_breadth: "bg-cyan-50 text-cyan-800 border-cyan-200",
+  problem_solving: "bg-purple-50 text-purple-800 border-purple-200",
+  communication: "bg-emerald-50 text-emerald-800 border-emerald-200",
+  behavioral: "bg-orange-50 text-[#C2410C] border-orange-200",
 };
 
 const PROFICIENCY_COLORS: Record<string, string> = {
-  expert: "bg-green-500/20 text-green-400",
-  advanced: "bg-blue-500/20 text-blue-400",
-  intermediate: "bg-yellow-500/20 text-yellow-400",
-  beginner: "bg-slate-500/20 text-slate-400",
+  expert: "bg-emerald-50 text-emerald-800 border border-emerald-100",
+  advanced: "bg-blue-50 text-blue-800 border border-blue-100",
+  intermediate: "bg-amber-50 text-amber-800 border border-amber-100",
+  beginner: "bg-slate-50 text-slate-700 border border-slate-100",
 };
 
 const SEVERITY_COLORS: Record<string, string> = {
-  high: "border-red-500/40 bg-red-500/10 text-red-300",
-  medium: "border-yellow-500/40 bg-yellow-500/10 text-yellow-300",
-  low: "border-slate-600 bg-slate-800 text-slate-400",
+  high: "border-red-200 bg-red-50 text-red-800",
+  medium: "border-amber-200 bg-amber-50 text-amber-800",
+  low: "border-slate-200 bg-slate-50 text-slate-600",
 };
 
 const RU_COMPETENCY_LABELS: Record<string, string> = {
@@ -210,62 +211,62 @@ function InterviewSummaryPanel({
     }
   }
 
-  function getTopicSignalTone(signal: string) {
-    if (signal === "strong") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
-    if (signal === "partial") return "border-amber-500/30 bg-amber-500/10 text-amber-200";
-    if (signal === "no_experience_honest") return "border-slate-600 bg-slate-900 text-slate-300";
-    return "border-rose-500/30 bg-rose-500/10 text-rose-200";
+function getTopicSignalTone(signal: string) {
+    if (signal === "strong") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    if (signal === "partial") return "border-amber-200 bg-amber-50 text-amber-800";
+    if (signal === "no_experience_honest") return "border-slate-200 bg-slate-50 text-slate-700";
+    return "border-rose-200 bg-rose-50 text-rose-800";
   }
 
   function getTopicOutcomeTone(outcome: string) {
-    if (outcome === "validated") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
-    if (outcome === "partial") return "border-blue-500/30 bg-blue-500/10 text-blue-200";
-    if (outcome === "honest_gap") return "border-slate-600 bg-slate-900 text-slate-300";
-    if (outcome === "unverified_claim") return "border-yellow-500/30 bg-yellow-500/10 text-yellow-200";
-    return "border-rose-500/30 bg-rose-500/10 text-rose-200";
+    if (outcome === "validated") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    if (outcome === "partial") return "border-blue-200 bg-blue-50 text-blue-800";
+    if (outcome === "honest_gap") return "border-slate-200 bg-slate-50 text-slate-700";
+    if (outcome === "unverified_claim") return "border-amber-200 bg-amber-50 text-amber-800";
+    return "border-rose-200 bg-rose-50 text-rose-800";
   }
 
   return (
-    <div className="mb-6 rounded-2xl border border-slate-700 bg-slate-800/80 p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+    <div className="mb-6 rounded-2xl border border-[#E9EAEE] bg-white p-6 shadow-[0_1px_2px_rgba(20,22,30,0.04)]">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-xs uppercase tracking-[0.24em] text-slate-500">{t("summaryModel.eyebrow")}</div>
-          <div className="text-sm font-semibold text-white">{t("summaryModel.title")}</div>
+          <div className="text-[11.5px] font-bold tracking-widest text-[#56596a] uppercase">{t("summaryModel.eyebrow")}</div>
+          <h2 className="text-xl font-manrope font-bold text-[#1A1C22] mt-0.5">{t("summaryModel.title")}</h2>
         </div>
-        <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-300">
+        <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-bold text-sky-800">
           {t(`summaryModel.signal.${summaryModel.signal_quality}`)}
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         {items.map((item) => (
-          <div key={item.label} className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-3">
-            <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{item.label}</div>
-            <div className="mt-1 text-xl font-semibold text-white">{item.value}</div>
+          <div key={item.label} className="rounded-xl border border-slate-200 bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(0,0,0,0.01)]">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{item.label}</div>
+            <div className="mt-1 text-2xl font-manrope font-bold text-[#1A1C22]">{item.value}</div>
           </div>
         ))}
       </div>
       {topicOutcomes.length > 0 && (
         <div className="mt-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t("summaryModel.detailsTitle")}</div>
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+            <div className="text-xs font-bold uppercase tracking-wider text-[#56596a]">{t("summaryModel.detailsTitle")}</div>
             <button
               type="button"
               onClick={() => setShowDetails((current) => !current)}
-              className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-300 transition-colors hover:bg-cyan-500/20"
+              className="rounded-full border border-[#2F5BEA]/20 bg-[#2F5BEA]/5 px-3.5 py-1.5 text-xs font-bold text-[#2F5BEA] transition-colors hover:bg-[#2F5BEA]/10"
             >
               {showDetails ? t("summaryModel.detailsHide") : t("summaryModel.detailsShow")}
             </button>
           </div>
           {showDetails && (
-            <div className="mt-3 grid gap-3">
+            <div className="mt-4 grid gap-3">
               {topicOutcomes.map((outcome) => (
-                <div key={outcome.slot} className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                <div key={outcome.slot} className="rounded-xl border border-[#E9EAEE] bg-white p-5 shadow-[0_1px_2px_rgba(20,22,30,0.02)]">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <div className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                      <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
                         {t("questionShort", { number: outcome.slot })}
                       </div>
-                      <div className="mt-1 text-sm font-semibold text-white">
+                      <div className="mt-1 text-sm font-bold text-[#1A1C22]">
                         {localizeFreeformText(outcome.label, locale)}
                       </div>
                     </div>
@@ -273,62 +274,62 @@ function InterviewSummaryPanel({
                       <button
                         type="button"
                         onClick={() => onJumpToQuestion(outcome.slot)}
-                        className="rounded-full border border-slate-600 bg-slate-950 px-3 py-1 text-xs text-slate-200 transition-colors hover:border-cyan-400/40 hover:text-cyan-200"
+                        className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition-colors hover:border-[#2F5BEA]/40 hover:text-[#2F5BEA] shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
                       >
                         {t("summaryModel.jumpToQuestion")}
                       </button>
                     )}
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <span className={`rounded-full border px-2.5 py-1 text-[11px] ${getTopicSignalTone(outcome.signal)}`}>
+                    <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${getTopicSignalTone(outcome.signal)}`}>
                       {t("summaryModel.signalLabel")}: {getTopicSignalLabel(outcome.signal)}
                     </span>
-                    <span className={`rounded-full border px-2.5 py-1 text-[11px] ${getTopicOutcomeTone(outcome.outcome)}`}>
+                    <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${getTopicOutcomeTone(outcome.outcome)}`}>
                       {t("summaryModel.outcomeLabel")}: {getTopicOutcomeLabel(outcome.outcome)}
                     </span>
                   </div>
                   {outcome.resume_anchor && (
-                    <div className="mt-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t("summaryModel.resumeAnchor")}</div>
-                      <div className="mt-1 text-sm text-slate-200">{localizeFreeformText(outcome.resume_anchor, locale)}</div>
+                    <div className="mt-3.5 border-t border-slate-100 pt-3">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{t("summaryModel.resumeAnchor")}</div>
+                      <div className="mt-1 text-sm text-[#374151] leading-relaxed">{localizeFreeformText(outcome.resume_anchor, locale)}</div>
                     </div>
                   )}
                   {outcome.verification_target && (
                     <div className="mt-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t("summaryModel.verificationTarget")}</div>
-                      <div className="mt-1 text-sm text-slate-200">{localizeFreeformText(outcome.verification_target, locale)}</div>
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{t("summaryModel.verificationTarget")}</div>
+                      <div className="mt-1 text-sm text-[#374151] leading-relaxed">{localizeFreeformText(outcome.verification_target, locale)}</div>
                     </div>
                   )}
                   {outcome.evidence_hint && (
                     <div className="mt-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t("summaryModel.evidenceHint")}</div>
-                      <div className="mt-1 text-sm leading-6 text-slate-300">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{t("summaryModel.evidenceHint")}</div>
+                      <div className="mt-1 text-sm leading-relaxed text-[#374151]">
                         {localizeFreeformText(outcome.evidence_hint, locale)}
                       </div>
                     </div>
                   )}
                   {outcome.why_asked && (
                     <div className="mt-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t("summaryModel.whyAsked")}</div>
-                      <div className="mt-1 text-sm leading-6 text-slate-300">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{t("summaryModel.whyAsked")}</div>
+                      <div className="mt-1 text-sm leading-relaxed text-[#374151]">
                         {localizeFreeformText(outcome.why_asked, locale)}
                       </div>
                     </div>
                   )}
                   {outcome.what_was_scored && (
                     <div className="mt-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t("summaryModel.whatWasScored")}</div>
-                      <div className="mt-1 text-sm leading-6 text-slate-300">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{t("summaryModel.whatWasScored")}</div>
+                      <div className="mt-1 text-sm leading-relaxed text-[#374151]">
                         {localizeFreeformText(outcome.what_was_scored, locale)}
                       </div>
                     </div>
                   )}
                   {outcome.scored_metrics && outcome.scored_metrics.length > 0 && (
                     <div className="mt-3">
-                      <div className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{t("summaryModel.scoredMetrics")}</div>
-                      <div className="mt-1 flex flex-wrap gap-2">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{t("summaryModel.scoredMetrics")}</div>
+                      <div className="mt-1.5 flex flex-wrap gap-2">
                         {outcome.scored_metrics.map((metric) => (
-                          <span key={metric} className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-1 text-[11px] text-sky-200">
+                          <span key={metric} className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-800">
                             {localizeScoredMetric(metric, locale)}
                           </span>
                         ))}
@@ -350,10 +351,9 @@ export default function ReportPage() {
   const locale = useLocale();
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
-  const { loading: authLoading } = useAuth();
+  const { loading: authLoading } = useAuth({ allowedRoles: ["candidate"] });
   const [report, setReport] = useState<AssessmentReport | null>(null);
   const [error, setError] = useState("");
-  const [expandedQ, setExpandedQ] = useState<number | null>(null);
 
   useEffect(() => {
     if (!id || authLoading) return;
@@ -365,204 +365,185 @@ export default function ReportPage() {
 
   if (authLoading || (!report && !error)) {
     return (
-      <div className="min-h-screen bg-slate-900 px-4 py-10">
-        <div className="max-w-3xl mx-auto space-y-4">
-          <div className="h-4 w-32 bg-slate-800 rounded animate-pulse" />
-          <div className="h-8 w-56 bg-slate-800 rounded animate-pulse" />
-          <div className="h-28 bg-slate-800 rounded-2xl animate-pulse" />
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="h-24 bg-slate-800 rounded-xl animate-pulse" />
+      <CandidateShell>
+        <div className="max-w-[960px] mx-auto py-6 space-y-4">
+          <div className="h-5 w-32 bg-slate-200 rounded animate-pulse" />
+          <div className="h-9 w-56 bg-slate-200 rounded animate-pulse" />
+          <div className="h-28 bg-white border border-[#E9EAEE] rounded-2xl animate-pulse" />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="h-24 bg-white border border-[#E9EAEE] rounded-2xl animate-pulse" />
             ))}
           </div>
         </div>
-      </div>
+      </CandidateShell>
     );
   }
 
   if (error || !report) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center px-4">
-        <div className="text-center">
-          <div className="text-red-400 mb-4">{error}</div>
-          <Link href="/candidate/dashboard" className="text-blue-400 hover:underline text-sm">
+      <CandidateShell>
+        <div className="max-w-[960px] mx-auto py-12 flex flex-col items-center justify-center">
+          <div className="text-red-600 font-bold mb-4">{error}</div>
+          <Link href="/candidate/dashboard" className="candidate-btn-primary px-6 py-3 rounded-xl shadow-md text-sm">
             ← {t("backToDashboard")}
           </Link>
         </div>
-      </div>
+      </CandidateShell>
     );
   }
 
-  const recommendationConfig: Record<
-    HiringRecommendation,
-    { label: string; color: string; bg: string }
-  > = {
-    strong_yes: { label: t("labels.strongYes"), color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
-    yes: { label: t("labels.yes"), color: "text-blue-400", bg: "bg-blue-500/10 border-blue-500/30" },
-    maybe: { label: t("labels.maybe"), color: "text-yellow-400", bg: "bg-yellow-500/10 border-yellow-500/30" },
-    no: { label: t("labels.no"), color: "text-red-400", bg: "bg-red-500/10 border-red-500/30" },
-  };
-  const rec = recommendationConfig[report.hiring_recommendation];
   const notice = searchParams.get("notice");
+  const candidateReport = report.candidate_report ?? {
+    level_label: report.proficiency_label ?? report.proficiency_band ?? null,
+    headline: report.proficiency_label
+      ? `${locale === "ru" ? "Текущий ориентир по уровню" : "Current level signal"}: ${report.proficiency_label}`
+      : locale === "ru"
+      ? "Отчёт готов: ниже сильные стороны и следующие шаги"
+      : "Your report is ready: strengths and next steps are below",
+    human_summary: report.interview_summary,
+    strengths: report.strengths.slice(0, 5),
+    growth_areas: report.weaknesses.slice(0, 5),
+    recommendations: report.recommendations.slice(0, 5),
+    roadmap: report.development_roadmap,
+    confirmed_skills: (report.skill_tags ?? []).filter((tag) => tag.status === "confirmed").slice(0, 8),
+    skills_to_develop: (report.skill_tags ?? []).filter((tag) => tag.status === "development").slice(0, 8),
+    mentioned_skills: (report.skill_tags ?? []).filter((tag) => tag.status !== "confirmed" && tag.status !== "development").slice(0, 8),
+  };
 
   return (
-    <div className="min-h-screen bg-slate-900 px-4 py-10">
-      <div className="max-w-3xl mx-auto">
-        <Link href="/candidate/reports" className="text-slate-400 hover:text-white text-sm mb-6 inline-block transition-colors">
+    <CandidateShell>
+      <div className="max-w-[960px] mx-auto py-6">
+        <Link href="/candidate/reports" className="text-[#56596a] hover:text-[#1A1C22] text-sm mb-6 inline-block font-semibold transition-colors">
           ← {t("backToInterviews")}
         </Link>
 
-        <h1 className="text-2xl font-bold text-white mb-2">{t("title")}</h1>
+        <h1 className="text-[34px] font-bold font-manrope tracking-tight text-[#1A1C22] mb-6 leading-none">{t("title")}</h1>
 
         {notice === "recording_failed" && (
-          <div className="mb-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
+          <div className="mb-6 rounded-xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800 font-medium shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
             {t("recordingFailed")}
           </div>
         )}
 
         {notice === "recording_skipped" && (
-          <div className="mb-4 rounded-lg border border-slate-700 bg-slate-800 px-4 py-3 text-sm text-slate-300">
+          <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 font-medium shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
             {t("recordingSkipped")}
           </div>
         )}
 
-        {/* Summary card */}
-        {report.summary && (
-          <SummaryCard summary={report.summary} recommendationConfig={recommendationConfig} />
-        )}
-
-        {report.interview_summary && (
-          <p className="text-slate-400 mb-6">{localizeFreeformText(report.interview_summary, locale)}</p>
-        )}
-
-        {report.module_session?.scenario_title && <ModuleSessionBanner session={report.module_session} locale={locale} />}
-
-        {report.summary_model && (
-          <InterviewSummaryPanel
-            summaryModel={report.summary_model}
-            locale={locale}
-            onJumpToQuestion={(questionNumber) => {
-              const questionIndex = report.per_question_analysis?.findIndex((qa) => qa.question_number === questionNumber) ?? -1;
-              if (questionIndex >= 0) {
-                setExpandedQ(questionIndex);
-              }
-              window.requestAnimationFrame(() => {
-                const target = document.getElementById(`question-analysis-${questionNumber}`) ?? document.getElementById("per-question-analysis");
-                target?.scrollIntoView({ behavior: "smooth", block: "start" });
-              });
-            }}
-          />
-        )}
-        {report.system_design_summary && <SystemDesignSummaryPanel summary={report.system_design_summary} />}
-        {report.behavioral_interview_summary && <BehavioralInterviewSummaryPanel summary={report.behavioral_interview_summary} />}
-        {report.coding_task_summary && <CodingTaskSummaryPanel summary={report.coding_task_summary} />}
-        {report.sql_live_summary && <SqlLiveSummaryPanel summary={report.sql_live_summary} />}
-        {report.written_communication_summary && <WrittenCommunicationSummaryPanel summary={report.written_communication_summary} />}
-
-        {/* Recommendation badge */}
-        <div className={`inline-flex items-center gap-2 border rounded-full px-4 py-1.5 text-sm font-semibold mb-6 ${rec.bg} ${rec.color}`}>
-          {t("recommendation")}: {rec.label}
-        </div>
-        {report.proficiency_label && (
-          <div className="ml-3 inline-flex items-center gap-2 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-4 py-1.5 text-sm font-semibold text-cyan-200">
-            {t("proficiencyLevel")}: {report.proficiency_label}
+        <div className="mb-6 rounded-2xl border border-[#2F5BEA]/20 bg-[#EEF2FF] p-6 shadow-[0_1px_2px_rgba(20,22,30,0.04)]">
+          <div className="text-[11.5px] font-bold tracking-widest text-[#2F5BEA] uppercase">
+            {locale === "ru" ? "КРАТКИЙ ИТОГ" : "SUMMARY"}
           </div>
-        )}
-
-        {/* Score cards — 5 dimensions */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
-          <ScoreCard label={t("overallScore")} score={report.overall_score} highlight />
-          <ScoreCard label={t("hardSkills")} score={report.hard_skills_score} />
-          <ScoreCard label={t("softSkills")} score={report.soft_skills_score} />
-          <ScoreCard label={t("communication")} score={report.communication_score} />
-          <ScoreCard label={t("problemSolving")} score={report.problem_solving_score} />
-          {report.response_consistency != null && (
-            <ScoreCard label={t("consistency")} score={report.response_consistency} />
+          <h2 className="mt-2 text-2xl font-manrope font-bold text-[#1A1C22]">{localizeFreeformText(candidateReport.headline, locale)}</h2>
+          {candidateReport.human_summary && (
+            <p className="mt-3 text-sm leading-relaxed text-[#374151]">{localizeFreeformText(candidateReport.human_summary, locale)}</p>
           )}
+          <div className="mt-4 flex flex-wrap gap-2">
+            {candidateReport.level_label && (
+              <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-bold text-sky-800">
+                {t("proficiencyLevel")}: {candidateReport.level_label}
+              </span>
+            )}
+            {report.overall_score != null && (
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+                {t("overallScore")}: {report.overall_score.toFixed(1)}/10
+              </span>
+            )}
+          </div>
         </div>
 
-        <ConfidencePanel report={report} locale={locale} />
-        {report.explainability_report && (
-          <ExplainabilityPanel explainability={report.explainability_report} />
-        )}
-
-        {/* Competency heatmap */}
-        {report.competency_scores && report.competency_scores.length > 0 && (
-          <Section title={t("competencyHeatmap")} color="blue">
-            <CompetencyHeatmap scores={report.competency_scores} />
-          </Section>
-        )}
-
-        {/* Skill matrix */}
-        {report.skill_tags && report.skill_tags.length > 0 && (
-          <Section title={t("skillsIdentified")} color="cyan">
-            <SkillMatrix tags={report.skill_tags} />
-          </Section>
-        )}
-
-        {/* Red flags */}
-        {report.red_flags && report.red_flags.length > 0 && (
-          <Section title={t("redFlags")} color="red">
-            <div className="space-y-3">
-              {report.red_flags.map((rf, i) => (
-                <RedFlagRow key={i} flag={rf} />
-              ))}
-            </div>
-          </Section>
-        )}
-
-        {/* Strengths */}
-        {report.strengths.length > 0 && (
+        {candidateReport.strengths.length > 0 && (
           <Section title={t("strengths")} color="green">
-            {report.strengths.map((s, i) => (
-              <ListItem key={i} text={s} bullet="+" color="text-green-400" />
+            {candidateReport.strengths.map((s, i) => (
+              <ListItem key={i} text={s} bullet="+" color="text-[#16A34A] font-bold" />
             ))}
           </Section>
         )}
 
-        {/* Weaknesses */}
-        {report.weaknesses.length > 0 && (
+        {candidateReport.growth_areas.length > 0 && (
           <Section title={t("areasToImprove")} color="yellow">
-            {report.weaknesses.map((w, i) => (
-              <ListItem key={i} text={w} bullet="-" color="text-yellow-400" />
+            {candidateReport.growth_areas.map((w, i) => (
+              <ListItem key={i} text={w} bullet="-" color="text-[#D97706] font-bold" />
             ))}
           </Section>
         )}
 
-        {/* Recommendations */}
-        {report.recommendations.length > 0 && (
+        {candidateReport.recommendations.length > 0 && (
           <Section title={t("recommendations")} color="purple">
-            {report.recommendations.map((r, i) => (
-              <ListItem key={i} text={r} bullet=">" color="text-purple-400" />
+            {candidateReport.recommendations.map((r, i) => (
+              <ListItem key={i} text={r} bullet="›" color="text-[#7C3AED] font-bold" />
             ))}
           </Section>
         )}
 
-        {report.development_roadmap && report.development_roadmap.phases.length > 0 && (
-          <RoadmapPanel phases={report.development_roadmap.phases} />
+        {candidateReport.roadmap && candidateReport.roadmap.phases.length > 0 && (
+          <RoadmapPanel phases={candidateReport.roadmap.phases} />
         )}
 
-        {/* Per-question analysis */}
-        {report.per_question_analysis && report.per_question_analysis.length > 0 && (
-          <div id="per-question-analysis" className="mt-6 scroll-mt-24">
-            <h2 className="text-white font-semibold mb-3">{t("perQuestionAnalysis")}</h2>
-            <div className="space-y-2">
-              {report.per_question_analysis.map((qa, i) => (
-                <QuestionAccordion
-                  key={i}
-                  qa={qa}
-                  expanded={expandedQ === i}
-                  onToggle={() => setExpandedQ(expandedQ === i ? null : i)}
-                />
-              ))}
-            </div>
-          </div>
+        {(candidateReport.confirmed_skills.length > 0 || candidateReport.skills_to_develop.length > 0 || candidateReport.mentioned_skills.length > 0) && (
+          <Section title={t("skillsIdentified")} color="cyan">
+            <CandidateSkillGroups
+              confirmed={candidateReport.confirmed_skills}
+              development={candidateReport.skills_to_develop}
+              mentioned={candidateReport.mentioned_skills}
+              locale={locale}
+            />
+          </Section>
         )}
 
-        <div className="text-slate-600 text-xs mt-8">
+        <div className="text-[#9aa0ab] text-xs mt-8">
           {t("generatedBy", {model: report.model_version, date: new Date(report.created_at).toLocaleDateString()})}
         </div>
       </div>
+    </CandidateShell>
+  );
+}
+
+function CandidateSkillGroups({
+  confirmed,
+  development,
+  mentioned,
+  locale,
+}: {
+  confirmed: SkillTag[];
+  development: SkillTag[];
+  mentioned: SkillTag[];
+  locale: string;
+}) {
+  const groups = [
+    {
+      title: locale === "ru" ? "Подтверждено примерами" : "Confirmed by evidence",
+      items: confirmed,
+      tone: "border-emerald-200 bg-emerald-50 text-emerald-800",
+    },
+    {
+      title: locale === "ru" ? "На развитие" : "To develop",
+      items: development,
+      tone: "border-amber-200 bg-amber-50 text-amber-800",
+    },
+    {
+      title: locale === "ru" ? "Упомянуто, но не подтверждено" : "Mentioned, not yet confirmed",
+      items: mentioned,
+      tone: "border-slate-200 bg-slate-50 text-slate-700",
+    },
+  ].filter((group) => group.items.length > 0);
+
+  return (
+    <div className="space-y-4">
+      {groups.map((group) => (
+        <div key={group.title}>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{group.title}</div>
+          <div className="flex flex-wrap gap-2">
+            {group.items.map((tag) => (
+              <span key={`${group.title}-${tag.skill}`} className={`rounded-full border px-3 py-1 text-sm ${group.tone}`}>
+                {tag.skill}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1418,27 +1399,27 @@ function RoadmapPanel({ phases }: { phases: DevelopmentRoadmapPhase[] }) {
   const locale = useLocale();
 
   return (
-    <div className="mb-6 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-5">
+    <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50/50 p-6 shadow-[0_1px_2px_rgba(20,22,30,0.04)]">
       <div className="mb-4">
-        <div className="text-xs uppercase tracking-[0.24em] text-emerald-300">{t("roadmap.eyebrow")}</div>
-        <div className="text-sm font-semibold text-white">{t("roadmap.title")}</div>
+        <div className="text-[11.5px] font-bold tracking-widest text-[#16A34A] uppercase">{t("roadmap.eyebrow")}</div>
+        <h2 className="mt-1 text-lg font-manrope font-bold text-[#1A1C22]">{t("roadmap.title")}</h2>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-3">
         {phases.map((phase) => (
-          <div key={phase.phase_key} className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
-            <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-emerald-300">
+          <div key={phase.phase_key} className="rounded-xl border border-emerald-100 bg-white p-5 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+            <div className="mb-2 text-[11.5px] font-bold tracking-wider text-[#16A34A] uppercase">
               {t(`roadmap.phases.${phase.phase_key}.label`)}
             </div>
             {phase.focus && (
-              <div className="mb-3 text-sm font-medium leading-6 text-white">
+              <div className="mb-3 text-sm font-bold leading-normal text-[#1A1C22]">
                 {localizeFreeformText(phase.focus, locale)}
               </div>
             )}
             <div className="space-y-2">
               {phase.actions.map((action, index) => (
-                <div key={index} className="flex gap-2 text-sm leading-6 text-slate-300">
-                  <span className="mt-1 shrink-0 text-emerald-400">•</span>
+                <div key={index} className="flex gap-2 text-sm leading-relaxed text-[#374151]">
+                  <span className="mt-1 shrink-0 text-[#16A34A]">•</span>
                   <span>{localizeFreeformText(action, locale)}</span>
                 </div>
               ))}
@@ -2081,17 +2062,17 @@ function QuestionAccordion({ qa, expanded, onToggle }: { qa: QuestionAnalysis; e
 
 function Section({ title, children, color }: { title: string; children: React.ReactNode; color: string }) {
   const colors: Record<string, string> = {
-    green: "text-green-400",
-    yellow: "text-yellow-400",
-    blue: "text-blue-400",
-    cyan: "text-cyan-400",
-    purple: "text-purple-400",
-    red: "text-red-400",
+    green: "text-[#16A34A]",
+    yellow: "text-[#D97706]",
+    blue: "text-[#2F5BEA]",
+    cyan: "text-[#0891B2]",
+    purple: "text-[#7C3AED]",
+    red: "text-[#DC2626]",
   };
   return (
-    <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 mb-4">
-      <h2 className={`font-semibold mb-3 ${colors[color] ?? "text-white"}`}>{title}</h2>
-      <ul className="space-y-2">{children}</ul>
+    <div className="bg-white border border-[#E9EAEE] rounded-2xl p-6 mb-4 shadow-[0_1px_2px_rgba(20,22,30,0.04)]">
+      <h2 className={`font-manrope font-bold text-lg mb-4 ${colors[color] ?? "text-[#1A1C22]"}`}>{title}</h2>
+      <ul className="space-y-2.5">{children}</ul>
     </div>
   );
 }
@@ -2099,7 +2080,7 @@ function Section({ title, children, color }: { title: string; children: React.Re
 function ListItem({ text, bullet, color }: { text: string; bullet: string; color: string }) {
   const locale = useLocale();
   return (
-    <li className="flex gap-3 text-sm text-slate-300">
+    <li className="flex gap-3 text-sm text-[#374151] leading-relaxed">
       <span className={`${color} shrink-0 mt-0.5`}>{bullet}</span>
       {localizeFreeformText(text, locale)}
     </li>

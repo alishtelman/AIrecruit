@@ -42,10 +42,22 @@ async def test_login_success(client: AsyncClient):
         "email": email, "password": "password123", "full_name": "A",
     })
     resp = await client.post("/api/v1/auth/login", json={
-        "email": email, "password": "password123",
+        "email": email, "password": "password123", "account_type": "candidate",
     })
     assert resp.status_code == 200
     assert "access_token" in resp.json()
+
+
+@pytest.mark.asyncio
+async def test_login_requires_account_type(client: AsyncClient):
+    email = f"login_contract_{uuid.uuid4().hex[:8]}@example.com"
+    await client.post("/api/v1/auth/candidate/register", json={
+        "email": email, "password": "password123", "full_name": "A",
+    })
+    resp = await client.post("/api/v1/auth/login", json={
+        "email": email, "password": "password123",
+    })
+    assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -55,7 +67,7 @@ async def test_login_sets_http_only_cookie_and_me_accepts_cookie_session(client:
         "email": email, "password": "password123", "full_name": "Cookie User",
     })
     resp = await client.post("/api/v1/auth/login", json={
-        "email": email, "password": "password123",
+        "email": email, "password": "password123", "account_type": "candidate",
     })
     assert resp.status_code == 200
     set_cookie = resp.headers.get("set-cookie", "")
@@ -74,7 +86,7 @@ async def test_cookie_auth_takes_precedence_over_invalid_bearer(client: AsyncCli
         "email": email, "password": "password123", "full_name": "Cookie Priority User",
     })
     login = await client.post("/api/v1/auth/login", json={
-        "email": email, "password": "password123",
+        "email": email, "password": "password123", "account_type": "candidate",
     })
     assert login.status_code == 200
 
@@ -93,7 +105,7 @@ async def test_cookie_write_rejects_missing_csrf_origin(client: AsyncClient):
         "email": email, "password": "password123", "full_name": "Cookie CSRF User",
     })
     login = await client.post("/api/v1/auth/login", json={
-        "email": email, "password": "password123",
+        "email": email, "password": "password123", "account_type": "candidate",
     })
     assert login.status_code == 200
 
@@ -112,7 +124,7 @@ async def test_cookie_write_allows_trusted_csrf_origin(client: AsyncClient):
         "email": email, "password": "password123", "full_name": "Cookie CSRF Allowed",
     })
     login = await client.post("/api/v1/auth/login", json={
-        "email": email, "password": "password123",
+        "email": email, "password": "password123", "account_type": "candidate",
     })
     assert login.status_code == 200
 
@@ -136,7 +148,7 @@ async def test_bearer_write_does_not_require_csrf_origin(client: AsyncClient):
 
     async with AsyncClient(base_url=str(client.base_url)) as clean_client:
         login = await clean_client.post("/api/v1/auth/login", json={
-            "email": email, "password": "password123",
+            "email": email, "password": "password123", "account_type": "candidate",
         })
     assert login.status_code == 200
     bearer_token = login.json()["access_token"]
@@ -170,7 +182,7 @@ async def test_valid_bearer_overrides_cookie_session(client: AsyncClient):
         "email": cookie_email, "password": "password123", "full_name": "Cookie Owner",
     })
     cookie_login = await client.post("/api/v1/auth/login", json={
-        "email": cookie_email, "password": "password123",
+        "email": cookie_email, "password": "password123", "account_type": "candidate",
     })
     assert cookie_login.status_code == 200
 
@@ -181,7 +193,7 @@ async def test_valid_bearer_overrides_cookie_session(client: AsyncClient):
 
     async with AsyncClient(base_url=str(client.base_url)) as clean_client:
         bearer_login = await clean_client.post("/api/v1/auth/login", json={
-            "email": bearer_email, "password": "password123",
+            "email": bearer_email, "password": "password123", "account_type": "candidate",
         })
     assert bearer_login.status_code == 200
     bearer_token = bearer_login.json()["access_token"]
@@ -198,7 +210,7 @@ async def test_logout_clears_cookie_session(client: AsyncClient):
         "email": email, "password": "password123", "full_name": "Logout User",
     })
     login = await client.post("/api/v1/auth/login", json={
-        "email": email, "password": "password123",
+        "email": email, "password": "password123", "account_type": "candidate",
     })
     assert login.status_code == 200
 
@@ -219,7 +231,7 @@ async def test_login_wrong_password(client: AsyncClient):
         "email": email, "password": "password123", "full_name": "A",
     })
     resp = await client.post("/api/v1/auth/login", json={
-        "email": email, "password": "wrongpass",
+        "email": email, "password": "wrongpass", "account_type": "candidate",
     })
     assert resp.status_code == 401
 
@@ -256,6 +268,7 @@ async def test_platform_admin_bootstrap_login_and_me(client: AsyncClient):
     resp = await client.post("/api/v1/auth/login", json={
         "email": settings.platform_admin_email,
         "password": settings.platform_admin_password,
+        "account_type": "admin",
     })
     assert resp.status_code == 200, resp.text
     token = resp.json()["access_token"]
@@ -263,3 +276,147 @@ async def test_platform_admin_bootstrap_login_and_me(client: AsyncClient):
     me = await client.get("/api/v1/auth/me", headers=auth_headers(token))
     assert me.status_code == 200, me.text
     assert me.json()["role"] == "platform_admin"
+
+
+@pytest.mark.asyncio
+async def test_candidate_login_rejects_company_and_admin_accounts(client: AsyncClient):
+    company_email = f"company_wrong_{uuid.uuid4().hex[:8]}@example.com"
+    await client.post("/api/v1/auth/company/register", json={
+        "email": company_email,
+        "password": "password123",
+        "company_name": "Wrong Login Corp",
+    })
+
+    company_as_candidate = await client.post("/api/v1/auth/login", json={
+        "email": company_email,
+        "password": "password123",
+        "account_type": "candidate",
+    })
+    assert company_as_candidate.status_code == 401
+    assert company_as_candidate.json()["detail"] == "Account does not match this login type"
+
+    await client.post("/api/v1/auth/login", json={
+        "email": settings.platform_admin_email,
+        "password": settings.platform_admin_password,
+        "account_type": "admin",
+    })
+    admin_as_candidate = await client.post("/api/v1/auth/login", json={
+        "email": settings.platform_admin_email,
+        "password": settings.platform_admin_password,
+        "account_type": "candidate",
+    })
+    assert admin_as_candidate.status_code == 401
+    assert admin_as_candidate.json()["detail"] == "Account does not match this login type"
+
+
+@pytest.mark.asyncio
+async def test_company_login_rejects_candidate_and_admin_accounts(client: AsyncClient):
+    candidate_email = f"candidate_wrong_{uuid.uuid4().hex[:8]}@example.com"
+    await client.post("/api/v1/auth/candidate/register", json={
+        "email": candidate_email,
+        "password": "password123",
+        "full_name": "Wrong Login Candidate",
+    })
+
+    candidate_as_company = await client.post("/api/v1/auth/login", json={
+        "email": candidate_email,
+        "password": "password123",
+        "account_type": "company",
+    })
+    assert candidate_as_company.status_code == 401
+    assert candidate_as_company.json()["detail"] == "Account does not match this login type"
+
+    await client.post("/api/v1/auth/login", json={
+        "email": settings.platform_admin_email,
+        "password": settings.platform_admin_password,
+        "account_type": "admin",
+    })
+    admin_as_company = await client.post("/api/v1/auth/login", json={
+        "email": settings.platform_admin_email,
+        "password": settings.platform_admin_password,
+        "account_type": "company",
+    })
+    assert admin_as_company.status_code == 401
+    assert admin_as_company.json()["detail"] == "Account does not match this login type"
+
+
+@pytest.mark.asyncio
+async def test_admin_login_rejects_candidate_and_company_accounts(client: AsyncClient):
+    candidate_email = f"candidate_admin_wrong_{uuid.uuid4().hex[:8]}@example.com"
+    await client.post("/api/v1/auth/candidate/register", json={
+        "email": candidate_email,
+        "password": "password123",
+        "full_name": "Wrong Admin Candidate",
+    })
+    candidate_as_admin = await client.post("/api/v1/auth/login", json={
+        "email": candidate_email,
+        "password": "password123",
+        "account_type": "admin",
+    })
+    assert candidate_as_admin.status_code == 401
+    assert candidate_as_admin.json()["detail"] == "Account does not match this login type"
+
+    company_email = f"company_admin_wrong_{uuid.uuid4().hex[:8]}@example.com"
+    await client.post("/api/v1/auth/company/register", json={
+        "email": company_email,
+        "password": "password123",
+        "company_name": "Wrong Admin Corp",
+    })
+    company_as_admin = await client.post("/api/v1/auth/login", json={
+        "email": company_email,
+        "password": "password123",
+        "account_type": "admin",
+    })
+    assert company_as_admin.status_code == 401
+    assert company_as_admin.json()["detail"] == "Account does not match this login type"
+
+
+@pytest.mark.asyncio
+async def test_role_protected_api_rejects_foreign_roles(client: AsyncClient):
+    candidate_email = f"role_api_candidate_{uuid.uuid4().hex[:8]}@example.com"
+    await client.post("/api/v1/auth/candidate/register", json={
+        "email": candidate_email,
+        "password": "password123",
+        "full_name": "Role API Candidate",
+    })
+    candidate_login = await client.post("/api/v1/auth/login", json={
+        "email": candidate_email,
+        "password": "password123",
+        "account_type": "candidate",
+    })
+    assert candidate_login.status_code == 200, candidate_login.text
+    candidate_token = candidate_login.json()["access_token"]
+
+    company_from_candidate = await client.get(
+        "/api/v1/company/candidates/page",
+        headers=auth_headers(candidate_token),
+    )
+    assert company_from_candidate.status_code == 403
+
+    company_email = f"role_api_company_{uuid.uuid4().hex[:8]}@example.com"
+    await client.post("/api/v1/auth/company/register", json={
+        "email": company_email,
+        "password": "password123",
+        "company_name": "Role API Corp",
+    })
+    company_login = await client.post("/api/v1/auth/login", json={
+        "email": company_email,
+        "password": "password123",
+        "account_type": "company",
+    })
+    assert company_login.status_code == 200, company_login.text
+    company_token = company_login.json()["access_token"]
+
+    admin_from_company = await client.get("/api/v1/admin/users", headers=auth_headers(company_token))
+    assert admin_from_company.status_code == 403
+
+    admin_login = await client.post("/api/v1/auth/login", json={
+        "email": settings.platform_admin_email,
+        "password": settings.platform_admin_password,
+        "account_type": "admin",
+    })
+    assert admin_login.status_code == 200, admin_login.text
+    admin_token = admin_login.json()["access_token"]
+
+    candidate_from_admin = await client.get("/api/v1/candidate/stats", headers=auth_headers(admin_token))
+    assert candidate_from_admin.status_code == 403

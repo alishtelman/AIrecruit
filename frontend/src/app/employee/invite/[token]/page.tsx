@@ -47,7 +47,7 @@ export default function EmployeeInvitePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#08111e] flex items-center justify-center">
+      <div className="employee-invite-light flex min-h-screen items-center justify-center">
         <div className="text-slate-400">{t("loading")}</div>
       </div>
     );
@@ -55,7 +55,7 @@ export default function EmployeeInvitePage() {
 
   if (error && !info) {
     return (
-      <div className="min-h-screen bg-[#08111e] flex items-center justify-center px-4">
+      <div className="employee-invite-light flex min-h-screen items-center justify-center px-4">
         <div className="w-full max-w-md rounded-[28px] border border-rose-500/20 bg-slate-950/80 p-8 text-center">
           <h1 className="mt-4 text-xl font-semibold text-white">{t("unavailable.title")}</h1>
           <p className="mt-2 text-sm text-slate-400">{error}</p>
@@ -127,7 +127,7 @@ export default function EmployeeInvitePage() {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(34,197,94,0.12),_transparent_28%),linear-gradient(180deg,_#071019_0%,_#0f172a_100%)] px-4 py-10">
+    <div className="employee-invite-light min-h-screen px-4 py-10">
       <div className="mx-auto grid max-w-5xl gap-6 lg:grid-cols-[1.1fr_0.9fr]">
         <section className="rounded-[32px] border border-slate-800 bg-slate-950/80 p-8 shadow-2xl shadow-black/20">
           <div className="flex items-start justify-between gap-4">

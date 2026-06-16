@@ -9,6 +9,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { candidateApi, interviewApi } from "@/lib/api";
 import { clearPreparedInterviewMedia, prepareInterviewMediaSession } from "@/lib/interviewMediaSession";
 import type { TargetRole } from "@/lib/types";
+import { CandidateShell } from "@/components/candidate-shell";
+import { PageHeader, PanelCard, StatusBadge } from "@/components/ui/primitives";
 
 const ROLE_VALUES: TargetRole[] = [
   "backend_engineer",
@@ -26,7 +28,7 @@ function StartInterviewInner() {
   const common = useTranslations("common");
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { loading: authLoading } = useAuth();
+  const { loading: authLoading } = useAuth({ allowedRoles: ["candidate"] });
   const [selected, setSelected] = useState<TargetRole | null>(null);
   const [language, setLanguage] = useState<"ru" | "en">("ru");
   const [starting, setStarting] = useState(false);
@@ -105,98 +107,121 @@ function StartInterviewInner() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-slate-400">{common("status.loading")}</div>
+      <div className="flex min-h-screen items-center justify-center bg-[#F4F5F7]">
+        <div className="font-semibold text-slate-500">{common("status.loading")}</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 px-4 py-10">
-      <div className="max-w-lg mx-auto">
-        <div className="mb-6 flex items-center justify-between gap-4">
-          <Link href="/candidate/dashboard" className="text-slate-400 hover:text-white text-sm inline-block">
-            ← {t("back")}
-          </Link>
-          <LocaleSwitcher />
+    <CandidateShell>
+      <div className="mx-auto max-w-5xl py-6">
+        <PageHeader
+          eyebrow="Voice interview"
+          title={t("title")}
+          description={t("subtitle")}
+          actions={
+            <div className="flex items-center gap-3">
+              <LocaleSwitcher />
+              <Link href="/candidate/dashboard" className="candidate-btn-secondary rounded-xl px-4 py-2 text-sm font-bold">
+                ← {t("back")}
+              </Link>
+            </div>
+          }
+        />
+
+        <div className="mb-6 grid gap-4 md:grid-cols-3">
+          <PanelCard className="p-5">
+            <StatusBadge tone="info">01</StatusBadge>
+            <h2 className="mt-4 font-manrope text-lg font-bold text-[#1A1C22]">Выберите роль</h2>
+            <p className="mt-2 text-sm leading-6 text-[#56596a]">AI подстроит структуру интервью, практику и рубрики под выбранную позицию.</p>
+          </PanelCard>
+          <PanelCard className="p-5">
+            <StatusBadge tone="success">02</StatusBadge>
+            <h2 className="mt-4 font-manrope text-lg font-bold text-[#1A1C22]">Голосовой формат</h2>
+            <p className="mt-2 text-sm leading-6 text-[#56596a]">{t("recordingHint")}</p>
+          </PanelCard>
+          <PanelCard className="p-5">
+            <StatusBadge tone="neutral">03</StatusBadge>
+            <h2 className="mt-4 font-manrope text-lg font-bold text-[#1A1C22]">Отчёт после финала</h2>
+            <p className="mt-2 text-sm leading-6 text-[#56596a]">После завершения вы получите понятный отчёт с сильными сторонами и roadmap.</p>
+          </PanelCard>
         </div>
 
-        <h1 className="text-2xl font-bold text-white mb-2">{t("title")}</h1>
-        <p className="text-slate-400 mb-8">{t("subtitle")}</p>
+        <PanelCard className="p-6 sm:p-8">
+          {error && (
+            <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+              {error}
+            </div>
+          )}
 
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-4 py-3 mb-6">
-            {error}
+          {resumeMissing && (
+            <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <p className="font-semibold">{t("resumeRequired")}</p>
+              <Link
+                href="/candidate/resume"
+                className="mt-2 inline-block font-bold text-amber-900 underline underline-offset-4 hover:text-[#1A1C22]"
+              >
+                {t("uploadResumeCta")}
+              </Link>
+            </div>
+          )}
+
+          <div className="mb-8 grid gap-3 md:grid-cols-2">
+            {ROLE_VALUES.map((role) => (
+              <button
+                key={role}
+                onClick={() => setSelected(role)}
+                className={`w-full rounded-2xl border p-5 text-left transition-all ${
+                  selected === role
+                    ? "border-[#2F5BEA] bg-[#EEF2FF] shadow-[0_12px_28px_rgba(47,91,234,0.12)]"
+                    : "border-[#E9EAEE] bg-[#FAFBFC] hover:border-slate-300 hover:bg-white"
+                }`}
+              >
+                <div className={`mb-1 font-bold ${selected === role ? "text-[#2348C8]" : "text-[#1A1C22]"}`}>
+                  {roleLabel(role)}
+                </div>
+                <div className="text-sm leading-6 text-[#56596a]">{roleDescription(role)}</div>
+              </button>
+            ))}
           </div>
-        )}
 
-        {resumeMissing && (
-          <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-            <p>{t("resumeRequired")}</p>
-            <Link
-              href="/candidate/resume"
-              className="mt-2 inline-block font-medium text-amber-100 underline underline-offset-4 hover:text-white"
-            >
-              {t("uploadResumeCta")}
-            </Link>
+          <div className="mb-6">
+            <p className="mb-2 text-sm font-bold text-[#56596a]">{t("language")}:</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setLanguage("ru")}
+                className={`flex-1 rounded-xl border py-2.5 text-sm font-bold transition-colors ${
+                  language === "ru"
+                    ? "border-[#2F5BEA] bg-[#EEF2FF] text-[#2348C8]"
+                    : "border-[#E0E1E6] bg-white text-[#56596a] hover:border-slate-300"
+                }`}
+              >
+                RU
+              </button>
+              <button
+                onClick={() => setLanguage("en")}
+                className={`flex-1 rounded-xl border py-2.5 text-sm font-bold transition-colors ${
+                  language === "en"
+                    ? "border-[#2F5BEA] bg-[#EEF2FF] text-[#2348C8]"
+                    : "border-[#E0E1E6] bg-white text-[#56596a] hover:border-slate-300"
+                }`}
+              >
+                EN
+              </button>
+            </div>
           </div>
-        )}
 
-        <div className="space-y-3 mb-8">
-          {ROLE_VALUES.map((role) => (
-            <button
-              key={role}
-              onClick={() => setSelected(role)}
-              className={`w-full text-left p-5 rounded-xl border transition-all ${
-                selected === role
-                  ? "border-blue-500 bg-blue-500/10"
-                  : "border-slate-700 bg-slate-800 hover:border-slate-600"
-              }`}
-            >
-              <div className={`font-semibold mb-1 ${selected === role ? "text-blue-300" : "text-white"}`}>
-                {roleLabel(role)}
-              </div>
-              <div className="text-slate-400 text-sm">{roleDescription(role)}</div>
-            </button>
-          ))}
-        </div>
-
-        <div className="mb-6">
-          <p className="text-slate-400 text-sm mb-2">{t("language")}:</p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setLanguage("ru")}
-              className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${
-                language === "ru"
-                  ? "bg-blue-500/15 border-blue-500/40 text-blue-400"
-                  : "bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600"
-              }`}
-            >
-              RU
-            </button>
-            <button
-              onClick={() => setLanguage("en")}
-              className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${
-                language === "en"
-                  ? "bg-blue-500/15 border-blue-500/40 text-blue-400"
-                  : "bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600"
-              }`}
-            >
-              EN
-            </button>
-          </div>
-          <p className="mt-2 text-xs text-slate-500">{t("recordingHint")}</p>
-        </div>
-
-        <button
-          onClick={handleStart}
-          disabled={startDisabled}
-          className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors"
-        >
-          {checkingResume ? t("checkingResume") : starting ? t("starting") : t("start")}
-        </button>
+          <button
+            onClick={handleStart}
+            disabled={startDisabled}
+            className="candidate-btn-primary w-full rounded-xl py-3.5 text-base font-bold shadow-[0_8px_20px_rgba(47,91,234,0.25)] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {checkingResume ? t("checkingResume") : starting ? t("starting") : t("start")}
+          </button>
+        </PanelCard>
       </div>
-    </div>
+    </CandidateShell>
   );
 }
 
@@ -205,8 +230,8 @@ export default function StartInterviewPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-          <div className="text-slate-400">{common("status.loading")}</div>
+        <div className="flex min-h-screen items-center justify-center bg-[#F4F5F7]">
+          <div className="text-slate-500">{common("status.loading")}</div>
         </div>
       }
     >

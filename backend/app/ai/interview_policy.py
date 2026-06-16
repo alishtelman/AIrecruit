@@ -22,6 +22,10 @@ def decide_interview_policy(
     quality = str(eval_data.get("quality") or "no_signal")
 
     weak_streak = _safe_int(state.get("weak_answer_streak"), 0)
+    competency_followups = _safe_int(
+        state.get("followups_on_current_competency"),
+        _safe_int(state.get("attempts_on_current_step"), 0),
+    )
     last_step_key = str(state.get("last_step_key") or "")
     current_step_key = str(state.get("current_step_key") or "")
     same_step = bool(current_step_key and current_step_key == last_step_key)
@@ -48,7 +52,7 @@ def decide_interview_policy(
     if intent == "weak_answer" or quality == "weak":
         update_weak_answer_count = True
         count_as_scored_answer = True
-        if same_step and weak_streak >= 1:
+        if same_step and (weak_streak >= 1 or competency_followups >= 2):
             # Avoid loops: after one pressure attempt on same step we can move on.
             policy_action = "switch_topic"
             advance_phase = True
@@ -59,6 +63,14 @@ def decide_interview_policy(
             advance_phase = False
             advance_scenario = False
             reason = "weak_answer_requires_pressure_followup"
+
+    if intent == "dont_know":
+        update_weak_answer_count = True
+        count_as_scored_answer = True
+        policy_action = "switch_topic"
+        advance_phase = True
+        advance_scenario = True
+        reason = "explicit_gap_acknowledged_switch_topic"
 
     if intent in {"clarification_request", "request_example"}:
         policy_action = "clarify" if intent == "clarification_request" else "give_example_scenario"

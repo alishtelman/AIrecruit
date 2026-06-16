@@ -22,7 +22,7 @@ from app.schemas.admin import (
     PlatformSettingsResponse,
     PlatformSettingsUpdateRequest,
 )
-from app.schemas.report import AssessmentReportResponse
+from app.schemas.report import AssessmentReportResponse, build_report_view
 from app.services.admin_service import (
     admin_requeue_interview_report,
     create_admin_audit_log,
@@ -272,7 +272,8 @@ async def admin_report_detail(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await get_admin_report(db, report_id)
+        report = await get_admin_report(db, report_id)
+        return build_report_view(report, "internal")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 

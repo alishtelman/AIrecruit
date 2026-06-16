@@ -59,6 +59,7 @@ export default function AdminReportDetailPage() {
 
   const practical = report?.practical_section ?? null;
   const counters = report?.answer_quality_counters ?? report?.interview_quality_metrics ?? null;
+  const debug = report?.internal_debug_report ?? null;
 
   return (
     <div className="ai-shell min-h-screen">
@@ -101,6 +102,25 @@ export default function AdminReportDetailPage() {
                   <MetricCard label="Reframes" value={String(counters.relevance_reframe_count ?? "—")} />
                   <MetricCard label="Forced transitions" value={String(counters.forced_topic_transition_count ?? "—")} />
                 </div>
+              </Section>
+            )}
+
+            {debug && (
+              <Section title="Internal debug / evaluation">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <MetricCard label="Signal reliability" value={String(debug.signal_reliability?.level ?? "—")} />
+                  <MetricCard label="AI probability" value={debug.ai_generation_probability == null ? "—" : `${Math.round(debug.ai_generation_probability * 100)}%`} />
+                  <MetricCard label="Model" value={String(debug.evaluator_versions?.model_version ?? report.model_version ?? "—")} />
+                  <MetricCard label="Prompt/policy" value={String(debug.prompt_version ?? report.decision_policy_version ?? "—")} />
+                </div>
+                {Array.isArray(debug.confidence?.confidence_reasons) && debug.confidence.confidence_reasons.length > 0 && (
+                  <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+                    <div className="mb-2 text-xs uppercase tracking-[0.18em] text-slate-500">Confidence reasons</div>
+                    <ul className="space-y-1 text-sm text-slate-300">
+                      {debug.confidence.confidence_reasons.map((reason) => <li key={String(reason)}>• {String(reason)}</li>)}
+                    </ul>
+                  </div>
+                )}
               </Section>
             )}
 

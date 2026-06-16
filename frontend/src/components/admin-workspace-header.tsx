@@ -61,7 +61,9 @@ export function AdminWorkspaceHeader({ onLogout }: AdminWorkspaceHeaderProps) {
             <LocaleSwitcher />
             {onLogout && (
               <button
+                type="button"
                 onClick={onLogout}
+                aria-label={common("actions.signOut")}
                 className="rounded-full border border-white/8 bg-slate-950/25 px-4 py-2 text-sm font-medium text-slate-300 transition-colors hover:border-white/16 hover:text-white"
               >
                 {common("actions.signOut")}

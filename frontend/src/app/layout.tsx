@@ -1,10 +1,20 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Hanken_Grotesk, Manrope } from "next/font/google";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages, getTranslations } from "next-intl/server";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
+const hankenGrotesk = Hanken_Grotesk({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-hanken-grotesk",
+});
+
+const manrope = Manrope({
+  subsets: ["latin", "cyrillic"],
+  weight: ["500", "600", "700", "800"],
+  variable: "--font-manrope",
+});
 
 export async function generateMetadata(): Promise<Metadata> {
   const locale = await getLocale();
@@ -26,7 +36,7 @@ export default async function RootLayout({
 
   return (
     <html lang={locale}>
-      <body className={inter.className}>
+      <body className={`${hankenGrotesk.className} ${hankenGrotesk.variable} ${manrope.variable} antialiased`}>
         <NextIntlClientProvider messages={messages}>
           {children}
         </NextIntlClientProvider>

@@ -165,7 +165,18 @@ async def send_message(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await add_candidate_message(db, candidate, interview_id, body.message)
+        return await add_candidate_message(
+            db,
+            candidate,
+            interview_id,
+            body.message,
+            input_mode=body.input_mode,
+            transcript_confirmed=body.transcript_confirmed,
+            transcript_quality=body.transcript_quality,
+            audio_available=body.audio_available,
+            audio_duration_ms=body.audio_duration_ms,
+            audio_size_bytes=body.audio_size_bytes,
+        )
     except InterviewNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found.")
     except InterviewAlreadyFinishedError:

@@ -20,6 +20,7 @@ async def _register_candidate(client: AsyncClient, email: str, full_name: str = 
     resp = await client.post("/api/v1/auth/login", json={
         "email": email,
         "password": "testpass123",
+        "account_type": "candidate",
     })
     return resp.json()["access_token"]
 
@@ -34,6 +35,7 @@ async def _register_company(client: AsyncClient, name: str = "Other Corp") -> st
     resp = await client.post("/api/v1/auth/login", json={
         "email": email,
         "password": "testpass123",
+        "account_type": "company",
     })
     return resp.json()["access_token"]
 
@@ -42,6 +44,7 @@ async def _admin_token(client: AsyncClient) -> str:
     resp = await client.post("/api/v1/auth/login", json={
         "email": settings.platform_admin_email,
         "password": settings.platform_admin_password,
+        "account_type": "admin",
     })
     assert resp.status_code == 200, resp.text
     return resp.json()["access_token"]

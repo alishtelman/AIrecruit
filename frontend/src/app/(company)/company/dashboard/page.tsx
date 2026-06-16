@@ -43,6 +43,8 @@ const ROLE_VALUES = [
   "designer",
 ] as const;
 
+const CANDIDATES_PAGE_SIZE = 10;
+
 type DashboardTab = "candidates" | "analytics";
 type DashboardSort = NonNullable<CompanyCandidateSearchParams["sort"]>;
 
@@ -138,6 +140,16 @@ function MetricCard({ label, value, tone = "default" }: { label: string; value: 
     <div className={`rounded-xl border p-4 ${toneClass}`}>
       <p className="text-slate-400 text-xs uppercase tracking-wide mb-2">{label}</p>
       <p className="text-white text-2xl font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function WorkspaceCue({ label, value, description }: { label: string; value: string; description: string }) {
+  return (
+    <div className="rounded-[1.35rem] border border-[#E9EAEE] bg-white px-5 py-4 shadow-[0_10px_28px_rgba(20,22,30,0.05)]">
+      <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#8A8EA0]">{label}</div>
+      <div className="mt-2 font-manrope text-xl font-bold tracking-[-0.02em] text-[#1A1C22]">{value}</div>
+      <p className="mt-1 text-sm leading-5 text-[#56596a]">{description}</p>
     </div>
   );
 }
@@ -248,6 +260,9 @@ export default function CompanyDashboardPage() {
   const [draftFilters, setDraftFilters] = useState<FilterDraft>(DEFAULT_FILTERS);
   const [filters, setFilters] = useState<CompanyCandidateSearchParams>({ sort: "score_desc" });
   const [candidates, setCandidates] = useState<CandidateListItem[]>([]);
+  const [candidatePage, setCandidatePage] = useState(1);
+  const [candidateTotal, setCandidateTotal] = useState(0);
+  const [candidateTotalPages, setCandidateTotalPages] = useState(0);
   const [shortlists, setShortlists] = useState<CompanyShortlist[]>([]);
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
   const [loadingCandidates, setLoadingCandidates] = useState(true);
@@ -285,14 +300,17 @@ export default function CompanyDashboardPage() {
     setLoadingCandidates(true);
     setCandidatesError("");
     companyApi
-      .listCandidates(filters)
-      .then((items) => {
-        setCandidates(items);
-        setSelectedCandidateIds((current) => current.filter((id) => items.some((item) => item.candidate_id === id)));
+      .listCandidates({ ...filters, page: candidatePage, page_size: CANDIDATES_PAGE_SIZE })
+      .then((result) => {
+        setCandidates(result.items);
+        setCandidateTotal(result.total);
+        setCandidateTotalPages(result.total_pages);
+        setCandidatePage(result.page);
+        setSelectedCandidateIds((current) => current.filter((id) => result.items.some((item) => item.candidate_id === id)));
       })
       .catch((err) => setCandidatesError(normalizeDashboardError(err.message, t("errors.loadCandidates"))))
       .finally(() => setLoadingCandidates(false));
-  }, [authLoading, filters, t]);
+  }, [authLoading, candidatePage, filters, t]);
 
   useEffect(() => {
     if (authLoading || tab !== "analytics") return;
@@ -316,13 +334,16 @@ export default function CompanyDashboardPage() {
   }, [authLoading, tab, filters.role, filters.shortlist_id, t]);
 
   async function refreshCandidateWorkspace() {
-    const [candidateItems, shortlistItems] = await Promise.all([
-      companyApi.listCandidates(filters),
+    const [candidateResult, shortlistItems] = await Promise.all([
+      companyApi.listCandidates({ ...filters, page: candidatePage, page_size: CANDIDATES_PAGE_SIZE }),
       companyApi.listShortlists(),
     ]);
-    setCandidates(candidateItems);
+    setCandidates(candidateResult.items);
+    setCandidateTotal(candidateResult.total);
+    setCandidateTotalPages(candidateResult.total_pages);
+    setCandidatePage(candidateResult.page);
     setShortlists(shortlistItems);
-    setSelectedCandidateIds((current) => current.filter((id) => candidateItems.some((item) => item.candidate_id === id)));
+    setSelectedCandidateIds((current) => current.filter((id) => candidateResult.items.some((item) => item.candidate_id === id)));
   }
 
   function toggleCandidate(candidateId: string) {
@@ -367,6 +388,7 @@ export default function CompanyDashboardPage() {
       if (filters.shortlist_id === shortlistId) {
         const nextDraft = { ...draftFilters, shortlistId: "" };
         setDraftFilters(nextDraft);
+        setCandidatePage(1);
         setFilters(parseFilters(nextDraft));
       } else {
         await refreshCandidateWorkspace();
@@ -396,15 +418,34 @@ export default function CompanyDashboardPage() {
 
   function applyFilters(e: React.FormEvent) {
     e.preventDefault();
+    setCandidatePage(1);
     setFilters(parseFilters(draftFilters));
   }
 
   function resetFilters() {
     setDraftFilters(DEFAULT_FILTERS);
+    setCandidatePage(1);
     setFilters({ sort: "score_desc" });
   }
 
   const selectedCandidates = candidates.filter((candidate) => selectedCandidateIds.includes(candidate.candidate_id));
+  const currentPageHighRiskCount = candidates.filter(
+    (candidate) => candidate.red_flag_count > 0 || (candidate.cheat_risk_score ?? 0) >= 0.7,
+  ).length;
+  const currentPageStrongCandidates = candidates.filter(
+    (candidate) => candidate.hiring_recommendation === "strong_yes" || candidate.hiring_recommendation === "yes",
+  ).length;
+  const activeFilterCount = [
+    filters.q,
+    filters.role,
+    filters.skills?.length,
+    filters.min_score,
+    filters.recommendation,
+    filters.salary_min,
+    filters.salary_max,
+    filters.hire_outcome,
+    filters.shortlist_id,
+  ].filter(Boolean).length;
 
   if (authLoading) {
     return (
@@ -428,6 +469,24 @@ export default function CompanyDashboardPage() {
               <p className="mt-2 text-sm text-amber-300">{t("viewerMode")}</p>
             )}
           </section>
+        </div>
+
+        <div className="mb-6 grid gap-3 lg:grid-cols-3">
+          <WorkspaceCue
+            label="Pipeline focus"
+            value={`${candidateTotal.toLocaleString()} кандидатов`}
+            description={`Показываем по ${CANDIDATES_PAGE_SIZE} на странице, чтобы список не тормозил и рекрутер работал партиями.`}
+          />
+          <WorkspaceCue
+            label="Decision quality"
+            value={`${currentPageStrongCandidates} сильных · ${currentPageHighRiskCount} риск`}
+            description="Сначала открывайте сильных кандидатов и тех, где есть флаги — это самый быстрый путь к решению."
+          />
+          <WorkspaceCue
+            label="Compare mode"
+            value={`${selectedCandidates.length}/3 выбрано`}
+            description={activeFilterCount > 0 ? `${activeFilterCount} фильтр(ов) активно.` : "Выберите 2–3 кандидата для короткого сравнения."}
+          />
         </div>
 
         <div className="mb-6 flex items-center gap-2">
@@ -550,7 +609,14 @@ export default function CompanyDashboardPage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <p className="text-slate-500 text-sm">
-                    {loadingCandidates ? t("search.refreshing") : t("search.resultCount", {count: candidates.length})}
+                    {loadingCandidates
+                      ? t("search.refreshing")
+                      : t("search.resultCountPaged", {
+                          shown: candidates.length,
+                          total: candidateTotal,
+                          page: candidatePage,
+                          pages: Math.max(candidateTotalPages, 1),
+                        })}
                   </p>
                   <button
                     type="submit"
@@ -732,6 +798,33 @@ export default function CompanyDashboardPage() {
                     </div>
                   );
                 })}
+                <div className="ai-panel rounded-[1.4rem] p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-slate-400 text-sm">
+                    {t("pagination.summary", {
+                      page: candidatePage,
+                      pages: Math.max(candidateTotalPages, 1),
+                      total: candidateTotal,
+                    })}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={candidatePage <= 1 || loadingCandidates}
+                      onClick={() => setCandidatePage((current) => Math.max(1, current - 1))}
+                      className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 transition-colors hover:border-blue-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {t("pagination.previous")}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={candidateTotalPages === 0 || candidatePage >= candidateTotalPages || loadingCandidates}
+                      onClick={() => setCandidatePage((current) => Math.min(candidateTotalPages, current + 1))}
+                      className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 transition-colors hover:border-blue-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {t("pagination.next")}
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </>

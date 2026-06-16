@@ -101,7 +101,7 @@ async def _run_smoke(role: str, provider: str, base_url: str, max_turns: int, tu
 
         login_resp = await client.post(
             "/api/v1/auth/login",
-            json={"email": email, "password": "Testpass123"},
+            json={"email": email, "password": "Testpass123", "account_type": "candidate"},
         )
         login_resp.raise_for_status()
         token = str(login_resp.json().get("access_token") or "")

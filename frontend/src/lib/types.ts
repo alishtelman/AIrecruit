@@ -8,6 +8,7 @@ export interface User {
   company_id?: string | null;
   is_active: boolean;
   created_at: string;
+  full_name?: string;
 }
 
 export type AssessmentType = "employee_internal" | "candidate_external";
@@ -381,6 +382,7 @@ export interface TokenResponse {
 export interface LoginRequest {
   email: string;
   password: string;
+  account_type: "candidate" | "company" | "admin";
 }
 
 export interface CandidateRegisterRequest {
@@ -522,23 +524,34 @@ export interface StartInterviewResponse {
 
 export interface SendMessageRequest {
   message: string;
+  input_mode?: "voice" | "text";
+  transcript_confirmed?: boolean;
+  transcript_quality?: "good" | "low" | "empty" | "failed";
+  audio_available?: boolean;
+  audio_duration_ms?: number;
+  audio_size_bytes?: number;
 }
 
 export interface PracticalTask {
   task_id: string;
-  task_type: string; // "coding_task" | "sql_task" | "qa_test_case_task" | "debugging_task" | "product_case_task" | "business_case_task"
+  stable_id?: string;             // backend stable reference for evaluator
+  task_type: string;              // "coding_task" | "sql_task" | "qa_test_case_task" | "debugging_task" | "system_design_task" | "product_case_task"
   title: string;
   instruction: string;
-  language?: string | null; // "python" | "javascript" | "sql" | "text" | "other"
-  starter_code?: string | null;
+  language?: string | null;       // "python" | "javascript" | "sql" | "text" | "other"
+  starter_code?: string | null;   // readonly reference boilerplate — answer starts EMPTY
   examples?: Array<{ input?: string; output?: string; description?: string }>;
   time_limit_minutes: number;
   evaluation_criteria: string[];
   voice_intro?: string | null;
+  task_index: number;             // 1-based position within this interview's plan
+  task_total: number;             // total tasks in this interview's plan
+  // expected_solution is intentionally absent — backend-only, never sent to client
 }
 
 export interface PracticalSubmissionRequest {
   task_id: string;
+  stable_id?: string;
   task_type: string;
   answer: string;
   language?: string | null;
@@ -759,6 +772,14 @@ export interface CandidateListItem {
   red_flag_count: number;
 }
 
+export interface CandidateListPage {
+  items: CandidateListItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
 export interface CompanyCandidateSearchParams {
   q?: string;
   role?: string;
@@ -770,6 +791,8 @@ export interface CompanyCandidateSearchParams {
   hire_outcome?: HireOutcome | "";
   shortlist_id?: string;
   sort?: "score_desc" | "score_asc" | "latest" | "salary_asc" | "salary_desc";
+  page?: number;
+  page_size?: number;
 }
 
 export type HireOutcome = "hired" | "rejected" | "interviewing" | "no_show";
@@ -1004,6 +1027,8 @@ export interface SkillTag {
   skill: string;
   proficiency: string;
   mentions_count: number;
+  status?: "confirmed" | "mentioned" | "development";
+  evidence?: string | null;
 }
 
 export interface RedFlag {
@@ -1130,6 +1155,45 @@ export interface AssessmentReport {
   practical_section: Record<string, unknown> | null;
   interview_quality_metrics: Record<string, number> | null;
   answer_quality_counters: Record<string, number> | null;
+  voice_section?: Record<string, unknown> | null;
+  signal_reliability?: Record<string, unknown> | null;
+  report_view?: "candidate" | "company" | "internal";
+  candidate_report?: CandidateReportView | null;
+  company_report?: CompanyReportView | null;
+  internal_debug_report?: InternalDebugReportView | null;
+}
+
+export interface CandidateReportView {
+  level_label: string | null;
+  headline: string;
+  human_summary: string | null;
+  strengths: string[];
+  growth_areas: string[];
+  recommendations: string[];
+  roadmap: DevelopmentRoadmap | null;
+  confirmed_skills: SkillTag[];
+  skills_to_develop: SkillTag[];
+  mentioned_skills: SkillTag[];
+}
+
+export interface CompanyReportView {
+  hire_recommendation: HiringRecommendation;
+  score: number | null;
+  key_risks: string[];
+  evidence_items: string[];
+  role_mismatch_notes: string[];
+  competency_map: CompetencyScore[];
+  per_question_analysis: QuestionAnalysis[];
+}
+
+export interface InternalDebugReportView {
+  signal_reliability: Record<string, unknown> | null;
+  ai_generation_probability: number | null;
+  raw_flags: RedFlag[];
+  evaluator_versions: Record<string, unknown>;
+  prompt_version: string | null;
+  parsed_answers: QuestionAnalysis[];
+  confidence: Record<string, unknown>;
 }
 
 export interface ReportModuleSession {

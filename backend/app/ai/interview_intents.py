@@ -267,7 +267,7 @@ def classify_candidate_intent(message: str, context: dict) -> dict:
             "should_count_as_answer": True,
             "should_advance_phase": False,
             "should_advance_scenario": False,
-            "recommended_policy": "pressure_followup",
+            "recommended_policy": "switch_topic",
             "reason": "candidate_explicitly_does_not_know",
         }
 

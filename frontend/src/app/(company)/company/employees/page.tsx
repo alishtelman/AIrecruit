@@ -246,6 +246,8 @@ export default function EmployeesPage() {
           <SummaryCard label={t("summary.completionRate")} value={`${completionRate}%`} accent="amber" />
         </div>
 
+        <AssessmentFlowGuide canManageCampaigns={canManageCampaigns} />
+
         {error && (
           <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
             {error}
@@ -838,6 +840,49 @@ function SummaryCard({
       <div className="text-xs uppercase tracking-[0.16em] text-slate-400">{label}</div>
       <div className="mt-3 text-3xl font-semibold">{value}</div>
     </div>
+  );
+}
+
+function AssessmentFlowGuide({ canManageCampaigns }: { canManageCampaigns: boolean }) {
+  const steps = [
+    {
+      title: "1. Настройте роль",
+      description: "Выберите позицию и модули: интервью, письменный кейс, SQL или практическую задачу.",
+    },
+    {
+      title: "2. Отправьте invite",
+      description: "Кандидат или сотрудник проходит assessment по защищённой ссылке без доступа к кабинету компании.",
+    },
+    {
+      title: "3. Следите за статусом",
+      description: "Opened/In progress/Completed показывают, где человек находится прямо сейчас.",
+    },
+    {
+      title: "4. Откройте отчёт",
+      description: "После completion смотрите report и replay: решение, риски, evidence и transcript.",
+    },
+  ];
+
+  return (
+    <section className="rounded-[1.8rem] border border-[#E9EAEE] bg-white p-5 shadow-[0_12px_32px_rgba(20,22,30,0.05)]">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-[#8A8EA0]">Assessment flow</div>
+          <h2 className="mt-1 font-manrope text-xl font-bold tracking-[-0.02em] text-[#1A1C22]">Запуск оценки в 4 шага</h2>
+        </div>
+        <span className={`rounded-full border px-3 py-1 text-xs font-bold ${canManageCampaigns ? "border-[#D6E0FD] bg-[#ECF0FE] text-[#2348C8]" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+          {canManageCampaigns ? "Можно создавать приглашения" : "Только просмотр"}
+        </span>
+      </div>
+      <div className="grid gap-3 md:grid-cols-4">
+        {steps.map((step) => (
+          <div key={step.title} className="rounded-2xl border border-[#E9EAEE] bg-[#FAFBFC] p-4">
+            <div className="text-sm font-bold text-[#1A1C22]">{step.title}</div>
+            <p className="mt-2 text-sm leading-5 text-[#56596a]">{step.description}</p>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

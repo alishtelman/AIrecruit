@@ -1,18 +1,21 @@
 "use client";
 
 import {useLocale, useTranslations} from "next-intl";
-import {usePathname, useRouter} from "@/i18n/navigation";
+import {usePathname, useRouter, useSearchParams} from "next/navigation";
 import type {AppLocale} from "@/i18n/routing";
 
 export function LocaleSwitcher() {
   const t = useTranslations("common.locale");
   const locale = useLocale() as AppLocale;
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
 
   function setLocale(nextLocale: AppLocale) {
     document.cookie = `NEXT_LOCALE=${nextLocale}; path=/; max-age=31536000; samesite=lax`;
-    router.replace(pathname, {locale: nextLocale});
+    const cleanPathname = pathname.replace(/^\/(en|ru)(?=\/|$)/, "") || "/";
+    const query = searchParams.toString();
+    router.replace(query ? `${cleanPathname}?${query}` : cleanPathname);
     router.refresh();
   }
 

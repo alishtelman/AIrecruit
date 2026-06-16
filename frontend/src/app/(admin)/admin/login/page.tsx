@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Link, useRouter } from "@/i18n/navigation";
 import { authApi } from "@/lib/api";
+import { isAccountTypeMismatchError } from "@/lib/authErrors";
 import { getDefaultRouteForRole } from "@/lib/roleRedirect";
 
 export default function AdminLoginPage() {
@@ -22,11 +23,16 @@ export default function AdminLoginPage() {
     setError("");
     setLoading(true);
     try {
-      await authApi.login(form);
+      await authApi.login({ ...form, account_type: "admin" });
       const user = await authApi.me();
+      if (user.role !== "platform_admin") {
+        setError(t("roleMismatch"));
+        await authApi.logout().catch(() => null);
+        return;
+      }
       router.push(getDefaultRouteForRole(user.role));
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : t("failed"));
+      setError(isAccountTypeMismatchError(err) ? t("roleMismatch") : t("failed"));
     } finally {
       setLoading(false);
     }

@@ -57,6 +57,7 @@ async def _register_and_login(client: AsyncClient) -> str:
     resp = await client.post("/api/v1/auth/login", json={
         "email": email,
         "password": "testpass123",
+        "account_type": "candidate",
     })
     assert resp.status_code == 200, f"login failed: {resp.text}"
     return resp.json()["access_token"]

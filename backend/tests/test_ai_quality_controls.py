@@ -2,6 +2,7 @@
 
 from app.ai.assessor import (
     _aggregate_skills,
+    _apply_role_mismatch_caps,
     _apply_recommendation_gates,
     _apply_summary_penalties,
     _build_explainability_report,
@@ -10,6 +11,7 @@ from app.ai.assessor import (
     _build_fallback_question_analysis,
     _build_summary_model,
     _compute_confidence_metrics,
+    _detect_role_mismatch,
     _prefer_outcome_feedback,
 )
 from app.ai.interviewer import (
@@ -154,6 +156,101 @@ def test_aggregate_skills_keeps_high_signal_and_drops_generic_terms():
     assert by_skill["postgresql"]["mentions_count"] == 2
     assert "python" in skills
     assert "rest" not in skills
+
+
+def test_aggregate_skills_does_not_confirm_technology_without_candidate_evidence():
+    per_question = [
+        {
+            "answer_quality": 8.0,
+            "specificity": "high",
+            "depth": "strong",
+            "ai_likelihood": 0.1,
+            "evidence": "The candidate named React and DevTools but did not describe personal implementation work.",
+            "skills_mentioned": [
+                {"skill": "React", "proficiency": "intermediate"},
+                {"skill": "DevTools", "proficiency": "beginner"},
+            ],
+        }
+    ]
+    history = [
+        {"role": "assistant", "content": "Какие frontend-инструменты вы использовали?"},
+        {"role": "candidate", "content": "React, Angular, setState и DevTools встречал, но руками полноценный проект не делал."},
+    ]
+
+    result = _aggregate_skills(per_question, message_history=history)
+    by_skill = {item["skill"]: item for item in result}
+
+    assert by_skill["react"]["status"] == "mentioned"
+    assert by_skill["devtools"]["status"] == "development"
+    assert all(item.get("status") != "confirmed" for item in result)
+
+
+def test_frontend_support_transcript_detects_role_mismatch_and_caps_core_scores():
+    history = [
+        {"role": "assistant", "content": "Как вы управляли состоянием в React?"},
+        {"role": "candidate", "content": "Я руководитель сопровождения мобильного банка, смотрю Grafana, логи и инциденты."},
+        {"role": "assistant", "content": "Что вы делали лично в JS/CSS?"},
+        {"role": "candidate", "content": "React Angular видел, но руками проект не делал. Grid добавлял по задаче без деталей."},
+        {"role": "assistant", "content": "Как диагностировали проблему пользователей?"},
+        {"role": "candidate", "content": "По инциденту проверил метрики, поднял сворм и передал разработчикам, после фикса ошибок стало меньше."},
+    ]
+    per_question = [
+        {
+            "question_number": 1,
+            "targeted_competencies": ["UI Framework Mastery"],
+            "answer_quality": 3.5,
+            "evidence": "Candidate mentioned support work with Grafana/logs, no React implementation.",
+            "skills_mentioned": [{"skill": "React", "proficiency": "beginner"}],
+            "red_flags": [],
+            "specificity": "low",
+            "depth": "surface",
+            "ai_likelihood": 0.1,
+        },
+        {
+            "question_number": 2,
+            "targeted_competencies": ["JavaScript/TypeScript Fundamentals", "CSS & Responsive Design"],
+            "answer_quality": 4.0,
+            "evidence": "Named React Angular and Grid without implementation details.",
+            "skills_mentioned": [{"skill": "CSS Grid", "proficiency": "beginner"}],
+            "red_flags": [],
+            "specificity": "low",
+            "depth": "surface",
+            "ai_likelihood": 0.1,
+        },
+        {
+            "question_number": 3,
+            "targeted_competencies": ["Debugging & Problem Decomposition"],
+            "answer_quality": 6.0,
+            "evidence": "Checked metrics, organized incident swarm, handed off to developers.",
+            "skills_mentioned": [{"skill": "incident diagnostics", "proficiency": "intermediate"}],
+            "red_flags": [],
+            "specificity": "medium",
+            "depth": "adequate",
+            "ai_likelihood": 0.1,
+        },
+    ]
+    mismatch = _detect_role_mismatch(
+        target_role="frontend_engineer",
+        message_history=history,
+        per_question_analysis=per_question,
+    )
+    scores = [
+        {"competency": "UI Framework Mastery", "category": "technical_core", "score": 7.0, "weight": 0.15},
+        {"competency": "JavaScript/TypeScript Fundamentals", "category": "technical_core", "score": 6.5, "weight": 0.12},
+        {"competency": "Debugging & Problem Decomposition", "category": "problem_solving", "score": 6.0, "weight": 0.1},
+    ]
+    penalties = _apply_role_mismatch_caps(
+        target_role="frontend_engineer",
+        competency_scores=scores,
+        role_mismatch=mismatch,
+    )
+
+    assert mismatch["detected"] is True
+    assert mismatch["mismatch_type"] == "support_incident_vs_frontend"
+    assert scores[0]["score"] == 4.0
+    assert scores[1]["score"] == 4.0
+    assert scores[2]["score"] == 6.0
+    assert penalties
 
 
 def test_compute_confidence_metrics_scores_high_quality_interview():

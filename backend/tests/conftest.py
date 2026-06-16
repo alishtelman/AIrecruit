@@ -38,6 +38,7 @@ async def candidate_token(client: AsyncClient) -> str:
     resp = await client.post("/api/v1/auth/login", json={
         "email": email,
         "password": "testpass123",
+        "account_type": "candidate",
     })
     return resp.json()["access_token"]
 
@@ -54,6 +55,7 @@ async def company_token(client: AsyncClient) -> str:
     resp = await client.post("/api/v1/auth/login", json={
         "email": email,
         "password": "testpass123",
+        "account_type": "company",
     })
     return resp.json()["access_token"]
 

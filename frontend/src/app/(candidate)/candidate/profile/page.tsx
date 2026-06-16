@@ -6,6 +6,7 @@ import { Link } from "@/i18n/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import { candidateApi, resumeApi } from "@/lib/api";
 import type { ActiveResume } from "@/lib/types";
+import { CandidateShell } from "@/components/candidate-shell";
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -16,7 +17,7 @@ function formatBytes(bytes: number) {
 export default function ProfilePage() {
   const t = useTranslations("candidateProfile");
   const common = useTranslations("common");
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading } = useAuth({ allowedRoles: ["candidate"] });
   const [resume, setResume] = useState<ActiveResume | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -54,72 +55,72 @@ export default function ProfilePage() {
 
   if (authLoading || loading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-slate-400">{common("status.loading")}</div>
+      <div className="min-h-screen bg-[#F4F5F7] flex items-center justify-center">
+        <div className="text-[#56596a]">{common("status.loading")}</div>
       </div>
     );
   }
 
   return (
-    <div className="ai-shell min-h-screen px-4 py-10">
-      <div className="ai-section max-w-3xl mx-auto">
-        <Link
-          href="/candidate/dashboard"
-          className="text-slate-400 hover:text-white text-sm mb-6 inline-block transition-colors"
-        >
-          ← {t("back")}
-        </Link>
-
-        <div className="ai-panel-strong rounded-[2rem] p-7 mb-6">
-          <div className="ai-kicker mb-5">{t("kicker")}</div>
-          <h1 className="text-3xl font-semibold tracking-[-0.03em] text-white mb-2">{t("title")}</h1>
-          <p className="max-w-2xl text-slate-400">{t("subtitle")}</p>
+    <CandidateShell>
+      <div className="max-w-3xl mx-auto py-6">
+        {/* Title area */}
+        <div className="mb-6">
+          <div className="text-xs uppercase tracking-widest text-[#9aa0ab] font-bold">
+            {t("kicker") || "Профиль"}
+          </div>
+          <h1 className="text-[34px] font-bold font-manrope tracking-tight text-[#1A1C22] mt-1.5 leading-none">
+            {t("title") || "Мой профиль"}
+          </h1>
+          <p className="max-w-2xl text-[#56596a] text-sm mt-2">{t("subtitle")}</p>
         </div>
 
-        <section className="ai-panel rounded-[1.8rem] p-6 mb-4">
-          <h2 className="text-white font-semibold mb-4">{t("account")}</h2>
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-slate-400">{t("email")}</span>
-              <span className="text-white">{user?.email}</span>
+        {/* Account Details Card */}
+        <section className="candidate-card p-6 mb-6">
+          <h2 className="text-[#1A1C22] font-bold mb-4 text-[16px]">{t("account")}</h2>
+          <div className="space-y-3 text-sm">
+            <div className="flex justify-between items-center py-2 border-b border-slate-100">
+              <span className="text-[#56596a] font-medium">{t("email")}</span>
+              <span className="text-[#1A1C22] font-semibold">{user?.email}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">{t("role")}</span>
-              <span className="text-white capitalize">{t("candidate")}</span>
+            <div className="flex justify-between items-center py-2">
+              <span className="text-[#56596a] font-medium">{t("role")}</span>
+              <span className="text-[#1A1C22] font-semibold capitalize">{t("candidate")}</span>
             </div>
           </div>
         </section>
 
-        <section className="ai-panel rounded-[1.8rem] p-6">
-          <h2 className="text-white font-semibold mb-4">{t("activeResume")}</h2>
-          <p className="text-slate-400 text-sm mb-4">{t("resumeCardHint")}</p>
+        {/* Active Resume Card */}
+        <section className="candidate-card p-6">
+          <h2 className="text-[#1A1C22] font-bold text-[16px] mb-2">{t("activeResume")}</h2>
+          <p className="text-[#56596a] text-xs mb-5">{t("resumeCardHint")}</p>
 
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-4 py-3 mb-4">
+            <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg px-4 py-3 mb-4 font-semibold">
               {error}
             </div>
           )}
           {success && (
-            <div className="bg-green-500/10 border border-green-500/30 text-green-400 text-sm rounded-lg px-4 py-3 mb-4">
+            <div className="bg-[#ECF0FE] border border-[#D6E0FD] text-[#2348C8] text-sm rounded-lg px-4 py-3 mb-4 font-semibold">
               {success}
             </div>
           )}
 
           {resume ? (
-            <div className="flex items-center justify-between gap-4 mb-5">
-              <div>
-                <div className="text-white font-medium">{resume.file_name}</div>
-                <div className="text-slate-400 text-sm mt-0.5">
+            <div className="flex items-center justify-between gap-4 mb-6 p-4 rounded-xl bg-slate-50 border border-slate-200">
+              <div className="min-w-0">
+                <div className="text-[#1A1C22] font-bold truncate">{resume.file_name}</div>
+                <div className="text-[#56596a] text-xs mt-1 font-medium">
                   {formatBytes(resume.file_size)} · {t("uploaded")}{" "}
                   {new Date(resume.uploaded_at).toLocaleDateString()}
                 </div>
               </div>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-400">
+              <span className="text-xs px-2.5 py-1 rounded-full bg-[#ECF0FE] border border-[#D6E0FD] text-[#2348C8] font-bold shrink-0">
                 {t("active")}
               </span>
             </div>
           ) : (
-            <p className="text-slate-400 text-sm mb-5">{t("noResume")}</p>
+            <p className="text-[#56596a] text-sm mb-6 italic">{t("noResume")}</p>
           )}
 
           <input
@@ -132,18 +133,18 @@ export default function ProfilePage() {
           <button
             onClick={() => fileRef.current?.click()}
             disabled={uploading}
-            className="ai-button-primary w-full rounded-xl py-2.5 text-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+            className="candidate-btn-primary w-full rounded-xl py-3 text-white font-bold disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {uploading ? t("uploading") : resume ? t("replaceResume") : t("uploadResume")}
           </button>
-          <div className="mt-3 flex items-center justify-between gap-3">
-            <p className="text-slate-500 text-xs">{t("fileHint")}</p>
-            <Link href="/candidate/resume" className="text-sm text-blue-300 transition-colors hover:text-blue-200">
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <p className="text-[#56596a] text-xs font-medium">{t("fileHint")}</p>
+            <Link href="/candidate/resume" className="text-sm font-semibold text-[#2F5BEA] transition-colors hover:text-[#2348C8]">
               {t("manageResume")}
             </Link>
           </div>
         </section>
       </div>
-    </div>
+    </CandidateShell>
   );
 }

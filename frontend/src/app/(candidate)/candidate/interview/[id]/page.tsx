@@ -35,8 +35,8 @@ const PROCTORING_POLICY_MODE =
 // NEXT_PUBLIC_DEFAULT_INTERVIEW_MODE — "voice" or "text" (default: "text" for safety)
 // NEXT_PUBLIC_VOICE_AUTO_SEND — "true" to auto-send after STT without confirm (default: false)
 const ENABLE_VOICE_INTERVIEW = process.env.NEXT_PUBLIC_ENABLE_VOICE_INTERVIEW === "true";
-const DEFAULT_INTERVIEW_MODE: "voice" | "text" =
-  process.env.NEXT_PUBLIC_DEFAULT_INTERVIEW_MODE === "voice" ? "voice" : "text";
+const ALLOW_TEXT_FALLBACK = process.env.NEXT_PUBLIC_ALLOW_TEXT_FALLBACK === "true";
+const DEFAULT_INTERVIEW_MODE: "voice" | "text" = "voice";
 const VOICE_AUTO_SEND = process.env.NEXT_PUBLIC_VOICE_AUTO_SEND === "true";
 
 const CODING_TASK_LANGUAGES = ["python", "typescript", "javascript", "go", "java", "sql", "other"] as const;
@@ -92,7 +92,7 @@ export default function InterviewPage() {
   const startT = useTranslations("interviewStart");
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { loading: authLoading } = useAuth();
+  const { loading: authLoading } = useAuth({ allowedRoles: ["candidate"] });
 
   const [interview, setInterview] = useState<InterviewDetail | null>(null);
   const [messages, setMessages] = useState<InterviewMessage[]>([]);
@@ -119,6 +119,7 @@ export default function InterviewPage() {
   const [practicalTask, setPracticalTask] = useState<PracticalTask | null>(null);
   const [practicalModalOpen, setPracticalModalOpen] = useState(false);
   const [practicalAnswer, setPracticalAnswer] = useState("");
+  const [practicalError, setPracticalError] = useState("");
   const [practicalSubmitting, setPracticalSubmitting] = useState(false);
   const [practicalStartTime, setPracticalStartTime] = useState<number | null>(null);
   const [latestTranscript, setLatestTranscript] = useState("");
@@ -147,6 +148,7 @@ export default function InterviewPage() {
   // Resume panel
   const [resumeText, setResumeText] = useState<string | null>(null);
   const [resumeOpen, setResumeOpen] = useState(false);
+  const [cameraPanelOpen, setCameraPanelOpen] = useState(true);
   const reportGenerationFailedMessage = t("reportGenerationFailed");
 
   // Language is loaded from interview, default "ru" until loaded
@@ -315,6 +317,18 @@ export default function InterviewPage() {
       .catch(() => setError(t("loadFailed")));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, authLoading]);
+
+  useEffect(() => {
+    if (!practicalModalOpen || practicalSubmitting) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPracticalModalOpen(false);
+        setPracticalError("");
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [practicalModalOpen, practicalSubmitting]);
 
   // Load resume text
   useEffect(() => {
@@ -667,7 +681,12 @@ export default function InterviewPage() {
   async function handlePracticalSubmit() {
     if (!practicalTask || !id || practicalSubmitting) return;
     if (!practicalAnswer.trim()) return;
+    if (practicalTask.starter_code && practicalAnswer.trim() === practicalTask.starter_code.trim()) {
+      setPracticalError("Добавьте собственное решение: boilerplate нельзя отправить без изменений.");
+      return;
+    }
     setPracticalSubmitting(true);
+    setPracticalError("");
     setError("");
     try {
       const duration = practicalStartTime ? Math.round((Date.now() - practicalStartTime) / 1000) : null;
@@ -681,6 +700,7 @@ export default function InterviewPage() {
       setPracticalModalOpen(false);
       setPracticalTask(null);
       setPracticalAnswer("");
+      setPracticalError("");
       setPracticalStartTime(null);
       setQuestionCount(res.question_count);
       setMaxQuestions(res.max_questions);
@@ -704,15 +724,16 @@ export default function InterviewPage() {
         setCanFinish(true);
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Ошибка отправки задания");
+      setPracticalError(err instanceof Error ? err.message : "Ошибка отправки задания");
     } finally {
       setPracticalSubmitting(false);
     }
   }
 
-  async function handleSend() {
-    if (!input.trim() || sending || !id) return;
-    const text = input.trim();
+  async function handleSend(overrideInput?: string) {
+    const textToUse = overrideInput ?? input;
+    if (!textToUse.trim() || sending || !id) return;
+    const text = textToUse.trim();
 
     // Record response time for this question
     const elapsed = (Date.now() - questionStartTimeRef.current) / 1000;
@@ -760,7 +781,7 @@ export default function InterviewPage() {
         // Practical task: open modal after AI speaks the intro
         if (res.question_delivery_type === "practical_task" && res.practical_task) {
           setPracticalTask(res.practical_task);
-          setPracticalAnswer(res.practical_task.starter_code ?? "");
+          setPracticalAnswer("");
           setPracticalStartTime(Date.now());
           // Delay opening modal until TTS finishes intro (2s safety buffer)
           setTimeout(() => setPracticalModalOpen(true), 2200);
@@ -979,9 +1000,16 @@ export default function InterviewPage() {
   // Derived voice status for UI indicators
   const voiceStatus: "ai_speaking" | "listening" | "processing" | "idle" =
     speaking ? "ai_speaking"
-    : voiceState === "recording" ? "listening"
+    : voiceState === "listening" ? "listening"
     : voiceState === "transcribing" || sending ? "processing"
     : "idle";
+  const isVoiceError =
+    voiceState === "error" ||
+    voiceState === "microphone_error" ||
+    voiceState === "silence_timeout";
+  const practicalAnswerIsOnlyStarter =
+    Boolean(practicalTask?.starter_code) &&
+    practicalAnswer.trim() === practicalTask?.starter_code?.trim();
   const reportAttempts = reportStatus?.diagnostics?.attempt_count ?? 0;
   const reportMaxAttempts = reportStatus?.diagnostics?.max_attempts ?? 0;
   const reportLastError = reportStatus?.diagnostics?.last_error;
@@ -1133,850 +1161,895 @@ export default function InterviewPage() {
       : recordingError;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
-      <header className="border-b border-slate-800/80 bg-slate-950/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-          <div className="flex min-w-0 items-center gap-4">
-            <Link href="/candidate/reports" className="text-slate-500 transition-colors hover:text-slate-300">
-              ←
-            </Link>
-            <div className="min-w-0">
-              <div className="truncate text-lg font-semibold">{t("interviewTitle", { role: roleLabel })}</div>
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-400">
-                <span>{currentQuestionLabel}</span>
-                <span>•</span>
-                <span>{askedInChatLabel}</span>
-                <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${interviewStatusToneClass}`}>
-                  {interview.status === "in_progress" ? t("statusInProgress") : reportPhaseLabel}
-                </span>
+    <div className="interview-cockpit-light min-h-screen flex flex-col">
+      <header className="border-b border-slate-900 bg-slate-950/90 backdrop-blur sticky top-0 z-30">
+        <div className="mx-auto max-w-[1600px] px-4 py-3 sm:px-6 flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-4">
+            {/* Back button and title */}
+            <div className="flex min-w-0 items-center gap-3">
+              <Link href="/candidate/reports" className="text-slate-500 transition-colors hover:text-slate-300 text-lg">
+                ←
+              </Link>
+              <div className="min-w-0">
+                <h1 className="truncate text-base md:text-lg font-bold text-white tracking-tight">
+                  {t("interviewTitle", { role: roleLabel })}
+                </h1>
               </div>
             </div>
+
+            {/* Controls */}
+            <div className="flex items-center gap-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => setCameraPanelOpen((prev) => !prev)}
+                className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-900 transition-all flex items-center gap-1.5"
+              >
+                <span>📷</span>
+                <span className="hidden sm:inline">
+                  {cameraPanelOpen
+                    ? (interviewLanguage === "ru" ? "Скрыть камеру" : "Hide Camera")
+                    : (interviewLanguage === "ru" ? "Показать камеру" : "Show Camera")
+                  }
+                </span>
+              </button>
+              <LocaleSwitcher />
+            </div>
           </div>
-          <LocaleSwitcher />
+
+          {/* Horizontal Chips Row */}
+          <div className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-slate-905">
+            {/* Timer */}
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-0.5 text-xs font-medium text-blue-200">
+              ⏱ {elapsedLabel}
+            </span>
+
+            {/* Voice Status Chip */}
+            <button
+              type="button"
+              onClick={toggleTTS}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-all ${
+                ttsEnabled
+                  ? "border-blue-500/30 bg-blue-500/15 text-blue-200 hover:bg-blue-500/25"
+                  : "border-slate-800 bg-slate-900/40 text-slate-400 hover:text-slate-200 hover:bg-slate-900/60"
+              }`}
+            >
+              <span>🎙️</span>
+              <span>{ttsEnabled ? (interviewLanguage === "ru" ? "Голос включён" : "Voice enabled") : (interviewLanguage === "ru" ? "Голос выключен" : "Voice disabled")}</span>
+            </button>
+
+            {/* Stage Progress */}
+            {structuredInterviewStage ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-200">
+                📌 {stageDisplayTitle} ({structuredPhaseProgressCurrent}/{structuredPhaseProgressTotal})
+              </span>
+            ) : (overviewModuleSession || taskWorkspaceSession) ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-0.5 text-xs font-medium text-blue-200">
+                📌 {stageDisplayTitle} ({((overviewModuleSession || taskWorkspaceSession)?.stage_index ?? 0) + 1}/{Math.max((overviewModuleSession || taskWorkspaceSession)?.stage_count ?? 0, 1)})
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-900/80 px-2.5 py-0.5 text-xs font-medium text-slate-300">
+                📌 {stageDisplayTitle}
+              </span>
+            )}
+
+            {/* Question Progress */}
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-900/80 px-2.5 py-0.5 text-xs font-medium text-slate-300">
+              ❓ {currentQuestionLabel}
+            </span>
+
+            {/* Answer count */}
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-900/80 px-2.5 py-0.5 text-xs font-medium text-slate-300">
+              💬 {answeredInChatLabel}
+            </span>
+
+            {/* Estimate */}
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-900/80 px-2.5 py-0.5 text-xs font-medium text-slate-300">
+              ⏳ {t("structureEstimatedDuration", estimatedDuration)}
+            </span>
+
+            {/* Status */}
+            <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${interviewStatusToneClass}`}>
+              {interview.status === "in_progress" ? t("statusInProgress") : reportPhaseLabel}
+            </span>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-5 sm:px-6 xl:grid xl:min-h-[calc(100vh-81px)] xl:grid-cols-[minmax(320px,380px)_minmax(0,1fr)] xl:gap-6 xl:overflow-hidden">
-        <aside className="space-y-4 xl:overflow-y-auto xl:pr-1">
-          <section className="overflow-hidden rounded-[28px] border border-slate-800 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.18),_transparent_58%),linear-gradient(180deg,_rgba(15,23,42,0.98),_rgba(15,23,42,0.9))] p-5 shadow-[0_24px_80px_rgba(2,6,23,0.45)]">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-300">{t("candidateCardEyebrow")}</div>
-                <div className="mt-2 text-xl font-semibold text-white">{roleLabel}</div>
-                <div className="mt-2 text-sm leading-6 text-slate-300">
-                  {isFollowup ? currentQuestionTypeLabel : currentQuestionLabel}
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <StatusPill tone={isRecording ? "emerald" : "amber"}>{isRecording ? "REC" : t("recordingRequired")}</StatusPill>
-                <StatusPill tone={isScreenSharing ? "emerald" : "slate"}>{isScreenSharing ? t("screenOn") : t("screenOff")}</StatusPill>
-              </div>
+      <main className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col xl:flex-row gap-6 p-4 md:p-6 min-h-0">
+        {/* Left Sidebar */}
+        <aside className="w-full xl:w-72 shrink-0 flex flex-col gap-6 overflow-y-auto pr-1">
+          {/* Role card */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+            <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-400">
+              {t("candidateCardEyebrow")}
             </div>
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
-              <WorkspaceStat label={t("timerLabel")} value={elapsedLabel} tone="blue" />
-              <WorkspaceStat label={t("questionProgressLabel")} value={currentQuestionLabel} tone="slate" />
-              <WorkspaceStat label={t("askedQuestionsLabel")} value={askedInChatLabel} tone="slate" />
-              <WorkspaceStat
-                label={t("estimateLabel")}
-                value={t("structureEstimatedDuration", estimatedDuration)}
-                tone="emerald"
-              />
-            </div>
-            <p className="mt-3 text-xs text-slate-400">
-              {t("progressHint", {
-                percent: Math.min(100, Math.max(visibleProgressPct, 0)),
-                answered: candidateAnswerCount,
-              })}
-            </p>
-
-            <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t("stageLabel")}</div>
-                  <div className="mt-1 text-base font-semibold text-white">{stageDisplayTitle}</div>
-                </div>
-                {structuredInterviewStage ? (
-                  <StatusPill tone="emerald">
-                    {t("stageProgress", {
-                      current: structuredPhaseProgressCurrent,
-                      total: structuredPhaseProgressTotal,
-                    })}
-                  </StatusPill>
-                ) : (overviewModuleSession || taskWorkspaceSession) ? (
-                  <StatusPill tone="blue">
-                    {t("stageProgress", {
-                      current: ((overviewModuleSession || taskWorkspaceSession)?.stage_index ?? 0) + 1,
-                      total: Math.max((overviewModuleSession || taskWorkspaceSession)?.stage_count ?? 0, 1),
-                    })}
-                  </StatusPill>
-                ) : null}
-              </div>
-
-              {stageRailItems.length > 0 && <StageRail items={stageRailItems} />}
-
-              {(overviewModuleSession || taskWorkspaceSession)?.scenario_title && (
-                <div className="mt-4">
-                  <div className="text-xs uppercase tracking-[0.16em] text-slate-500">
-                    {taskWorkspaceSession ? t("taskLabel") : t("scenarioLabel")}
-                  </div>
-                  <div className="mt-1 text-sm text-slate-200">{(overviewModuleSession || taskWorkspaceSession)?.scenario_title}</div>
-                </div>
-              )}
-
-              {structuredInterviewStage?.resume_anchor && (
-                <div className="mt-4">
-                  <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("structureResumeAnchor")}</div>
-                  <div className="mt-1 text-sm leading-6 text-slate-200">{structuredInterviewStage.resume_anchor}</div>
-                </div>
-              )}
-
-              {structuredInterviewStage?.verification_target && (
-                <div className="mt-4">
-                  <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("structureVerificationTarget")}</div>
-                  <div className="mt-1 text-sm leading-6 text-slate-200">{structuredInterviewStage.verification_target}</div>
-                </div>
-              )}
-
-              {taskWorkspaceSession?.stack_focus && (
-                <div className="mt-4">
-                  <div className="text-xs uppercase tracking-[0.16em] text-slate-500">{t("stackLabel")}</div>
-                  <div className="mt-1 text-sm leading-6 text-slate-200">{taskWorkspaceSession.stack_focus}</div>
-                </div>
-              )}
-            </div>
-
-            {currentQuestion && interview.status === "in_progress" && (
-              <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t("currentFocusLabel")}</div>
-                <div className="mt-2 text-sm leading-6 text-slate-100">{currentQuestion}</div>
-              </div>
+            <h2 className="mt-1.5 text-base font-bold text-white leading-tight">
+              {roleLabel}
+            </h2>
+            {isFollowup && (
+              <span className="mt-2 inline-block rounded border border-purple-500/20 bg-purple-500/5 px-1.5 py-0.5 text-[10px] text-purple-300 font-medium">
+                {currentQuestionTypeLabel}
+              </span>
             )}
-
-            {structuredInterviewStage?.competency_targets.length ? (
-              <div className="mt-5">
-                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{t("structureCompetencies")}</div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {structuredInterviewStage.competency_targets.map((competency) => (
-                    <span
-                      key={competency}
-                      className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-100"
-                    >
-                      {competency}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            <div className="mt-5 flex flex-wrap gap-2">
-              {resumeText && (
-                <button
-                  onClick={() => setResumeOpen((value) => !value)}
-                  title={t("tooltips.toggleResume")}
-                  className={`rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
-                    resumeOpen
-                      ? "border-purple-500/30 bg-purple-500/10 text-purple-300"
-                      : "border-slate-700 bg-slate-900/60 text-slate-300 hover:border-slate-600"
-                  }`}
-                >
-                  {t("resume")}
-                </button>
-              )}
+            {resumeText && (
               <button
-                onClick={toggleTTS}
-                title={ttsEnabled ? t("tooltips.muteVoice") : t("tooltips.enableVoice")}
-                className={`rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
-                  ttsEnabled
-                    ? "border-blue-500/30 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20"
-                    : "border-slate-700 bg-slate-900/60 text-slate-300 hover:border-slate-600"
+                onClick={() => setResumeOpen((value) => !value)}
+                className={`mt-3 w-full rounded-xl border px-3 py-1.5 text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5 ${
+                  resumeOpen
+                    ? "border-purple-500/30 bg-purple-500/10 text-purple-300 shadow-[0_0_8px_rgba(147,51,234,0.15)]"
+                    : "border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700 hover:text-slate-200"
                 }`}
               >
-                {ttsEnabled ? t("voiceOn") : t("voiceOff")}
+                <span>📄</span>
+                <span>{resumeOpen ? (interviewLanguage === "ru" ? "Скрыть резюме" : "Hide Resume") : t("resume")}</span>
               </button>
+            )}
+          </div>
+
+          {/* Stage/Progress (Vertical Stepper) */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-4">
+            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
+              {interviewLanguage === "ru" ? "Этапы прохождения" : "Interview Stages"}
+            </div>
+
+            {stageRailItems.length > 0 ? (
+              <VerticalStepper items={stageRailItems} />
+            ) : (
+              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                <div className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                  {t("stageLabel")}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-white">
+                  {stageDisplayTitle}
+                </div>
+                {(overviewModuleSession || taskWorkspaceSession)?.scenario_title && (
+                  <div className="mt-3 border-t border-slate-900 pt-2">
+                    <div className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                      {taskWorkspaceSession ? t("taskLabel") : t("scenarioLabel")}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-300">
+                      {(overviewModuleSession || taskWorkspaceSession)?.scenario_title}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Competencies */}
+          {structuredInterviewStage?.competency_targets.length ? (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
+              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
+                {t("structureCompetencies")}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {structuredInterviewStage.competency_targets.map((competency) => (
+                  <span
+                    key={competency}
+                    className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2.5 py-0.5 text-xs text-cyan-100"
+                  >
+                    {competency}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {/* Actions */}
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
+            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
+              {interviewLanguage === "ru" ? "Управление" : "Controls"}
+            </div>
+
+            <div className="flex flex-col gap-2">
               {!isRecording && interview.status === "in_progress" && (
                 <button
                   onClick={() => void startRecording()}
-                  className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs font-medium text-yellow-200 transition-colors hover:bg-yellow-500/20"
+                  className="w-full rounded-xl border border-yellow-500/30 bg-yellow-500/10 px-3 py-2.5 text-xs font-semibold text-yellow-200 hover:bg-yellow-500/20 transition-all flex items-center justify-center gap-2"
                 >
-                  {t("enableRecording")}
+                  <span>🔴</span>
+                  <span>{t("enableRecording")}</span>
                 </button>
               )}
             </div>
 
-            {(localizedRecordingError || voiceError || (!isRecording && interview.status === "in_progress")) && (
-              <div className="mt-5 space-y-3">
+            {(localizedRecordingError || (voiceError && !isVoiceError) || (!isRecording && interview.status === "in_progress")) && (
+              <div className="space-y-2 pt-2 border-t border-slate-900">
                 {!isRecording && interview.status === "in_progress" && (
-                  <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-100">
-                    <div className="font-medium text-yellow-200">{t("recordingRequired")}</div>
-                    <div className="mt-1 text-yellow-50/90">{t("recordingDescription")}</div>
+                  <div className="rounded-xl border border-yellow-500/25 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-200">
+                    {t("recordingRequired")}
                   </div>
                 )}
                 {localizedRecordingError && (
-                  <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-100">
+                  <div className="rounded-xl border border-yellow-500/25 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-200">
                     {localizedRecordingError}
                   </div>
                 )}
-                {voiceError && (
-                  <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                {voiceError && !isVoiceError && (
+                  <div className="rounded-xl border border-red-500/25 bg-red-500/5 px-3 py-2 text-xs text-red-200">
                     {voiceError}
                   </div>
                 )}
               </div>
             )}
-          </section>
-
-          <section className="rounded-[28px] border border-slate-800 bg-slate-900/80 p-4 shadow-[0_18px_60px_rgba(2,6,23,0.35)]">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">{t("cameraCardTitle")}</div>
-                <div className="mt-1 text-sm text-slate-400">{t("cameraCardHint")}</div>
-              </div>
-              <StatusPill tone={cameraPreviewReady ? "emerald" : "slate"}>
-                {cameraPreviewReady ? t("face") : t("cameraPreviewOff")}
-              </StatusPill>
-            </div>
-
-            <div className="relative mt-4 aspect-[4/3] overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
-              <video
-                ref={previewRef}
-                muted
-                autoPlay
-                playsInline
-                className={`h-full w-full object-cover transition-opacity ${
-                  cameraPreviewReady ? "opacity-100" : "opacity-0"
-                }`}
-              />
-              {!cameraPreviewReady && (
-                <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-slate-400">
-                  {isRecording ? t("cameraPreviewStarting") : t("cameraPreviewOff")}
-                </div>
-              )}
-              <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-slate-950/95 via-slate-950/40 to-transparent px-4 py-3">
-                <div className="flex items-center gap-2 text-xs font-medium text-white">
-                  <span className={`h-2.5 w-2.5 rounded-full ${isRecording ? "animate-pulse bg-red-500" : "bg-slate-500"}`} />
-                  <span>{isRecording ? "REC" : t("recordingRequired")}</span>
-                </div>
-                <div className="text-xs text-slate-300">{isScreenSharing ? t("screenOn") : t("screenOff")}</div>
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-3 gap-3">
-              <WorkspaceStat label={t("faceAwayLabel")} value={faceAwayValue} tone={faceAwayPct != null && faceAwayPct > 0.3 ? "amber" : "slate"} compact />
-              <WorkspaceStat label={t("speechActivityLabel")} value={speechActivityValue} tone={isSpeechActive ? "emerald" : "slate"} compact />
-              <WorkspaceStat label={t("silenceLabel")} value={silenceValue} tone={silencePct != null && silencePct > 0.4 ? "amber" : "slate"} compact />
-            </div>
-          </section>
+          </div>
 
           {resumeOpen && resumeText && (
-            <section className="rounded-[28px] border border-slate-800 bg-slate-900/80 p-4 shadow-[0_18px_60px_rgba(2,6,23,0.35)]">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">{t("resume")}</div>
-                  <div className="mt-1 text-sm text-slate-400">{t("resumePreviewHint")}</div>
-                </div>
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 shadow-lg">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">{t("resume")}</div>
                 <button
                   onClick={() => setResumeOpen(false)}
-                  className="rounded-full border border-slate-700 bg-slate-950/70 px-3 py-1 text-xs text-slate-300 transition-colors hover:border-slate-600 hover:text-white"
+                  className="text-slate-400 hover:text-white text-xs"
                 >
                   ×
                 </button>
               </div>
-              <pre className="mt-4 max-h-72 overflow-y-auto whitespace-pre-wrap rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-xs leading-6 text-slate-300">
+              <pre className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-xs leading-5 text-slate-300">
                 {resumeText}
               </pre>
-            </section>
+            </div>
           )}
         </aside>
 
-        <section className="flex min-h-0 flex-col">
+        {/* Center Cockpit */}
+        <section className="flex-1 min-w-0 flex flex-col items-center gap-6">
           {error && !canFinish && (
-            <div className="mb-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+            <div className="w-full max-w-[800px] rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-200 shadow-md">
               {error}
             </div>
           )}
 
-          <div className="flex min-h-[65vh] flex-1 flex-col overflow-hidden rounded-[30px] border border-slate-800 bg-slate-900/80 shadow-[0_24px_80px_rgba(2,6,23,0.4)]">
-            {/* Header */}
-            <div className="border-b border-slate-800/80 px-4 py-4 sm:px-6">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">{t("chatCardEyebrow")}</div>
-                  <div className="mt-1 text-lg font-semibold text-white">{stageDisplayTitle}</div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {voiceMode && (
-                    <button
-                      type="button"
-                      onClick={() => setShowTranscript((v) => !v)}
-                      className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors ${
-                        showTranscript
-                          ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-300"
-                          : "border-slate-700 bg-slate-900/60 text-slate-400 hover:text-slate-200"
-                      }`}
-                    >
-                      {showTranscript ? "↑ Скрыть чат" : "↓ Показать чат"}
-                    </button>
-                  )}
-                  {ENABLE_VOICE_INTERVIEW && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAnswerMode((m) => m === "voice" ? "text" : "voice");
-                        setTranscriptPending(false);
-                        setInput("");
-                      }}
-                      className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs text-slate-400 transition-colors hover:text-slate-200"
-                    >
-                      {voiceMode ? "Текстовый режим" : "Голосовой режим"}
-                    </button>
-                  )}
-                  <StatusPill tone={isFollowup ? "purple" : "slate"}>{currentQuestionTypeLabel}</StatusPill>
-                  {uploadStatusLabel && <StatusPill tone={recordingUploadState === "failed" ? "amber" : "slate"}>{uploadStatusLabel}</StatusPill>}
-                </div>
-              </div>
+          {/* Question / Welcome Card */}
+          <div className="w-full max-w-[800px] rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5 md:p-6 shadow-xl space-y-4">
+            {/* Header info */}
+            <div className="flex items-center justify-between gap-3 border-b border-slate-800/60 pb-3">
+              <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-400">
+                {stageDisplayTitle}
+              </span>
+              <span className="text-[10px] font-semibold text-slate-400">
+                {currentQuestionLabel}
+              </span>
             </div>
 
-            {/* Voice-first main area — only when feature flag is enabled */}
-            {ENABLE_VOICE_INTERVIEW && voiceMode && !showTranscript && !canFinish && interview.status === "in_progress" && (
-              <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 py-10">
-                {/* Status indicator */}
-                <div className="flex flex-col items-center gap-2">
-                  <div className={`flex h-16 w-16 items-center justify-center rounded-full transition-all duration-300 ${
-                    voiceStatus === "ai_speaking" ? "bg-blue-500/20 shadow-[0_0_32px_rgba(59,130,246,0.4)]"
-                    : voiceStatus === "listening" ? "animate-pulse bg-red-500/20 shadow-[0_0_32px_rgba(239,68,68,0.4)]"
-                    : voiceStatus === "processing" ? "bg-amber-500/20 shadow-[0_0_24px_rgba(245,158,11,0.3)]"
-                    : "bg-slate-800"
-                  }`}>
-                    <span className="text-2xl">
-                      {voiceStatus === "ai_speaking" ? "🔊" : voiceStatus === "listening" ? "🎤" : voiceStatus === "processing" ? "⏳" : "🎙"}
-                    </span>
-                  </div>
-                  <div className="text-sm font-medium text-slate-300">
-                    {voiceStatus === "ai_speaking" ? "AI говорит..."
-                      : voiceStatus === "listening" ? "Слушаю..."
-                      : voiceStatus === "processing" ? "Обрабатываю..."
-                      : "Готов к ответу"}
-                  </div>
+            {/* Main text content */}
+            <div className="min-h-[100px] flex items-center">
+              {introPending ? (
+                <div className="space-y-2 w-full">
+                  <h3 className="text-lg font-bold text-white">
+                    {interviewLanguage === "ru" ? "Добро пожаловать на интервью!" : "Welcome to the interview!"}
+                  </h3>
+                  <p className="text-sm text-slate-300 leading-relaxed">
+                    {interviewLanguage === "ru"
+                      ? "Интервью проходит в автоматическом формате с участием AI-интервьюера. ИИ будет задавать вам вопросы, а ваши ответы будут анализироваться."
+                      : "The interview is conducted in an automated format with an AI interviewer. The AI will ask you questions and analyze your answers."}
+                  </p>
                 </div>
+              ) : (
+                <p className="text-base font-medium text-white leading-relaxed whitespace-pre-wrap">
+                  {currentQuestion || t("introPending")}
+                </p>
+              )}
+            </div>
 
-                {/* Current question */}
-                {currentQuestion && (
-                  <div className="w-full max-w-xl rounded-2xl border border-blue-500/20 bg-blue-500/10 px-6 py-5 text-center">
-                    <div className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-blue-300">Вопрос</div>
-                    <p className="text-base leading-relaxed text-white">{currentQuestion}</p>
-                    <button
-                      type="button"
-                      onClick={() => speak(currentQuestion, interviewLanguage)}
-                      disabled={speaking}
-                      className="mt-4 rounded-full border border-blue-500/30 bg-slate-900/60 px-4 py-1.5 text-xs text-blue-300 transition-colors hover:bg-blue-500/20 disabled:opacity-40"
-                    >
-                      ▶ Повторить
-                    </button>
-                  </div>
-                )}
-
-                {introPending && (
-                  <div className="w-full max-w-xl rounded-2xl border border-slate-700 bg-slate-900/60 px-6 py-5 text-center text-sm text-slate-300">
-                    {t("introPending")}
-                  </div>
-                )}
-
-                {/* Transcript preview + confirm (when VOICE_AUTO_SEND=false and STT done) */}
-                {transcriptPending && input.trim() && !sending && (
-                  <div className="w-full max-w-xl space-y-3">
-                    <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-5 py-4">
-                      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300">Ваш ответ</div>
-                      <p className="text-sm leading-relaxed text-white">{input}</p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => void handleSend()}
-                        disabled={sending}
-                        className="flex-1 rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:opacity-40"
-                      >
-                        ✓ Отправить ответ
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setInput("");
-                          setLatestTranscript("");
-                          setTranscriptPending(false);
-                        }}
-                        className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-300 transition-colors hover:border-slate-600"
-                      >
-                        ↺ Перезаписать
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Mic button — hidden while transcript is pending or AI is speaking or sending */}
-                {!sending && voiceStatus !== "ai_speaking" && !introPending && !transcriptPending && (
-                  <div className="flex flex-col items-center gap-3">
-                    <button
-                      type="button"
-                      onMouseDown={() => { setInput(""); setTranscriptPending(false); void startVoice(); }}
-                      onMouseUp={stopVoice}
-                      onTouchStart={() => { setInput(""); setTranscriptPending(false); void startVoice(); }}
-                      onTouchEnd={stopVoice}
-                      disabled={voiceState === "transcribing" || sending}
-                      className={`h-20 w-20 rounded-full border-2 text-3xl font-bold transition-all duration-200 select-none ${
-                        voiceState === "recording"
-                          ? "animate-pulse border-red-500 bg-red-500/20 text-red-300 shadow-[0_0_32px_rgba(239,68,68,0.5)]"
-                          : voiceState === "transcribing"
-                          ? "border-amber-500/50 bg-amber-500/10 text-amber-400 opacity-60"
-                          : "border-slate-600 bg-slate-800 text-slate-200 hover:border-slate-500 hover:bg-slate-700 active:scale-95"
-                      }`}
-                    >
-                      {voiceState === "recording" ? "●" : voiceState === "transcribing" ? "…" : "🎙"}
-                    </button>
-                    <p className="text-xs text-slate-500">
-                      {voiceState === "recording" ? "Говорите — отпустите чтобы завершить"
-                        : voiceState === "transcribing" ? "Распознаю речь..."
-                        : "Удержите кнопку и говорите"}
-                    </p>
-                  </div>
-                )}
-
-                {/* Intro "ready" prompt */}
-                {introPending && !transcriptPending && (
-                  <div className="flex flex-col items-center gap-3">
-                    <button
-                      type="button"
-                      onMouseDown={() => { setInput(""); setTranscriptPending(false); void startVoice(); }}
-                      onMouseUp={stopVoice}
-                      onTouchStart={() => { setInput(""); setTranscriptPending(false); void startVoice(); }}
-                      onTouchEnd={stopVoice}
-                      disabled={voiceState !== "idle"}
-                      className={`rounded-2xl border px-8 py-3 font-semibold transition-all ${
-                        voiceState === "recording"
-                          ? "animate-pulse border-red-500 bg-red-500/20 text-red-300"
-                          : voiceState === "transcribing"
-                          ? "border-amber-500/50 bg-amber-500/10 text-amber-400 opacity-60"
-                          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
-                      }`}
-                    >
-                      {voiceState === "recording" ? "🎤 Слушаю..." : voiceState === "transcribing" ? "Распознаю..." : "🎙 Я готов / Ready"}
-                    </button>
-                    <p className="text-xs text-slate-500">Скажите «Готов» или «Ready»</p>
-                  </div>
-                )}
-
-                {/* Intro confirm when transcript pending */}
-                {introPending && transcriptPending && input.trim() && (
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-5 py-3 text-sm text-emerald-200">
-                      Распознано: <span className="font-medium">{input}</span>
-                    </div>
-                    <div className="flex gap-3">
-                      <button
-                        type="button"
-                        onClick={() => void handleSend()}
-                        className="rounded-xl bg-emerald-600 px-6 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
-                      >
-                        Отправить
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setInput(""); setTranscriptPending(false); }}
-                        className="rounded-xl border border-slate-700 px-5 py-2 text-sm text-slate-300 hover:border-slate-600"
-                      >
-                        Перезаписать
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {voiceError && (
-                  <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-                    {voiceError}
-                  </div>
-                )}
+            {/* Mini Controls (Replay Voice) */}
+            {!introPending && currentQuestion && ttsEnabled && (
+              <div className="flex justify-end pt-2 border-t border-slate-800/60">
+                <button
+                  type="button"
+                  onClick={() => speak(currentQuestion, interviewLanguage)}
+                  disabled={speaking}
+                  className="rounded-full border border-blue-500/30 bg-slate-950/60 px-3.5 py-1.5 text-xs text-blue-300 hover:bg-blue-500/20 disabled:opacity-40 transition-all flex items-center gap-1.5"
+                >
+                  <span>{speaking ? "■" : "▶"}</span>
+                  <span>{speaking ? (interviewLanguage === "ru" ? "Говорит..." : "AI speaking...") : (interviewLanguage === "ru" ? "Повторить вопрос" : "Replay Question")}</span>
+                </button>
               </div>
             )}
+          </div>
 
-            {/* Transcript / Chat panel */}
-            <div className={`flex-1 overflow-y-auto px-4 py-4 sm:px-6 ${ENABLE_VOICE_INTERVIEW && voiceMode && !showTranscript && !canFinish && interview.status === "in_progress" ? "hidden" : ""}`}>
-              <div className="space-y-4">
-                {(overviewModuleSession || taskWorkspaceSession) && (
-                  <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-5">
+          {practicalTask && !practicalModalOpen && !canFinish && (
+            <div className="w-full max-w-[800px] rounded-2xl border border-amber-500/25 bg-amber-500/10 p-4 shadow-xl">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-300">Практическое задание</div>
+                  <div className="mt-1 text-sm font-semibold text-white">{practicalTask.title}</div>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Черновик сохранён локально. Откройте задание и отправьте решение, чтобы продолжить интервью.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPracticalModalOpen(true)}
+                  className="rounded-xl bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-amber-500"
+                >
+                  Открыть задание
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Transcript Review Card (Immediately below Question Card) */}
+          {transcriptPending && input.trim() && !sending && (
+            <div className="w-full max-w-[800px] rounded-2xl border border-slate-800 bg-slate-900/60 p-4 shadow-xl space-y-3">
+              <div className="rounded-xl border border-slate-805 bg-slate-950 p-3">
+                <label className="text-[10px] uppercase font-bold tracking-wider text-slate-500 block mb-1">
+                  {interviewLanguage === "ru" ? "Проверка распознавания (можно отредактировать)" : "Review Text (editable)"}
+                </label>
+                <textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  className="w-full rounded-lg border border-slate-805 bg-slate-950 p-2.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-blue-500 resize-y font-medium leading-relaxed"
+                  rows={3}
+                />
+              </div>
+              <div className="flex flex-col sm:flex-row items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInput("");
+                    setLatestTranscript("");
+                    setTranscriptPending(false);
+                    void startVoice();
+                  }}
+                  className="w-full sm:flex-1 rounded-xl border border-slate-805 bg-slate-950 hover:bg-slate-900 py-2.5 text-xs font-semibold text-slate-300 hover:text-white transition-all flex items-center justify-center gap-1.5"
+                >
+                  ↺ {interviewLanguage === "ru" ? "Перезаписать" : "Re-record"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSend()}
+                  disabled={sending}
+                  className="w-full sm:flex-1 rounded-xl bg-blue-600 hover:bg-blue-500 py-2.5 text-xs font-semibold text-white transition-all shadow-md shadow-blue-900/20 flex items-center justify-center gap-1.5"
+                >
+                  ✓ {interviewLanguage === "ru" ? "Подтвердить и отправить" : "Confirm & Send"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Interactive Workspace Session in Cockpit */}
+          {!canFinish && (overviewModuleSession || taskWorkspaceSession) && (
+            <div className="w-full max-w-[800px] rounded-2xl border border-blue-500/25 bg-blue-500/5 p-5 space-y-4 shadow-xl">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-blue-500/15 pb-3">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-300">
+                  {(overviewModuleSession || taskWorkspaceSession)?.module_title || t("moduleCardEyebrow")}
+                </div>
+                <div className="rounded-full border border-blue-500/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
+                  {t("stageProgress", {
+                    current: ((overviewModuleSession || taskWorkspaceSession)?.stage_index ?? 0) + 1,
+                    total: Math.max((overviewModuleSession || taskWorkspaceSession)?.stage_count ?? 0, 1),
+                  })}
+                </div>
+              </div>
+              {(overviewModuleSession || taskWorkspaceSession)?.scenario_title && (
+                <div>
+                  <div className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                    {taskWorkspaceSession ? t("taskLabel") : t("scenarioLabel")}
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-white">
+                    {(overviewModuleSession || taskWorkspaceSession)?.scenario_title}
+                  </div>
+                </div>
+              )}
+              {(overviewModuleSession || taskWorkspaceSession)?.scenario_prompt && (
+                <p className="text-sm leading-relaxed text-slate-300">
+                  {(overviewModuleSession || taskWorkspaceSession)?.scenario_prompt}
+                </p>
+              )}
+              {taskWorkspaceSession && (
+                <div className="space-y-4 pt-3 border-t border-blue-500/15">
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3 text-xs text-slate-400 leading-relaxed">
+                    {taskWorkspaceSession.workspace_hint || (isWrittenCommunication ? t("writtenTaskHint") : isSqlLive ? t("sqlTaskHint") : t("codingTaskHint"))}
+                  </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-300">
-                        {(overviewModuleSession || taskWorkspaceSession)?.module_title || t("moduleCardEyebrow")}
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                          {isWrittenCommunication ? t("writtenWorkspace.title") : isSqlLive ? t("sqlWorkspace.title") : t("codingWorkspace.title")}
+                        </div>
+                        <p className="text-xs text-slate-400 mt-1">
+                          {isWrittenCommunication ? t("writtenWorkspace.description") : isSqlLive ? t("sqlWorkspace.description") : t("codingWorkspace.description")}
+                        </p>
                       </div>
-                      <div className="rounded-full border border-blue-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
-                        {t("stageProgress", {
-                          current: ((overviewModuleSession || taskWorkspaceSession)?.stage_index ?? 0) + 1,
-                          total: Math.max((overviewModuleSession || taskWorkspaceSession)?.stage_count ?? 0, 1),
-                        })}
-                      </div>
+                      {codingTaskSaveLabel && (
+                        <div className="text-xs text-slate-400">
+                          <span>{codingTaskSaveLabel}</span>
+                          {codingTaskSavedAtLabel && codingTaskSaveState === "saved" && (
+                            <span>{` · ${codingTaskSavedAtLabel}`}</span>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    {(overviewModuleSession || taskWorkspaceSession)?.scenario_title && (
-                      <div className="mt-3">
-                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">
-                          {taskWorkspaceSession ? t("taskLabel") : t("scenarioLabel")}
-                        </div>
-                        <div className="mt-1 text-sm font-medium text-white">
-                          {(overviewModuleSession || taskWorkspaceSession)?.scenario_title}
-                        </div>
-                      </div>
-                    )}
-                    {(overviewModuleSession || taskWorkspaceSession)?.stage_title && (
-                      <div className="mt-3">
-                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">{t("stageLabel")}</div>
-                        <div className="mt-1 text-sm text-slate-200">{(overviewModuleSession || taskWorkspaceSession)?.stage_title}</div>
-                      </div>
-                    )}
-                    {taskWorkspaceSession?.stack_focus && (
-                      <div className="mt-3">
-                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">{t("stackLabel")}</div>
-                        <div className="mt-1 text-sm text-slate-200">{taskWorkspaceSession.stack_focus}</div>
-                      </div>
-                    )}
-                    {(overviewModuleSession || taskWorkspaceSession)?.scenario_prompt && (
-                      <p className="mt-3 text-sm leading-6 text-slate-300">{(overviewModuleSession || taskWorkspaceSession)?.scenario_prompt}</p>
-                    )}
-                    {taskWorkspaceSession && (
-                      <div className="mt-4 space-y-3">
-                        <div className="rounded-xl border border-slate-700/80 bg-slate-950/40 px-4 py-3 text-sm text-slate-300">
-                          {taskWorkspaceSession.workspace_hint || (isWrittenCommunication ? t("writtenTaskHint") : isSqlLive ? t("sqlTaskHint") : t("codingTaskHint"))}
-                        </div>
-                        <div className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                                {isWrittenCommunication ? t("writtenWorkspace.title") : isSqlLive ? t("sqlWorkspace.title") : t("codingWorkspace.title")}
-                              </div>
-                              <p className="mt-1 text-sm text-slate-300">
-                                {isWrittenCommunication ? t("writtenWorkspace.description") : isSqlLive ? t("sqlWorkspace.description") : t("codingWorkspace.description")}
-                              </p>
-                            </div>
-                            {codingTaskSaveLabel && (
-                              <div className="text-xs text-slate-400">
-                                <span>{codingTaskSaveLabel}</span>
-                                {codingTaskSavedAtLabel && codingTaskSaveState === "saved" ? (
-                                  <span>{` · ${codingTaskSavedAtLabel}`}</span>
-                                ) : null}
-                              </div>
-                            )}
-                          </div>
-                          <div className="mt-4 flex flex-wrap items-center gap-3">
-                            {!isSqlLive && !isWrittenCommunication && (
-                              <>
-                                <label className="text-xs uppercase tracking-[0.14em] text-slate-500">
-                                  {t("codingWorkspace.language")}
-                                </label>
-                                <select
-                                  value={codingTaskLanguage}
-                                  onChange={(e) => {
-                                    setCodingTaskLanguage(e.target.value);
-                                    setCodingTaskDirty(true);
-                                    setCodingTaskSaveState("idle");
-                                  }}
-                                  className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                  {CODING_TASK_LANGUAGES.map((language) => (
-                                    <option key={language} value={language}>
-                                      {language}
-                                    </option>
-                                  ))}
-                                </select>
-                              </>
-                            )}
-                            {isWrittenCommunication && (
-                              <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-300">
-                                {t("writtenWorkspace.mode")}
-                              </div>
-                            )}
-                            {isSqlLive && (
-                              <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-300">
-                                SQL
-                              </div>
-                            )}
-                            {!isSqlLive && !isWrittenCommunication && taskWorkspaceSession.preferred_language && (
-                              <div className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-300">
-                                {t("recommendedLanguage")}: {taskWorkspaceSession.preferred_language}
-                              </div>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => void saveCodingTaskDraftArtifact(true)}
-                              disabled={!codingTaskDraft.trim() || codingTaskSaveState === "saving"}
-                              className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-300 transition-colors hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              {codingTaskSaveState === "saving"
-                                ? isWrittenCommunication
-                                  ? t("writtenWorkspace.saving")
-                                  : isSqlLive
-                                  ? t("sqlWorkspace.saving")
-                                  : t("codingWorkspace.saving")
-                                : isWrittenCommunication
-                                ? t("writtenWorkspace.save")
-                                : isSqlLive
-                                ? t("sqlWorkspace.save")
-                                : t("codingWorkspace.save")}
-                            </button>
-                          </div>
-                          <textarea
-                            value={codingTaskDraft}
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      {!isSqlLive && !isWrittenCommunication && (
+                        <>
+                          <label className="text-xs uppercase tracking-[0.14em] text-slate-500">
+                            {t("codingWorkspace.language")}
+                          </label>
+                          <select
+                            value={codingTaskLanguage}
                             onChange={(e) => {
-                              setCodingTaskDraft(e.target.value);
+                              setCodingTaskLanguage(e.target.value);
                               setCodingTaskDirty(true);
                               setCodingTaskSaveState("idle");
                             }}
-                            onPaste={() => {
-                              pasteCountRef.current++;
-                              trackProctoringEvent({
-                                event_type: "paste_detected",
-                                severity: PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
-                                details: { count: pasteCountRef.current, source: isWrittenCommunication ? "written_workspace" : "coding_workspace" },
-                              });
-                            }}
-                            placeholder={isWrittenCommunication ? t("writtenWorkspace.placeholder") : isSqlLive ? t("sqlWorkspace.placeholder") : t("codingWorkspace.placeholder")}
-                            rows={14}
-                            className={`mt-4 w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm leading-6 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                              isWrittenCommunication ? "font-sans" : "font-mono"
-                            }`}
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {structuredInterviewStage && (
-                  <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-5">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">
-                        {t("structureCardEyebrow")}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="rounded-full border border-slate-700 bg-slate-900/50 px-3 py-1 text-xs text-slate-300">
-                          {t("structureEstimatedDuration", estimatedDuration)}
-                        </div>
-                        <div className="rounded-full border border-emerald-400/20 bg-slate-900/50 px-3 py-1 text-xs text-slate-200">
-                          {t("stageProgress", {
-                            current: structuredPhaseProgressCurrent,
-                            total: structuredPhaseProgressTotal,
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-3 text-base font-semibold text-white">{structurePhaseLabel}</div>
-                    {structuredInterviewStage.resume_anchor && (
-                      <div className="mt-3">
-                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">
-                          {t("structureResumeAnchor")}
-                        </div>
-                        <div className="mt-1 text-sm text-slate-200">{structuredInterviewStage.resume_anchor}</div>
-                      </div>
-                    )}
-                    {structuredInterviewStage.verification_target && (
-                      <div className="mt-3">
-                        <div className="text-xs uppercase tracking-[0.14em] text-slate-400">
-                          {t("structureVerificationTarget")}
-                        </div>
-                        <div className="mt-1 text-sm text-slate-200">{structuredInterviewStage.verification_target}</div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {messages.map((msg, i) => (
-                  <MessageBubble
-                    key={i}
-                    msg={msg}
-                    onReplay={msg.role === "assistant" ? () => speak(msg.content, interviewLanguage) : undefined}
-                    speaking={speaking}
-                  />
-                ))}
-                {sending && <TypingIndicator />}
-
-                {canFinish && (
-                  <div className="rounded-2xl border border-blue-500/30 bg-blue-500/10 p-5 text-center">
-                    <div className="text-white font-semibold">{t("completeTitle")}</div>
-                    <div className="mt-1 text-sm text-slate-300">
-                      {t("completeDescription", {
-                        answeredCount: candidateAnswerCount,
-                        askedCount: assistantAskedCount,
-                      })}
-                    </div>
-                    {uploadStatusLabel && (
-                      <div className={`mt-4 text-sm ${recordingUploadState === "failed" ? "text-red-300" : "text-slate-200"}`}>
-                        {uploadStatusLabel}
-                      </div>
-                    )}
-                    {(waitingForReport || reportRetrying) && (
-                      <div className="mt-4">
-                        <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${reportPhaseToneClass}`}>
-                          {reportPhaseLabel}
-                        </span>
-                      </div>
-                    )}
-                    {(waitingForReport || reportRetrying) && reportAttempts > 0 && (
-                      <div className="mt-4 space-y-1 text-xs text-slate-300">
-                        <p>{t("reportAttempts", { count: reportAttempts, max: reportMaxAttempts || reportAttempts })}</p>
-                        {reportLastError && <p className="text-yellow-300">{t("lastReportError", { reason: reportLastError })}</p>}
-                        {retryCountdownSeconds !== null && retryCountdownSeconds > 0 && <p>{t("nextRetryIn", { seconds: retryCountdownSeconds })}</p>}
-                        {pollRefreshCycle > 0 && (
-                          <p>{t("statusRefreshCycle", { current: pollRefreshCycle + 1, total: REPORT_SOFT_REFRESH_CYCLES + 1 })}</p>
-                        )}
-                      </div>
-                    )}
-                    {error && (
-                      <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-                        {error}
-                      </div>
-                    )}
-                    <div className="mt-5 flex flex-col items-center gap-3">
-                      <button
-                        onClick={handleFinish}
-                        disabled={finishing || reportRetrying}
-                        className="rounded-xl bg-blue-600 px-8 py-2.5 font-semibold text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
-                      >
-                        {finishing ? (waitingForReport ? t("waiting") : t("generating")) : t("finish")}
-                      </button>
-                      {error && (
-                        <button
-                          onClick={handleRetryReport}
-                          disabled={finishing || reportRetrying}
-                          className="rounded-xl border border-slate-600 px-6 py-2 text-sm text-slate-200 transition-colors hover:border-slate-500 hover:text-white disabled:opacity-50"
-                        >
-                          {reportRetrying ? t("retryingReport") : t("retryReport")}
-                        </button>
+                            className="rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          >
+                            {CODING_TASK_LANGUAGES.map((language) => (
+                              <option key={language} value={language}>
+                                {language}
+                              </option>
+                            ))}
+                          </select>
+                        </>
                       )}
-                    </div>
-                  </div>
-                )}
-
-                <div ref={bottomRef} />
-              </div>
-            </div>
-
-            {!canFinish && interview.status === "in_progress" && !(ENABLE_VOICE_INTERVIEW && voiceMode) && (
-              <div className="border-t border-slate-800/80 bg-slate-950/80 px-4 py-4 sm:px-6">
-                <form
-                  className="space-y-3"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void handleSend();
-                  }}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
+                      {isWrittenCommunication && (
+                        <span className="rounded-full border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs uppercase tracking-[0.16em] text-slate-300">
+                          {t("writtenWorkspace.mode")}
+                        </span>
+                      )}
+                      {isSqlLive && (
+                        <span className="rounded-full border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs uppercase tracking-[0.16em] text-slate-300">
+                          SQL
+                        </span>
+                      )}
+                      {!isSqlLive && !isWrittenCommunication && taskWorkspaceSession.preferred_language && (
+                        <span className="rounded-full border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs uppercase tracking-[0.16em] text-slate-405">
+                          {t("recommendedLanguage")}: {taskWorkspaceSession.preferred_language}
+                        </span>
+                      )}
                       <button
                         type="button"
-                        onClick={() => setAnswerMode("text")}
-                        className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors ${
-                          !voiceMode
-                            ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
-                            : "border-slate-700 bg-slate-900/60 text-slate-400 hover:text-slate-200"
-                        }`}
+                        onClick={() => void saveCodingTaskDraftArtifact(true)}
+                        disabled={!codingTaskDraft.trim() || codingTaskSaveState === "saving"}
+                        className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-300 hover:bg-blue-500/20 transition-all disabled:opacity-40"
                       >
-                        {t("textMode")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setAnswerMode("voice")}
-                        className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors ${
-                          voiceMode
-                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                            : "border-slate-700 bg-slate-900/60 text-slate-400 hover:text-slate-200"
-                        }`}
-                      >
-                        {t("voiceMode")}
+                        {codingTaskSaveState === "saving"
+                          ? (isWrittenCommunication ? t("writtenWorkspace.saving") : isSqlLive ? t("sqlWorkspace.saving") : t("codingWorkspace.saving"))
+                          : (isWrittenCommunication ? t("writtenWorkspace.save") : isSqlLive ? t("sqlWorkspace.save") : t("codingWorkspace.save"))}
                       </button>
                     </div>
-                    {voiceMode && <p className="text-xs text-slate-500">{t("voiceHint")}</p>}
-                  </div>
 
-                  {(voiceMode || latestTranscript) && (
-                    <div className="rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-3 text-sm text-slate-300">
-                      {latestTranscript ? <p>{t("latestTranscript")}</p> : <p>{t("voiceHint")}</p>}
-                    </div>
-                  )}
-
-                  <div className="flex flex-col gap-3 sm:flex-row">
                     <textarea
-                      value={input}
-                      onChange={(e) => setInput(e.target.value)}
+                      value={codingTaskDraft}
+                      onChange={(e) => {
+                        setCodingTaskDraft(e.target.value);
+                        setCodingTaskDirty(true);
+                        setCodingTaskSaveState("idle");
+                      }}
                       onPaste={() => {
                         pasteCountRef.current++;
                         trackProctoringEvent({
                           event_type: "paste_detected",
                           severity: PROCTORING_POLICY_MODE === "strict_flagging" ? "medium" : "info",
-                          details: { count: pasteCountRef.current },
+                          details: { count: pasteCountRef.current, source: isWrittenCommunication ? "written_workspace" : "coding_workspace" },
                         });
                       }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          handleSend();
-                        }
-                      }}
-                      disabled={sending}
-                      placeholder={
-                        sending
-                          ? t("placeholderThinking")
-                          : taskWorkspaceModuleType
-                          ? isWrittenCommunication
-                            ? t("writtenWorkspace.answerPlaceholder")
-                            : isSqlLive
-                            ? t("sqlWorkspace.answerPlaceholder")
-                            : t("codingWorkspace.answerPlaceholder")
-                          : voiceMode && voiceState === "recording"
-                          ? t("placeholderListening")
-                          : voiceMode && voiceState === "transcribing"
-                          ? t("placeholderTranscribing")
-                          : voiceMode
-                          ? t("placeholderVoice")
-                          : t("placeholderText")
-                      }
-                      rows={taskWorkspaceModuleType ? 5 : 3}
-                      className={`flex-1 rounded-2xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 ${
-                        taskWorkspaceModuleType ? "resize-y leading-6" : "resize-none"
+                      placeholder={isWrittenCommunication ? t("writtenWorkspace.placeholder") : isSqlLive ? t("sqlWorkspace.placeholder") : t("codingWorkspace.placeholder")}
+                      rows={12}
+                      className={`w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-sm leading-6 text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+                        isWrittenCommunication ? "font-sans" : "font-mono"
                       }`}
                     />
-                    <div className="flex gap-3 sm:flex-col">
-                      {voiceMode && (
-                        <button
-                          type="button"
-                          onMouseDown={startVoice}
-                          onMouseUp={stopVoice}
-                          onTouchStart={startVoice}
-                          onTouchEnd={stopVoice}
-                          disabled={sending || voiceState === "transcribing"}
-                          title={t("tooltips.holdToSpeak")}
-                          className={`rounded-2xl border px-4 py-3 text-sm font-medium transition-colors ${
-                            voiceState === "recording"
-                              ? "animate-pulse border-red-500/50 bg-red-500/20 text-red-300"
-                              : voiceState === "transcribing"
-                              ? "border-slate-700 bg-slate-800 text-slate-400 opacity-60"
-                              : voiceState === "error"
-                              ? "border-red-500/30 bg-red-500/10 text-red-300"
-                              : "border-slate-700 bg-slate-800 text-slate-200 hover:border-slate-600"
-                          }`}
-                        >
-                          {voiceState === "recording" ? "REC" : voiceState === "transcribing" ? "..." : "MIC"}
-                        </button>
-                      )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Center Action Panel */}
+          <div className="w-full max-w-[800px] flex flex-col gap-4">
+            {/* 1. Intro pending / Start screen */}
+            {introPending && (
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 shadow-xl text-center space-y-4">
+                <div className="text-xs text-slate-400 leading-relaxed">
+                  {voiceMode
+                    ? (interviewLanguage === "ru" ? "Вы находитесь в голосовом режиме. Нажмите кнопку ниже и произнесите «Готов» или нажмите кнопку, чтобы начать интервью." : "You are in voice-first mode. Click the button below and say 'Ready', or click to start.")
+                    : (interviewLanguage === "ru" ? "Вы находитесь в текстовом режиме. Нажмите кнопку ниже, чтобы начать интервью." : "You are in text mode. Click the button below to start.")
+                  }
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                  {/* If in voice mode, let them also start with Voice input */}
+                  {voiceMode && (
+                    <button
+                      type="button"
+                      onMouseDown={() => { setInput(""); setTranscriptPending(false); void startVoice(); }}
+                      onMouseUp={stopVoice}
+                      onTouchStart={() => { setInput(""); setTranscriptPending(false); void startVoice(); }}
+                      onTouchEnd={stopVoice}
+                      className={`rounded-xl border px-5 py-3 text-sm font-semibold transition-all ${
+                        voiceState === "listening"
+                          ? "animate-pulse border-red-500 bg-red-500/20 text-red-300 shadow-[0_0_20px_rgba(239,68,68,0.3)]"
+                          : "border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700"
+                      }`}
+                    >
+                      {voiceState === "listening" ? "🎤 Слушаю..." : "🎙 Сказать «Готов»"}
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleSend(interviewLanguage === "ru" ? "Готов" : "Ready");
+                    }}
+                    className="rounded-xl bg-emerald-600 hover:bg-emerald-500 px-8 py-3 text-sm font-bold text-white transition-all shadow-lg shadow-emerald-950/20 hover:scale-[1.02] active:scale-[0.98]"
+                  >
+                    {interviewLanguage === "ru" ? "Начать интервью" : "Start Interview"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 2. Finished screen */}
+            {canFinish && (
+              <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-6 text-center space-y-4 shadow-xl">
+                <div className="text-white font-bold text-lg">{t("completeTitle")}</div>
+                <div className="text-sm text-slate-300">
+                  {t("completeDescription", {
+                    answeredCount: candidateAnswerCount,
+                    askedCount: assistantAskedCount,
+                  })}
+                </div>
+                {uploadStatusLabel && (
+                  <div className={`text-sm ${recordingUploadState === "failed" ? "text-red-300" : "text-slate-200"}`}>
+                    {uploadStatusLabel}
+                  </div>
+                )}
+                <button
+                  onClick={handleFinish}
+                  disabled={finishing || reportRetrying}
+                  className="rounded-xl bg-blue-600 px-8 py-3 font-semibold text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
+                >
+                  {finishing ? (waitingForReport ? t("waiting") : t("generating")) : t("finish")}
+                </button>
+              </div>
+            )}
+
+            {/* 3. Active Interview Controls */}
+            {!canFinish && interview.status === "in_progress" && !introPending && !practicalTask && (
+              <>
+                {/* A. VOICE MODE COCKPIT CONTROLS */}
+                {voiceMode && !showTranscript && (
+                  <div className="w-full max-w-[800px] rounded-2xl border border-slate-800 bg-slate-900/60 p-4 shadow-xl space-y-3">
+                    {/* Dynamic Status / Action Row */}
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-2 py-1">
+                      {/* Visual Status Indicator */}
+                      <div className="flex items-center gap-3">
+                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-all duration-300 ${
+                          voiceStatus === "ai_speaking" ? "bg-blue-500/20 shadow-[0_0_16px_rgba(59,130,246,0.25)]"
+                          : voiceStatus === "listening" ? "animate-pulse bg-red-500/20 shadow-[0_0_16px_rgba(239,68,68,0.25)]"
+                          : voiceStatus === "processing" ? "bg-amber-500/20 shadow-[0_0_16px_rgba(245,158,11,0.2)]"
+                          : "bg-slate-800"
+                        }`}>
+                          <span className="text-base">
+                            {voiceStatus === "ai_speaking" ? "🔊" : voiceStatus === "listening" ? "🎤" : voiceStatus === "processing" ? "⏳" : "🎙"}
+                          </span>
+                        </div>
+                        <div className="text-left">
+                          <span className="text-xs font-semibold text-slate-300 block">
+                            {voiceStatus === "ai_speaking" ? (interviewLanguage === "ru" ? "AI озвучивает вопрос" : "AI speaking...")
+                              : voiceStatus === "listening" ? (interviewLanguage === "ru" ? "Запись ответа..." : "Recording answer...")
+                              : voiceStatus === "processing" ? (interviewLanguage === "ru" ? "Распознаем речь..." : "Transcribing speech...")
+                              : (interviewLanguage === "ru" ? "Готов к ответу" : "Ready to answer")}
+                          </span>
+                          <span className="text-[10px] text-slate-500">
+                            {voiceStatus === "listening" ? (interviewLanguage === "ru" ? "Говорите в микрофон" : "Speak into your mic") : ""}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Primary Action Panel */}
+                      <div className="flex items-center gap-2">
+                        {/* AI Speaking Mode */}
+                        {speaking && (
+                          <button
+                            type="button"
+                            onClick={stop}
+                            className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-300 hover:text-white transition-colors"
+                          >
+                            {interviewLanguage === "ru" ? "Пропустить" : "Skip"}
+                          </button>
+                        )}
+
+                        {/* Ready to Answer Mode (Idle) */}
+                        {voiceStatus === "idle" && !isVoiceError && !transcriptPending && !speaking && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setInput("");
+                              setTranscriptPending(false);
+                              void startVoice();
+                            }}
+                            className="rounded-xl bg-emerald-600 hover:bg-emerald-500 px-6 py-2.5 text-xs font-bold text-white transition-all shadow-md shadow-emerald-900/20 hover:scale-[1.01] active:scale-[0.99] flex items-center gap-1.5"
+                          >
+                            <span className="relative flex h-1.5 w-1.5">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-450 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                            </span>
+                            <span>{interviewLanguage === "ru" ? "Начать ответ" : "Start Answer"}</span>
+                          </button>
+                        )}
+
+                        {/* Listening/Recording Mode */}
+                        {voiceState === "listening" && (
+                          <button
+                            type="button"
+                            onClick={stopVoice}
+                            className="rounded-xl bg-red-650 hover:bg-red-600 px-6 py-2.5 text-xs font-bold text-white transition-all shadow-md shadow-red-950/20 hover:scale-[1.01] active:scale-[0.99] flex items-center gap-1.5"
+                          >
+                            <span className="h-1.5 w-1.5 rounded-full bg-white animate-ping" />
+                            <span>{interviewLanguage === "ru" ? "Завершить ответ" : "Finish Answer"}</span>
+                          </button>
+                        )}
+
+                        {/* Transcribing Mode */}
+                        {voiceState === "transcribing" && (
+                          <div className="flex items-center gap-2 text-xs text-slate-400">
+                            <span className="h-3 w-3 border-2 border-slate-500 border-t-transparent rounded-full animate-spin" />
+                            <span>{interviewLanguage === "ru" ? "Распознаем..." : "Transcribing..."}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-blue-500/15 bg-blue-500/5 px-3 py-2 text-[11px] font-medium leading-5 text-slate-400">
+                      {interviewLanguage === "ru"
+                        ? "Голосовой сценарий: послушайте вопрос, нажмите «Начать ответ», проверьте расшифровку и подтвердите отправку. Текстовый режим доступен только как резервный вариант."
+                        : "Voice-first flow: listen to the question, press “Start Answer”, review the transcript, then confirm submission. Text mode is available only as a fallback."}
+                    </div>
+
+                    {/* Voice Error State Panel */}
+                    {isVoiceError && (
+                      <div className="w-full pt-2 border-t border-slate-800/60 space-y-3">
+                        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-3 text-center">
+                          <p className="text-xs font-semibold text-red-300">
+                            {voiceError || (interviewLanguage === "ru" ? "Не удалось распознать голос. Попробуйте еще раз." : "Failed to transcribe speech. Please try again.")}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-center gap-2.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              clearVoiceError();
+                              setInput("");
+                              setTranscriptPending(false);
+                              void startVoice();
+                            }}
+                            className="rounded-xl bg-blue-650 hover:bg-blue-600 px-4 py-2 text-xs font-semibold text-white transition-all flex items-center gap-1"
+                          >
+                            ↺ {interviewLanguage === "ru" ? "Повторить запись" : "Retry Recording"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              trackProctoringEvent({
+                                event_type: "candidate_reported_voice_error",
+                                severity: "medium",
+                                details: { error: voiceError },
+                              });
+                              alert(interviewLanguage === "ru" ? "Сообщение об ошибке отправлено организатору." : "Error report has been sent to the organizer.");
+                            }}
+                            className="rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:text-white transition-all flex items-center gap-1"
+                          >
+                            📢 {interviewLanguage === "ru" ? "Сообщить организатору" : "Report to Organizer"}
+                          </button>
+                          {ALLOW_TEXT_FALLBACK && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAnswerMode("text");
+                                setTranscriptPending(false);
+                              }}
+                              className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 hover:bg-yellow-500/20 px-4 py-2 text-xs font-semibold text-yellow-300 transition-all flex items-center gap-1"
+                            >
+                              ⌨ {interviewLanguage === "ru" ? "Текстовый режим" : "Text Mode"}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Toggle Chat History Button */}
+                    <div className="flex justify-center pt-1">
                       <button
-                        type="submit"
-                        disabled={!input.trim() || sending}
-                        className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+                        type="button"
+                        onClick={() => setShowTranscript(true)}
+                        className="text-[11px] font-semibold text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-1"
                       >
-                        {sending ? "..." : t("send")}
+                        <span>💬</span>
+                        <span>{interviewLanguage === "ru" ? "Показать историю чата" : "Show Chat History"}</span>
                       </button>
                     </div>
                   </div>
-                </form>
-              </div>
+                )}
+
+                {/* B. TEXT MODE OR CHAT HISTORY INLINE */}
+                {(!voiceMode || showTranscript) && (
+                  <div className="w-full flex-1 flex flex-col min-h-[400px] rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden shadow-xl">
+                    {/* Inline Chat Header (Shown only when in Voice Mode viewing History) */}
+                    {voiceMode && showTranscript && (
+                      <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3 bg-slate-950/40">
+                        <h3 className="font-semibold text-xs uppercase tracking-wider text-slate-400">
+                          {interviewLanguage === "ru" ? "История диалога" : "Conversation History"}
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={() => setShowTranscript(false)}
+                          className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-1 text-xs font-semibold text-slate-300 hover:text-white transition-colors"
+                        >
+                          ✕ {interviewLanguage === "ru" ? "Закрыть историю" : "Close History"}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Inline Chat Messages */}
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4 max-h-[450px]">
+                      {messages.map((msg, i) => (
+                        <MessageBubble
+                          key={i}
+                          msg={msg}
+                          onReplay={msg.role === "assistant" ? () => speak(msg.content, interviewLanguage) : undefined}
+                          speaking={speaking}
+                        />
+                      ))}
+                      {sending && <TypingIndicator />}
+                      <div ref={bottomRef} />
+                    </div>
+
+                    {/* Text Input Row */}
+                    {ALLOW_TEXT_FALLBACK && (
+                      <div className="border-t border-slate-800 bg-slate-950/80 p-4">
+                        <form
+                          className="space-y-3"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            void handleSend();
+                          }}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAnswerMode("text");
+                                  setTranscriptPending(false);
+                                }}
+                                className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors ${
+                                  !voiceMode
+                                    ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
+                                    : "border-slate-800 bg-slate-905 text-slate-400 hover:text-slate-200"
+                                }`}
+                              >
+                                {t("textMode")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAnswerMode("voice");
+                                  setTranscriptPending(false);
+                                  setShowTranscript(false);
+                                }}
+                                className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors ${
+                                  voiceMode
+                                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                                    : "border-slate-800 bg-slate-905 text-slate-400 hover:text-slate-200"
+                                }`}
+                              >
+                                {t("voiceMode")}
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2">
+                            <textarea
+                              value={input}
+                              onChange={(e) => setInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && !e.shiftKey) {
+                                  e.preventDefault();
+                                  void handleSend();
+                                }
+                              }}
+                              disabled={sending}
+                              placeholder={
+                                sending
+                                  ? t("placeholderThinking")
+                                  : taskWorkspaceModuleType
+                                  ? isWrittenCommunication
+                                    ? t("writtenWorkspace.answerPlaceholder")
+                                    : isSqlLive
+                                    ? t("sqlWorkspace.answerPlaceholder")
+                                    : t("codingWorkspace.answerPlaceholder")
+                                  : t("placeholderText")
+                              }
+                              rows={taskWorkspaceModuleType ? 5 : 3}
+                              className="flex-1 rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 resize-y"
+                            />
+                            <div className="flex flex-col gap-2">
+                              <button
+                                type="submit"
+                                disabled={!input.trim() || sending}
+                                className="h-full rounded-xl bg-blue-600 hover:bg-blue-500 px-4 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                {sending ? "..." : t("send")}
+                              </button>
+                            </div>
+                          </div>
+                        </form>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             )}
           </div>
         </section>
+
+        {/* Right Monitor Panel (Webcam + Proctoring) */}
+        {cameraPanelOpen && (
+          <aside className="w-full xl:w-64 2xl:w-72 shrink-0 space-y-4">
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 shadow-lg sticky top-20">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
+                  {t("cameraCardTitle")}
+                </div>
+                <StatusPill tone={cameraPreviewReady ? "emerald" : "slate"}>
+                  {cameraPreviewReady ? t("face") : t("cameraPreviewOff")}
+                </StatusPill>
+              </div>
+
+              {/* 16:9 Aspect Video Preview */}
+              <div className="relative aspect-video overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
+                <video
+                  ref={previewRef}
+                  muted
+                  autoPlay
+                  playsInline
+                  className={`h-full w-full object-cover transition-opacity ${
+                    cameraPreviewReady ? "opacity-100" : "opacity-0"
+                  }`}
+                />
+                {!cameraPreviewReady && (
+                  <div className="absolute inset-0 flex items-center justify-center px-4 text-center text-xs text-slate-500">
+                    {isRecording ? t("cameraPreviewStarting") : t("cameraPreviewOff")}
+                  </div>
+                )}
+                <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-slate-950/90 to-transparent px-3 py-2">
+                  <div className="flex items-center gap-1.5 text-[10px] font-medium text-white">
+                    <span className={`h-2 w-2 rounded-full ${isRecording ? "animate-pulse bg-red-500" : "bg-slate-500"}`} />
+                    <span>{isRecording ? "REC" : t("recordingRequired")}</span>
+                  </div>
+                  <div className="text-[10px] text-slate-300">{isScreenSharing ? t("screenOn") : t("screenOff")}</div>
+                </div>
+              </div>
+
+              {/* Compact Monitoring Metrics Underneath */}
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <div className="flex flex-col items-center justify-center rounded-lg border border-slate-805 bg-slate-950/60 p-1.5 text-center">
+                  <span className="text-[8px] uppercase tracking-wider text-slate-500">{interviewLanguage === "ru" ? "Вне кадра" : "Away"}</span>
+                  <span className={`mt-0.5 text-xs font-semibold ${faceAwayPct != null && faceAwayPct > 0.3 ? "text-amber-400" : "text-slate-300"}`}>
+                    {faceAwayValue}
+                  </span>
+                </div>
+                <div className="flex flex-col items-center justify-center rounded-lg border border-slate-805 bg-slate-950/60 p-1.5 text-center">
+                  <span className="text-[8px] uppercase tracking-wider text-slate-500">{interviewLanguage === "ru" ? "Речь" : "Speech"}</span>
+                  <span className={`mt-0.5 text-xs font-semibold ${isSpeechActive ? "text-emerald-400" : "text-slate-300"}`}>
+                    {speechActivityValue}
+                  </span>
+                </div>
+                <div className="flex flex-col items-center justify-center rounded-lg border border-slate-805 bg-slate-950/60 p-1.5 text-center">
+                  <span className="text-[8px] uppercase tracking-wider text-slate-500">{interviewLanguage === "ru" ? "Тишина" : "Silence"}</span>
+                  <span className={`mt-0.5 text-xs font-semibold ${silencePct != null && silencePct > 0.4 ? "text-amber-400" : "text-slate-300"}`}>
+                    {silenceValue}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </aside>
+        )}
       </main>
 
       {/* Practical Task Modal */}
@@ -2032,6 +2105,21 @@ export default function InterviewPage() {
                 </div>
               )}
 
+              {/* Starter code / reference */}
+              {practicalTask.starter_code && (
+                <div>
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div className="text-xs uppercase tracking-[0.16em] text-slate-500">Boilerplate / reference</div>
+                    <span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1 text-[11px] font-semibold text-blue-300">
+                      Только подсказка, не ответ
+                    </span>
+                  </div>
+                  <pre className="max-h-44 overflow-auto rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-xs leading-5 text-slate-300">
+                    {practicalTask.starter_code}
+                  </pre>
+                </div>
+              )}
+
               {/* Answer area */}
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -2044,7 +2132,10 @@ export default function InterviewPage() {
                 </div>
                 <textarea
                   value={practicalAnswer}
-                  onChange={(e) => setPracticalAnswer(e.target.value)}
+                  onChange={(e) => {
+                    setPracticalAnswer(e.target.value);
+                    if (practicalError) setPracticalError("");
+                  }}
                   placeholder={
                     practicalTask.task_type === "coding_task" || practicalTask.task_type === "debugging_task"
                       ? "Напишите код здесь..."
@@ -2063,27 +2154,74 @@ export default function InterviewPage() {
             </div>
 
             {/* Modal footer */}
-            <div className="flex items-center justify-between gap-4 border-t border-slate-800 px-6 py-4">
+            <div className="space-y-3 border-t border-slate-800 px-6 py-4">
+              {practicalError && (
+                <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+                  {practicalError}
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-4">
               <button
                 type="button"
                 onClick={() => {
                   setPracticalModalOpen(false);
-                  setPracticalTask(null);
-                  setPracticalAnswer("");
+                  setPracticalError("");
                 }}
                 disabled={practicalSubmitting}
                 className="rounded-xl border border-slate-700 px-5 py-2.5 text-sm text-slate-300 transition-colors hover:border-slate-600 hover:text-white disabled:opacity-40"
               >
-                Пропустить
+                Закрыть
               </button>
               <button
                 type="button"
                 onClick={() => void handlePracticalSubmit()}
-                disabled={practicalSubmitting || !practicalAnswer.trim()}
+                disabled={practicalSubmitting || !practicalAnswer.trim() || practicalAnswerIsOnlyStarter}
+                title={practicalAnswerIsOnlyStarter ? "Добавьте собственное решение, boilerplate сам по себе не засчитывается." : undefined}
                 className="rounded-xl bg-amber-600 px-8 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {practicalSubmitting ? "Отправляю..." : "Отправить решение"}
               </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Slide-out Drawer for Voice Chat History */}
+      {showTranscript && voiceMode && (
+        <div className="fixed inset-0 z-40 flex justify-end">
+          {/* Backdrop blur overlay */}
+          <div
+            className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm transition-opacity"
+            onClick={() => setShowTranscript(false)}
+          />
+          {/* Drawer container */}
+          <div className="relative w-full max-w-[440px] h-full bg-slate-900/95 border-l border-slate-800 shadow-2xl flex flex-col z-10 transition-transform duration-350">
+            {/* Drawer Header */}
+            <div className="flex items-center justify-between border-b border-slate-800 p-4">
+              <h3 className="font-semibold text-white">
+                {interviewLanguage === "ru" ? "История диалога" : "Conversation History"}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowTranscript(false)}
+                className="rounded-full border border-slate-700 bg-slate-800 hover:bg-slate-700 p-1.5 text-slate-400 hover:text-white transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            {/* Drawer Body (Scrollable Chat) */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {messages.map((msg, i) => (
+                <MessageBubble
+                  key={i}
+                  msg={msg}
+                  onReplay={msg.role === "assistant" ? () => speak(msg.content, interviewLanguage) : undefined}
+                  speaking={speaking}
+                />
+              ))}
+              {sending && <TypingIndicator />}
+              <div ref={bottomRef} />
             </div>
           </div>
         </div>
@@ -2181,29 +2319,49 @@ function StatusPill({
   );
 }
 
-function StageRail({ items }: { items: StageRailItem[] }) {
+function VerticalStepper({ items }: { items: StageRailItem[] }) {
   if (!items.length) return null;
 
   return (
-    <div className="mt-4 grid gap-2">
-      {items.map((item) => {
-        const toneClass =
-          item.state === "done"
-            ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
-            : item.state === "current"
-            ? "border-cyan-500/20 bg-cyan-500/10 text-cyan-100"
-            : "border-slate-800 bg-slate-950/50 text-slate-500";
-        const dotClass =
-          item.state === "done"
-            ? "bg-emerald-400"
-            : item.state === "current"
-            ? "bg-cyan-400"
-            : "bg-slate-600";
+    <div className="flex flex-col space-y-4">
+      {items.map((item, index) => {
+        const isDone = item.state === "done";
+        const isCurrent = item.state === "current";
+
+        const circleBg = isDone
+          ? "bg-emerald-500 text-slate-950 font-bold"
+          : isCurrent
+          ? "bg-blue-600 text-white font-bold ring-4 ring-blue-500/20"
+          : "bg-slate-800 text-slate-400 border border-slate-700";
+
+        const textClass = isCurrent
+          ? "text-white font-semibold"
+          : isDone
+          ? "text-slate-300"
+          : "text-slate-500";
 
         return (
-          <div key={item.key} className={`flex items-center gap-3 rounded-xl border px-3 py-2 ${toneClass}`}>
-            <span className={`h-2.5 w-2.5 rounded-full ${dotClass}`} />
-            <span className="text-sm">{item.label}</span>
+          <div key={item.key} className="relative flex items-start gap-3">
+            {/* Connector Line */}
+            {index < items.length - 1 && (
+              <div
+                className={`absolute left-[11px] top-6 w-[2px] h-[calc(100%+16px)] ${
+                  isDone ? "bg-emerald-500" : "bg-slate-800"
+                }`}
+              />
+            )}
+
+            {/* Circle indicator */}
+            <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs transition-colors ${circleBg}`}>
+              {isDone ? "✓" : index + 1}
+            </div>
+
+            {/* Label */}
+            <div className="pt-0.5 min-w-0">
+              <span className={`text-sm block truncate transition-colors ${textClass}`}>
+                {item.label}
+              </span>
+            </div>
           </div>
         );
       })}
@@ -2242,6 +2400,7 @@ function MessageBubble({
         {/* Replay button — shown on hover for AI messages */}
         {isAI && onReplay && (
           <button
+            type="button"
             onClick={onReplay}
             title={t("tooltips.replayQuestion")}
             className="absolute -bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded-full w-6 h-6 flex items-center justify-center"

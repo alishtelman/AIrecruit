@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.models.candidate import Candidate
 from app.models.report import AssessmentReport
 from app.models.user import User
-from app.schemas.report import AssessmentReportResponse
+from app.schemas.report import AssessmentReportResponse, build_report_view
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -29,4 +29,4 @@ async def get_report(
     )
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found.")
-    return report
+    return build_report_view(report, "candidate")

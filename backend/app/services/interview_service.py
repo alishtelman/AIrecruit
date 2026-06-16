@@ -48,8 +48,11 @@ from app.ai.interviewer import (
 )
 from app.ai.resume_profile import preprocess_resume
 from app.ai.practical_tasks import (
-    get_practical_task,
-    should_trigger_practical_task,
+    get_practical_plan,
+    get_task_by_id,
+    get_task_for_frontend,
+    should_trigger_next_practical_task,
+    _BACKEND_ONLY_FIELDS,
 )
 from app.ai.providers import get_llm_provider
 from app.ai.providers.base import ProviderChatError
@@ -176,6 +179,14 @@ def _default_interview_state_v2(
         "resume_scored_turns": 0,
         "last_policy_decision": None,
         "decision_traces": [],
+        "role_mismatch": {
+            "detected": False,
+            "mismatch_type": None,
+            "support_incident_signals": 0,
+            "frontend_core_checks": 0,
+            "frontend_weak_checks": 0,
+            "notes": [],
+        },
         "interview_quality_metrics": _default_interview_quality_metrics(),
     }
 
@@ -238,6 +249,99 @@ def _role_interview_sections(role: str, language: str) -> list[str]:
     lang = "en" if str(language or "").lower().startswith("en") else "ru"
     blueprint = _ROLE_INTERVIEW_BLUEPRINTS.get(role) or _ROLE_INTERVIEW_BLUEPRINTS["backend_engineer"]
     return list(blueprint.get(lang) or blueprint.get("ru") or [])
+
+
+_SUPPORT_INCIDENT_PROFILE_RE = re.compile(
+    r"\b(support|incident|incidents|monitoring|grafana|logs?|helpdesk|operations?)\b"
+    r"|сопровожд|инцидент|эксплуатац|мониторинг|графан|логи|поддержк|руководител[ья] сопровождения",
+    re.IGNORECASE,
+)
+_FRONTEND_CORE_TOPIC_RE = re.compile(
+    r"frontend|front-end|react|next|vue|angular|javascript|typescript|js|ts|css|html|ui|dom|browser|state|component|"
+    r"фронтенд|реакт|ангуляр|компонент|браузер|верстк|стейт|состояни",
+    re.IGNORECASE,
+)
+_FRONTEND_EVIDENCE_RE = re.compile(
+    r"react|next|vue|angular|javascript|typescript|css|html|dom|browser|component|hook|usememo|usecallback|"
+    r"usestate|redux|zustand|tailwind|webpack|vite|"
+    r"реакт|ангуляр|компонент|хук|верстк|браузер|состояни|стейт",
+    re.IGNORECASE,
+)
+
+
+def _update_frontend_role_mismatch_state(
+    *,
+    previous: dict[str, Any] | None,
+    role: str,
+    current_competency: str,
+    current_topic: dict | None,
+    current_question: str | None,
+    answer: str,
+    answer_class: str,
+    answer_relevance: str,
+    resume_summary: str,
+    transcript_summary: list[str],
+) -> dict[str, Any]:
+    """Track support/incident profile when the target role is Frontend Engineer."""
+    state = dict(previous or {})
+    state.setdefault("detected", False)
+    state.setdefault("mismatch_type", None)
+    state.setdefault("support_incident_signals", 0)
+    state.setdefault("frontend_core_checks", 0)
+    state.setdefault("frontend_weak_checks", 0)
+    state.setdefault("notes", [])
+    if role != "frontend_engineer":
+        return state
+
+    notes = [str(item) for item in state.get("notes", []) if str(item).strip()]
+    answer_text = str(answer or "")
+    support_corpus = " ".join(
+        [
+            answer_text,
+            str(resume_summary or ""),
+            " ".join(str(item) for item in (transcript_summary or [])[-6:]),
+        ]
+    )
+    topic_corpus = " ".join(
+        [
+            str(current_competency or ""),
+            str((current_topic or {}).get("phase") or ""),
+            str((current_topic or {}).get("block") or ""),
+            str((current_topic or {}).get("verification_target") or ""),
+            str(current_question or ""),
+        ]
+    )
+    support_signal = bool(_SUPPORT_INCIDENT_PROFILE_RE.search(support_corpus))
+    frontend_core_check = bool(_FRONTEND_CORE_TOPIC_RE.search(topic_corpus))
+    frontend_evidence = (
+        bool(_FRONTEND_EVIDENCE_RE.search(answer_text))
+        and answer_class in {"strong", "partial"}
+        and answer_relevance != "low"
+    )
+    weak_frontend_check = (
+        frontend_core_check
+        and not frontend_evidence
+        and (answer_class in {"generic", "evasive", "no_experience_honest"} or answer_relevance == "low")
+    )
+
+    if support_signal:
+        state["support_incident_signals"] = min(20, int(state.get("support_incident_signals") or 0) + 1)
+        note = "Candidate profile shows support/incident diagnostics rather than frontend delivery."
+        if note not in notes:
+            notes.append(note)
+    if frontend_core_check:
+        state["frontend_core_checks"] = min(20, int(state.get("frontend_core_checks") or 0) + 1)
+    if weak_frontend_check:
+        state["frontend_weak_checks"] = min(20, int(state.get("frontend_weak_checks") or 0) + 1)
+
+    if int(state.get("support_incident_signals") or 0) >= 1 and int(state.get("frontend_weak_checks") or 0) >= 2:
+        state["detected"] = True
+        state["mismatch_type"] = "support_incident_vs_frontend"
+        note = "Frontend core evidence was not confirmed after support/incident signals."
+        if note not in notes:
+            notes.append(note)
+    state["notes"] = notes[-5:]
+    return state
 
 
 def _build_interview_intro_message(*, role: str, language: str, max_questions: int) -> str:
@@ -2324,6 +2428,11 @@ def _save_skills(
 ) -> None:
     """Persist extracted skills to candidate_skills table."""
     for tag in skill_tags:
+        if tag.get("status") not in (None, "confirmed"):
+            continue
+        evidence_summary = str(tag.get("evidence") or "").strip()
+        if not evidence_summary:
+            continue
         skill_name = tag.get("skill", "").strip().lower()
         if not skill_name:
             continue
@@ -2333,7 +2442,7 @@ def _save_skills(
             report_id=report_id,
             skill_name=skill_name,
             proficiency=tag.get("proficiency", "intermediate"),
-            evidence_summary=None,
+            evidence_summary=evidence_summary[:1000],
         ))
 
 
@@ -3596,6 +3705,88 @@ def _append_transcript_summary(
     if fp and all(_normalize_answer_fingerprint(item) != fp for item in summary):
         summary.append(entry)
     return summary[-20:]
+
+
+def _apply_voice_answer_metadata(
+    interview: Interview,
+    *,
+    answer: str,
+    input_mode: str,
+    transcript_confirmed: bool | None,
+    transcript_quality: str | None,
+    audio_available: bool | None,
+    audio_duration_ms: int | None,
+    audio_size_bytes: int | None,
+) -> None:
+    state: dict[str, Any] = dict(interview.interview_state or {})
+    mode = "voice" if input_mode == "voice" else "text"
+    state["interview_mode"] = "voice" if mode == "voice" else state.get("interview_mode") or "text"
+    state["voice_auto_send"] = False
+
+    voice_metrics = dict(state.get("voice_metrics") or {})
+    total_answers = int(voice_metrics.get("total_answers") or 0) + 1
+    voice_answers = int(voice_metrics.get("voice_answers") or 0)
+    text_fallback_answers = int(voice_metrics.get("text_fallback_answers") or 0)
+    low_quality_transcripts = int(voice_metrics.get("low_quality_transcripts") or 0)
+    missing_audio_answers = int(voice_metrics.get("missing_audio_answers") or 0)
+    confirmed_transcripts = int(voice_metrics.get("confirmed_transcripts") or 0)
+
+    if mode == "voice":
+        voice_answers += 1
+        if transcript_confirmed:
+            confirmed_transcripts += 1
+        if transcript_quality in {"low", "empty", "failed"}:
+            low_quality_transcripts += 1
+        if not audio_available:
+            missing_audio_answers += 1
+    else:
+        text_fallback_answers += 1
+
+    voice_metrics.update(
+        {
+            "total_answers": total_answers,
+            "voice_answers": voice_answers,
+            "text_fallback_answers": text_fallback_answers,
+            "confirmed_transcripts": confirmed_transcripts,
+            "low_quality_transcripts": low_quality_transcripts,
+            "missing_audio_answers": missing_audio_answers,
+        }
+    )
+
+    low_quality_ratio = low_quality_transcripts / voice_answers if voice_answers else 0.0
+    text_fallback_ratio = text_fallback_answers / total_answers if total_answers else 0.0
+    if voice_answers and low_quality_ratio >= 0.4:
+        reliability = "low"
+    elif voice_answers and (low_quality_ratio >= 0.2 or missing_audio_answers >= max(2, voice_answers // 2) or text_fallback_ratio >= 0.5):
+        reliability = "medium"
+    else:
+        reliability = "high"
+
+    state["voice_metrics"] = voice_metrics
+    state["signal_reliability"] = {
+        "level": reliability,
+        "basis": "voice_transcript_quality",
+        "voice_answers": voice_answers,
+        "text_fallback_answers": text_fallback_answers,
+        "low_quality_transcripts": low_quality_transcripts,
+        "missing_audio_answers": missing_audio_answers,
+    }
+
+    voice_turns = list(state.get("voice_turns") or [])
+    voice_turns.append(
+        {
+            "turn": total_answers,
+            "input_mode": mode,
+            "answer_chars": len(answer or ""),
+            "transcript_confirmed": bool(transcript_confirmed) if mode == "voice" else None,
+            "transcript_quality": transcript_quality if mode == "voice" else None,
+            "audio_available": bool(audio_available) if mode == "voice" else None,
+            "audio_duration_ms": audio_duration_ms,
+            "audio_size_bytes": audio_size_bytes,
+        }
+    )
+    state["voice_turns"] = voice_turns[-80:]
+    interview.interview_state = state
 
 
 def _is_control_or_non_answer_intent(intent: str | None, *, is_move_on_request: bool = False) -> bool:
@@ -5686,8 +5877,11 @@ async def start_interview(
         # Voice-first metadata — populated when mode is confirmed by frontend
         "interview_mode": None,           # "voice" | "text" | None (unknown)
         "voice_auto_send": None,          # True | False | None
-        # Practical task tracking
-        "practical_task_triggered": False,
+        # Practical task tracking — plan-based multi-task support
+        "practical_task_plan": [],        # ordered list of stable task IDs for this interview
+        "practical_tasks_completed": [],  # stable IDs of tasks already submitted
+        "practical_tasks_count": 0,       # total tasks in plan (set at start)
+        "practical_task_triggered": False, # legacy compat: True once any task has been triggered
         "practical_task_id": None,
         "practical_task_type": None,
         "practical_submissions": [],
@@ -5737,6 +5931,15 @@ async def start_interview(
             role=target_role,
             language=language,
         )
+    # Build practical task plan for this interview (role + seniority based)
+    _practical_plan = get_practical_plan(
+        role=target_role,
+        seniority=normalized_seniority_level,
+        language=language,
+    )
+    initial_state["practical_task_plan"] = _practical_plan
+    initial_state["practical_tasks_count"] = len(_practical_plan)
+
     interview.interview_state = initial_state
     interview.status = "in_progress"
     await db.commit()
@@ -5762,6 +5965,12 @@ async def add_candidate_message(
     candidate: Candidate,
     interview_id: uuid.UUID,
     message: str,
+    input_mode: str = "text",
+    transcript_confirmed: bool | None = None,
+    transcript_quality: str | None = None,
+    audio_available: bool | None = None,
+    audio_duration_ms: int | None = None,
+    audio_size_bytes: int | None = None,
 ) -> SendMessageResponse:
     interview = await _get_interview(db, interview_id, candidate.id)
     should_end_now = False
@@ -5912,6 +6121,16 @@ async def add_candidate_message(
         # current answer) stays consistent, and don't double-save the answer.
         messages = messages[:-1]
     else:
+        _apply_voice_answer_metadata(
+            interview,
+            answer=message,
+            input_mode=input_mode,
+            transcript_confirmed=transcript_confirmed,
+            transcript_quality=transcript_quality,
+            audio_available=audio_available,
+            audio_duration_ms=audio_duration_ms,
+            audio_size_bytes=audio_size_bytes,
+        )
         db.add(InterviewMessage(
             id=uuid.uuid4(),
             interview_id=interview.id,
@@ -6453,6 +6672,23 @@ async def add_candidate_message(
         competencies_for_guard = current_target.get("competencies") if isinstance(current_target, dict) else None
         if isinstance(competencies_for_guard, list) and competencies_for_guard:
             current_competency_for_guard = str(competencies_for_guard[0] or "").strip()
+        previous_role_mismatch = (
+            state.get("role_mismatch")
+            if isinstance(state.get("role_mismatch"), dict)
+            else (state_v2_before or {}).get("role_mismatch")
+        )
+        role_mismatch_state = _update_frontend_role_mismatch_state(
+            previous=previous_role_mismatch if isinstance(previous_role_mismatch, dict) else None,
+            role=interview.target_role,
+            current_competency=current_competency_for_guard,
+            current_topic=current_target,
+            current_question=current_question_text,
+            answer=message,
+            answer_class=answer_class,
+            answer_relevance=answer_relevance,
+            resume_summary=resume_summary_for_strategy,
+            transcript_summary=transcript_summary,
+        )
         resume_gate_passed_for_strategy = _resume_deep_dive_can_advance(
             resume_evidence=resume_evidence,
             resume_scored_turns=resume_scored_turns_after,
@@ -6475,6 +6711,16 @@ async def add_candidate_message(
             strategy_policy_action = "switch_topic"
         elif strategy_policy_action == "give_example_scenario":
             strategy_policy_action = "clarify"
+        if (
+            bool(role_mismatch_state.get("detected"))
+            and strategy_policy_action in {"pressure_followup", "follow_up"}
+            and answer_class in {"generic", "evasive", "no_experience_honest"}
+        ):
+            strategy_policy_action = "switch_topic"
+            policy_decision["policy_action"] = "switch_topic"
+            policy_decision["advance_phase"] = True
+            policy_decision["advance_scenario"] = True
+            policy_decision["reason"] = "frontend_role_mismatch_after_weak_core_checks"
 
         role_hint_competency = _topic_primary_competency(current_target) or current_competency_for_guard
         pressure_hint = build_pressure_followup(
@@ -6527,6 +6773,7 @@ async def add_candidate_message(
                     "concrete_example_hint": concrete_example_hint,
                     "policy_reason": str(policy_decision.get("reason") or ""),
                     "intent_reason": str(candidate_intent.get("reason") or ""),
+                    "role_mismatch": role_mismatch_state,
                 },
                 model_preference=strategist_model_preference,
             )
@@ -6591,6 +6838,7 @@ async def add_candidate_message(
             trace["provider_attempts"] = list(raw_question_decision.get("provider_attempts") or [])
             trace["provider_errors"] = list(raw_question_decision.get("provider_errors") or [])
             trace["provider_fallback_used"] = bool(raw_question_decision.get("provider_fallback_used"))
+            trace["role_mismatch"] = role_mismatch_state
 
         raw_action = str(raw_question_decision.get("action") or "").strip().lower()
         inferred_intent = _derive_conversational_intent(
@@ -6742,13 +6990,9 @@ async def add_candidate_message(
                 question_type = "main"
                 will_advance = True
             elif answer_class == "no_experience_honest":
-                if can_probe_current_topic and last_question_type == "main":
-                    question_type = "followup"
-                    will_advance = False
-                else:
-                    question_type = "main"
-                    will_advance = True
-                    forced_closure_reason = forced_closure_reason or f"{module_type}_honest_gap_acknowledged"
+                question_type = "main"
+                will_advance = True
+                forced_closure_reason = forced_closure_reason or f"{module_type}_honest_gap_acknowledged"
             elif force_structured_reframe:
                 question_type = "structured_reframe"
                 will_advance = False
@@ -6777,13 +7021,9 @@ async def add_candidate_message(
                 question_type = "main"
                 will_advance = True
             elif answer_class == "no_experience_honest":
-                if can_probe_current_topic and last_question_type == "main":
-                    question_type = "followup"
-                    will_advance = False
-                else:
-                    question_type = "main"
-                    will_advance = True
-                    forced_closure_reason = forced_closure_reason or "behavioral_honest_gap_acknowledged"
+                question_type = "main"
+                will_advance = True
+                forced_closure_reason = forced_closure_reason or "behavioral_honest_gap_acknowledged"
             elif force_structured_reframe:
                 question_type = "structured_reframe"
                 will_advance = False
@@ -6815,13 +7055,9 @@ async def add_candidate_message(
                 question_type = "main"
                 will_advance = True
             elif answer_class == "no_experience_honest":
-                if can_probe_current_topic and last_question_type == "main":
-                    question_type = "followup"
-                    will_advance = False
-                else:
-                    question_type = "main"
-                    will_advance = True
-                    forced_closure_reason = forced_closure_reason or "honest_gap_acknowledged"
+                question_type = "main"
+                will_advance = True
+                forced_closure_reason = forced_closure_reason or "honest_gap_acknowledged"
                 next_pending_verification = None
             elif topic_guard_requires_probe:
                 normalized_claim_target = str(claim_target or "").strip().lower()
@@ -8005,8 +8241,10 @@ async def add_candidate_message(
             if not trace["error"] and provider_errors_for_trace:
                 trace["error"] = "; ".join(str(item) for item in provider_errors_for_trace if str(item).strip())
             logger.info(
-                "interview_v2_question_generation status=final interview_id=%s source=%s selected_generator=%s provider=%s model=%s latency_ms=%.1f fallback_reason=%s",
+                "interview_v2_question_generation status=final interview_id=%s candidate_id=%s role=%s source=%s selected_generator=%s provider=%s model=%s latency_ms=%.1f fallback_reason=%s",
                 interview.id,
+                interview.candidate_id,
+                interview.target_role,
                 trace.get("final_question_source"),
                 trace.get("selected_generator"),
                 trace.get("ai_provider") or trace.get("provider"),
@@ -8081,6 +8319,7 @@ async def add_candidate_message(
                 "decision_traces": decision_traces_v2[-20:],
                 "last_llm": _build_last_llm_debug_payload(interview_id=interview.id, trace=trace),
                 "fallback_counter": fallback_counter_v2,
+                "role_mismatch": role_mismatch_state,
                 "interview_quality_metrics": interview_quality_metrics,
             },
         )
@@ -8105,48 +8344,65 @@ async def add_candidate_message(
     asked_questions_count = base_assistant_count + (1 if current_question else 0)
     answered_questions_count = base_candidate_count + 1
 
-    # ── Practical task injection ───────────────────────────────────────────────
-    # Inject a mid-interview practical task when the role/stage policy allows it.
+    # ── Practical task injection (plan-based, multi-task) ─────────────────────
     practical_task_obj: PracticalTaskResponse | None = None
     question_delivery_type = "voice_only"
     state_now: dict = dict(interview.interview_state) if isinstance(interview.interview_state, dict) else {}
-    has_practical_submission = any(
-        getattr(item, "role", None) == "practical_submission" for item in messages
-    )
-    already_triggered = (
-        bool(state_now.get("practical_task_triggered"))
-        or bool(state_now.get("practical_submissions"))
-        or has_practical_submission
-    )
-    # Use core interview progress for the policy window. Counting every
-    # candidate turn makes adaptive follow-ups burn through the 3–6 answer
-    # trigger window before the engine reaches a technical stage.
+
+    _plan: list[str] = list(state_now.get("practical_task_plan") or [])
+    _completed: list[str] = list(state_now.get("practical_tasks_completed") or [])
+    _tasks_count: int = int(state_now.get("practical_tasks_count") or len(_plan))
+    _remaining_ids = [tid for tid in _plan if tid not in _completed]
+    _tasks_remaining = len(_remaining_ids)
+    _tasks_completed_count = len(_completed)
+
+    # Use question_count (core progress) not answered_count so adaptive follow-ups
+    # don't prematurely exhaust the trigger window.
     _answered_count = int(interview.question_count or 0)
-    # current stage key from v2 state (may be None for simple interviews)
     _state_v2_now = get_interview_state_v2(interview)
     _current_stage_key = str((_state_v2_now or {}).get("phase") or "").strip() if isinstance(_state_v2_now, dict) else ""
+
     if (
         current_question
-        and not already_triggered
-        and should_trigger_practical_task(
+        and _tasks_remaining > 0
+        and should_trigger_next_practical_task(
             role=interview.target_role,
             answered_count=_answered_count,
-            already_triggered=already_triggered,
+            tasks_remaining_in_plan=_tasks_remaining,
+            tasks_completed_count=_tasks_completed_count,
             current_stage_key=_current_stage_key,
         )
     ):
         lang = getattr(interview, "language", None) or "ru"
-        task_data = get_practical_task(interview.target_role, lang)
-        if task_data:
-            practical_task_obj = PracticalTaskResponse(**task_data)
+        next_stable_id = _remaining_ids[0]
+        raw_task = get_task_by_id(next_stable_id, interview.target_role)
+        if raw_task:
+            task_data = get_task_for_frontend(raw_task, lang)
+            task_index = _tasks_completed_count + 1
+            task_total = _tasks_count or len(_plan)
+            practical_task_obj = PracticalTaskResponse(
+                task_id=task_data["task_id"],
+                stable_id=task_data.get("stable_id", next_stable_id),
+                task_type=task_data["task_type"],
+                title=task_data["title"],
+                instruction=task_data["instruction"],
+                language=task_data.get("language"),
+                starter_code=task_data.get("starter_code"),
+                examples=task_data.get("examples", []),
+                evaluation_criteria=task_data.get("evaluation_criteria", []),
+                time_limit_minutes=task_data.get("time_limit_minutes", 10),
+                voice_intro=task_data.get("voice_intro"),
+                task_index=task_index,
+                task_total=task_total,
+            )
             question_delivery_type = "practical_task"
-            # Override current_question with the voice intro for TTS
             if task_data.get("voice_intro"):
                 current_question = task_data["voice_intro"]
-            # Persist flag so we never trigger twice
-            state_now["practical_task_triggered"] = True
+            # Persist updated plan state
+            state_now["practical_task_triggered"] = True  # legacy compat
             state_now["practical_task_id"] = task_data["task_id"]
             state_now["practical_task_type"] = task_data["task_type"]
+            state_now["practical_task_stable_id"] = next_stable_id
             interview.interview_state = state_now
             await db.commit()
             await db.refresh(interview)
@@ -8210,6 +8466,8 @@ async def _evaluate_practical_submission(
             f"Роль кандидата: {role}\n"
             f"Тип задания: {task_type}{lang_note}\n\n"
             f"Решение кандидата:\n```\n{answer_preview}\n```\n\n"
+            "Жёсткое правило: если решение не содержит кода, SQL, конфигурации, схемы или конкретного письменного артефакта, "
+            "practical_score должен быть ≤ 3, correctness='incorrect' или 'partial', completeness='minimal', code_quality='not_applicable'.\n"
             "Оцени решение и верни JSON со следующими полями:\n"
             "- practical_score: число от 0 до 10\n"
             "- correctness: 'correct' | 'partial' | 'incorrect'\n"
@@ -8229,6 +8487,8 @@ async def _evaluate_practical_submission(
             f"Candidate role: {role}\n"
             f"Task type: {task_type}{lang_note}\n\n"
             f"Candidate solution:\n```\n{answer_preview}\n```\n\n"
+            "Hard rule: if the solution contains no code, SQL, config, diagram, or concrete written artifact, "
+            "practical_score must be ≤ 3, correctness='incorrect' or 'partial', completeness='minimal', code_quality='not_applicable'.\n"
             "Evaluate the solution and return JSON with:\n"
             "- practical_score: number 0–10\n"
             "- correctness: 'correct' | 'partial' | 'incorrect'\n"
@@ -8311,6 +8571,50 @@ async def _evaluate_practical_submission(
         }
 
 
+def _build_interview_closing_message(role: str, language: str) -> str:
+    """
+    Returns a warm, structured closing phrase that is ALWAYS shown when the
+    interview ends (close_interview action). It is deterministic so candidates
+    always get a clear, professional sign-off regardless of LLM quality.
+    """
+    is_en = str(language or "ru").lower().startswith("en")
+    role_label_map_ru = {
+        "backend_engineer": "Backend-разработчика",
+        "frontend_engineer": "Frontend-разработчика",
+        "qa_engineer": "QA-инженера",
+        "devops_engineer": "DevOps-инженера",
+        "data_scientist": "Data Scientist",
+        "product_manager": "Product Manager",
+        "mobile_engineer": "Mobile-разработчика",
+        "designer": "Дизайнера",
+    }
+    role_label_map_en = {
+        "backend_engineer": "Backend Engineer",
+        "frontend_engineer": "Frontend Engineer",
+        "qa_engineer": "QA Engineer",
+        "devops_engineer": "DevOps Engineer",
+        "data_scientist": "Data Scientist",
+        "product_manager": "Product Manager",
+        "mobile_engineer": "Mobile Engineer",
+        "designer": "Designer",
+    }
+    if is_en:
+        role_label = role_label_map_en.get(role, role.replace("_", " ").title())
+        return (
+            f"That's everything for the {role_label} interview. "
+            "Thank you for your time and thoughtful answers — I really enjoyed our conversation. "
+            "We'll now analyse your responses and prepare a detailed competency report. "
+            "You'll receive the results shortly. Good luck!"
+        )
+    role_label = role_label_map_ru.get(role, role.replace("_", " "))
+    return (
+        f"На этом наше интервью на позицию {role_label} завершено. "
+        "Спасибо большое за ваше время и развёрнутые ответы — было очень интересно. "
+        "Мы проанализируем ваши ответы и подготовим подробный отчёт о компетенциях. "
+        "Результаты будут доступны в ближайшее время. Удачи!"
+    )
+
+
 async def save_practical_submission(
     db: AsyncSession,
     candidate: Candidate,
@@ -8351,15 +8655,25 @@ async def save_practical_submission(
     state.setdefault("practical_task_id", body.task_id)
     state.setdefault("practical_task_type", body.task_type)
     state["practical_task_submitted"] = True
+
+    # Mark this task as completed in the plan so the next task can trigger
+    stable_id = body.stable_id or state.get("practical_task_stable_id") or ""
+    if stable_id:
+        completed: list[str] = list(state.get("practical_tasks_completed") or [])
+        if stable_id not in completed:
+            completed.append(stable_id)
+        state["practical_tasks_completed"] = completed
+
     submission_record = {
         "task_id": body.task_id,
+        "stable_id": stable_id,
         "task_type": body.task_type,
         "language": body.language,
         "duration_seconds": body.duration_seconds,
         "answer_length": len(body.answer),
     }
     # Append to list so multiple submissions can be tracked
-    submissions: list = list(state.get("practical_submissions", []))
+    submissions: list = list(state.get("practical_submissions") or [])
     submissions.append(submission_record)
     state["practical_submissions"] = submissions
     interview.interview_state = state
@@ -8731,9 +9045,31 @@ async def _ensure_report_generated(
         "forced_topic_transition_count": interview_quality_metrics["forced_topic_transition_count"],
     }
 
+    _istate: dict = interview.interview_state if isinstance(interview.interview_state, dict) else {}
+    voice_metrics = dict(_istate.get("voice_metrics") or {})
+    signal_reliability = dict(_istate.get("signal_reliability") or {})
+    result.full_report_json["voice_section"] = {
+        "interview_mode": _istate.get("interview_mode"),
+        "recording_available": bool(interview.recording_path),
+        "voice_metrics": voice_metrics,
+        "signal_reliability": signal_reliability or None,
+    }
+    if signal_reliability:
+        result.full_report_json["signal_reliability"] = signal_reliability
+        reliability_level = str(signal_reliability.get("level") or "").lower()
+        if reliability_level in {"low", "medium"}:
+            reliability_reason = (
+                f"Надёжность голосовой расшифровки: {reliability_level}; "
+                "перед финальным решением стоит проверить ответы с низким качеством транскрипта."
+                if interview.language == "ru"
+                else f"Voice transcript signal reliability is {reliability_level}; "
+                "review low-quality transcripts before making a final decision."
+            )
+            if reliability_reason not in (result.confidence_reasons or []):
+                result.confidence_reasons = [*(result.confidence_reasons or []), reliability_reason]
+
     # ── Practical task section ────────────────────────────────────────────────
     # Pulled from interview_state so it's always in sync with what was submitted.
-    _istate: dict = interview.interview_state if isinstance(interview.interview_state, dict) else {}
     _practical_evals: list = list(_istate.get("practical_evaluations") or [])
     _practical_subs: list = list(_istate.get("practical_submissions") or [])
     _has_practical = bool(_practical_subs)

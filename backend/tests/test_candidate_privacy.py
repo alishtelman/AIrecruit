@@ -253,6 +253,7 @@ async def test_private_and_request_only_profiles_are_excluded_from_public_benchm
     second_login = await client.post("/api/v1/auth/login", json={
         "email": second_email,
         "password": "testpass123",
+        "account_type": "candidate",
     })
     assert second_login.status_code == 200, second_login.text
     second_token = second_login.json()["access_token"]

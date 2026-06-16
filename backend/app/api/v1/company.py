@@ -19,6 +19,7 @@ from app.schemas.company import (
     CompanyAISettingsResponse,
     CandidateDetailResponse,
     CandidateListItemResponse,
+    CandidateListPageResponse,
     CandidateNoteCreateRequest,
     CandidateNoteResponse,
     HireOutcomeRequest,
@@ -28,7 +29,7 @@ from app.schemas.company import (
 )
 from app.schemas.interview import InterviewReplayResponse
 from app.schemas.interview import ProctoringTimelineResponse
-from app.schemas.report import AssessmentReportResponse
+from app.schemas.report import AssessmentReportResponse, build_report_view
 from app.schemas.template import TemplateCreateRequest, TemplateResponse
 from app.services.company_service import (
     get_analytics_funnel,
@@ -37,6 +38,7 @@ from app.services.company_service import (
     get_company_report,
     get_salary_analytics,
     list_verified_candidates,
+    list_verified_candidates_page,
 )
 from app.services.company_settings_service import (
     get_company_ai_settings_response,
@@ -129,6 +131,42 @@ async def get_candidates(
         hire_outcome=hire_outcome,
         shortlist_id=shortlist_id,
         sort=sort,
+    )
+
+
+@router.get("/candidates/page", response_model=CandidateListPageResponse)
+async def get_candidates_page(
+    q: str | None = None,
+    role: str | None = None,
+    skills: list[str] | None = Query(default=None),
+    min_score: float | None = Query(default=None, ge=0, le=10),
+    recommendation: str | None = None,
+    salary_min: int | None = Query(default=None, ge=0),
+    salary_max: int | None = Query(default=None, ge=0),
+    hire_outcome: str | None = None,
+    shortlist_id: uuid.UUID | None = None,
+    sort: str = Query(default="score_desc", pattern="^(score_desc|score_asc|latest|salary_asc|salary_desc)$"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+    user_and_company: tuple[User, Company] = Depends(get_current_company),
+):
+    _, company = user_and_company
+    return await list_verified_candidates_page(
+        db,
+        company_id=company.id,
+        q=q,
+        role=role,
+        skills=skills,
+        min_score=min_score,
+        recommendation=recommendation,
+        salary_min=salary_min,
+        salary_max=salary_max,
+        hire_outcome=hire_outcome,
+        shortlist_id=shortlist_id,
+        sort=sort,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -256,7 +294,7 @@ async def get_report(
         summary="Viewed assessment report",
         metadata={"report_id": str(report.id)},
     )
-    return report
+    return build_report_view(report, "company")
 
 
 @router.get("/reports/{report_id}/proctoring-timeline", response_model=ProctoringTimelineResponse)

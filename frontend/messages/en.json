@@ -45,6 +45,7 @@
       "submit": "Enter admin console",
       "submitting": "Signing in...",
       "failed": "Failed to sign in to admin console",
+      "roleMismatch": "This account does not match this login type",
       "note": "Local development uses a dedicated platform admin account.",
       "backHome": "Back to home"
     },
@@ -914,6 +915,7 @@
       "submit": "Sign in",
       "submitting": "Signing in...",
       "invalid": "Invalid email or password",
+      "roleMismatch": "This account does not match this login type",
       "noAccount": "Don't have an account?",
       "register": "Register"
     },
@@ -940,6 +942,7 @@
       "submit": "Sign in",
       "submitting": "Signing in...",
       "failed": "Login failed",
+      "roleMismatch": "This account does not match this login type",
       "noAccount": "Don't have an account?",
       "register": "Register your company"
     },
@@ -1002,7 +1005,13 @@
       "sortSalaryDesc": "Sort: Salary desc",
       "refreshing": "Refreshing server-side results...",
       "resultCount": "{count} candidates in result set",
+      "resultCountPaged": "Showing {shown} of {total} · page {page}/{pages}",
       "apply": "Apply filters"
+    },
+    "pagination": {
+      "summary": "Page {page} of {pages} · {total} total candidates",
+      "previous": "Previous",
+      "next": "Next"
     },
     "shortlists": {
       "title": "Shortlists",
@@ -1551,7 +1560,7 @@
     "send": "Send",
     "textMode": "Text mode",
     "voiceMode": "Voice mode",
-    "voiceHint": "Hold the mic, then review the transcript before sending.",
+    "voiceHint": "Click “Start answer”, finish recording, then confirm the transcript.",
     "latestTranscript": "Latest transcript captured. Edit the draft below before sending.",
     "placeholderThinking": "AI is thinking...",
     "placeholderListening": "Listening...",
@@ -1589,6 +1598,28 @@
       "enableVoice": "Enable voice",
       "holdToSpeak": "Hold to speak",
       "replayQuestion": "Replay question"
+    },
+    "voiceFirstHint": "Answer by voice. After transcription you can review and confirm the text.",
+    "voiceQuestionLabel": "Current question",
+    "voiceReplayQuestion": "Speak again",
+    "voiceTranscriptReviewTitle": "Review your answer transcript",
+    "voiceLowQualityHint": "The transcript looks short or uncertain — re-record if the meaning was lost.",
+    "voiceConfirmTranscript": "Confirm and send",
+    "voiceRecordAgain": "Record again",
+    "voiceStartAnswer": "Start answer",
+    "voiceStopAnswer": "Finish answer",
+    "voiceStartIntro": "When you are ready, click “Start answer” and say that you are ready to begin.",
+    "voiceUseTextFallback": "Answer with text",
+    "voiceRetry": "Try again",
+    "voiceStates": {
+      "ai_speaking": "AI is speaking",
+      "listening": "Recording answer",
+      "transcribing": "Transcribing speech",
+      "review_transcript": "Review transcript",
+      "submitted": "Answer submitted",
+      "microphone_error": "Microphone issue",
+      "silence_timeout": "No answer detected",
+      "idle": "Ready for voice answer"
     }
   },
   "report": {

@@ -11,6 +11,7 @@ async def _admin_token(client: AsyncClient) -> str:
     login = await client.post("/api/v1/auth/login", json={
         "email": settings.platform_admin_email,
         "password": settings.platform_admin_password,
+        "account_type": "admin",
     })
     assert login.status_code == 200, login.text
     return login.json()["access_token"]

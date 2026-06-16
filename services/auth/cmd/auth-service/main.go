@@ -394,13 +394,42 @@ func (srv *server) handleCompanyRegister(w http.ResponseWriter, r *http.Request)
 }
 
 type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	AccountType string `json:"account_type"`
 }
 
 type TokenResponse struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
+}
+
+const loginRoleMismatchDetail = "Account does not match this login type"
+
+func normalizeLoginAccountType(value string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "candidate":
+		return "candidate", true
+	case "company", "company_admin", "company_member":
+		return "company", true
+	case "admin", "platform_admin":
+		return "admin", true
+	default:
+		return "", false
+	}
+}
+
+func loginAccountTypeAllowsRole(accountType string, role string) bool {
+	switch accountType {
+	case "candidate":
+		return role == "candidate"
+	case "company":
+		return role == "company_admin" || role == "company_member"
+	case "admin":
+		return role == "platform_admin"
+	default:
+		return false
+	}
 }
 
 func (srv *server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -416,9 +445,17 @@ func (srv *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	var ok bool
+	req.AccountType, ok = normalizeLoginAccountType(req.AccountType)
+	if !ok {
+		writeError(w, http.StatusUnprocessableEntity, "Unsupported login type")
+		return
+	}
 
 	// 1. Bootstrap Platform Admin if bootstrap configs match and user is trying to login as admin
-	if srv.config.PlatformAdminBootstrap && req.Email == strings.ToLower(srv.config.PlatformAdminEmail) {
+	if srv.config.PlatformAdminBootstrap &&
+		req.AccountType == "admin" &&
+		req.Email == strings.ToLower(srv.config.PlatformAdminEmail) {
 		err := srv.ensurePlatformAdmin(r.Context())
 		if err != nil {
 			log.Printf("[AUTH] Platform admin bootstrap failed: %v", err)
@@ -449,7 +486,13 @@ func (srv *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. Generate JWT token
+	// 5. Verify that this account is allowed to use the selected login entrypoint.
+	if !loginAccountTypeAllowsRole(req.AccountType, user.Role) {
+		writeError(w, http.StatusUnauthorized, loginRoleMismatchDetail)
+		return
+	}
+
+	// 6. Generate JWT token
 	tokenStr, err := srv.createAccessToken(user.ID.String(), user.Role)
 	if err != nil {
 		log.Printf("[AUTH] Failed to generate access token: %v", err)
@@ -457,7 +500,7 @@ func (srv *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 6. Set auth session cookie
+	// 7. Set auth session cookie
 	sameSite := http.SameSiteLaxMode
 	if strings.ToLower(srv.config.SessionCookieSameSite) == "none" {
 		sameSite = http.SameSiteNoneMode

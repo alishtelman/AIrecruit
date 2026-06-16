@@ -89,7 +89,7 @@ async def _invite_and_login_member(
 
     login = await client.post(
         "/api/v1/auth/login",
-        json={"email": email, "password": temp_password},
+        json={"email": email, "password": temp_password, "account_type": "company"},
     )
     assert login.status_code == 200, login.text
     return email, login.json()["access_token"]

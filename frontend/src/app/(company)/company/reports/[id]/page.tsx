@@ -155,6 +155,12 @@ export default function CompanyReportPage() {
         )}
         </div>
 
+        <RecruiterDecisionSummary
+          report={displayReport}
+          recommendationLabel={dashboardT(`recommendations.${displayReport.hiring_recommendation}`)}
+          keyRisks={keyRisks}
+        />
+
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
           <ScoreCard label={t("overallScore")} score={displayReport.overall_score} highlight />
           <ScoreCard label={t("hardSkills")} score={displayReport.hard_skills_score} />
@@ -349,6 +355,58 @@ function ModuleSessionBanner({
       {session.stack_focus && <p className="mt-3 text-sm leading-6 text-slate-200">{session.stack_focus}</p>}
       {session.scenario_prompt && <p className="mt-3 text-sm leading-6 text-slate-300">{session.scenario_prompt}</p>}
       {session.workspace_hint && <p className="mt-3 text-sm leading-6 text-slate-400">{session.workspace_hint}</p>}
+    </div>
+  );
+}
+
+function RecruiterDecisionSummary({
+  report,
+  recommendationLabel,
+  keyRisks,
+}: {
+  report: AssessmentReport;
+  recommendationLabel: string;
+  keyRisks: string[];
+}) {
+  const score = report.overall_score ?? 0;
+  const riskCount = (report.red_flags ?? []).length + (report.cheat_flags ?? []).length;
+  const recommendationText: Record<HiringRecommendation, string> = {
+    strong_yes: "Сильный кандидат: можно быстро переводить к финальному интервью или offer-процессу.",
+    yes: "Позитивный сигнал: стоит двигать дальше, проверив оставшиеся риски на следующем этапе.",
+    maybe: "Пограничный кейс: нужен дополнительный фокус-интервью или практическая проверка по слабым зонам.",
+    no: "Не рекомендуется для текущей роли без существенного закрытия gaps.",
+  };
+
+  return (
+    <section className="mb-6 rounded-[1.8rem] border border-[#E9EAEE] bg-white p-5 shadow-[0_12px_32px_rgba(20,22,30,0.06)]">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-[#8A8EA0]">Recruiter summary</div>
+          <h2 className="mt-1 font-manrope text-2xl font-bold tracking-[-0.03em] text-[#1A1C22]">Решение по кандидату</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-[#56596a]">
+            {recommendationText[report.hiring_recommendation]}
+          </p>
+        </div>
+        <div className="rounded-2xl border border-[#D6E0FD] bg-[#ECF0FE] px-4 py-3 text-right">
+          <div className="text-xs font-bold uppercase tracking-[0.16em] text-[#2348C8]">{recommendationLabel}</div>
+          <div className="mt-1 font-manrope text-3xl font-bold text-[#1A1C22]">{score.toFixed(1)}<span className="text-sm text-[#8A8EA0]">/10</span></div>
+        </div>
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <DecisionMetric label="Evidence" value={report.overall_confidence != null ? `${Math.round(report.overall_confidence * 100)}%` : "—"} description="Насколько уверенно отчёт опирается на ответы." />
+        <DecisionMetric label="Risks" value={String(riskCount)} description={keyRisks[0] ?? "Критичных рисков в верхнем summary нет."} />
+        <DecisionMetric label="Next step" value={report.hiring_recommendation === "maybe" ? "Доп. проверка" : report.hiring_recommendation === "no" ? "Отклонить" : "Двигать дальше"} description="Практическое действие для рекрутера." />
+      </div>
+    </section>
+  );
+}
+
+function DecisionMetric({ label, value, description }: { label: string; value: string; description: string }) {
+  return (
+    <div className="rounded-2xl border border-[#E9EAEE] bg-[#FAFBFC] p-4">
+      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#8A8EA0]">{label}</div>
+      <div className="mt-2 text-xl font-bold text-[#1A1C22]">{value}</div>
+      <p className="mt-1 line-clamp-2 text-sm leading-5 text-[#56596a]">{description}</p>
     </div>
   );
 }

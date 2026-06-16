@@ -16,7 +16,7 @@ import type {
   CandidateDetail,
   CandidateActivity,
   CompanyCandidateSearchParams,
-  CandidateListItem,
+  CandidateListPage,
   CandidateNote,
   CandidateRegisterRequest,
   CandidateAccessRequest,
@@ -232,8 +232,8 @@ export const adminApi = {
 
 export const companyApi = {
   listCandidates: (params: CompanyCandidateSearchParams = {}) =>
-    request<CandidateListItem[]>(
-      withQuery("/api/v1/company/candidates", {
+    request<CandidateListPage>(
+      withQuery("/api/v1/company/candidates/page", {
         q: params.q,
         role: params.role,
         skills: params.skills,
@@ -244,6 +244,8 @@ export const companyApi = {
         hire_outcome: params.hire_outcome,
         shortlist_id: params.shortlist_id,
         sort: params.sort,
+        page: params.page,
+        page_size: params.page_size,
       })
     ),
 
