@@ -59,10 +59,10 @@ function Nav({
       <div className="max-w-6xl mx-auto flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#14161B] text-sm font-bold tracking-[0.16em] text-[#7E9BFF] font-manrope shadow-[0_10px_28px_rgba(20,22,30,0.12)]">
-            AR
+            AI
           </div>
           <div>
-            <div className="text-[#1A1C22] font-bold text-lg leading-none font-manrope">AI Recruit</div>
+            <div className="text-[#1A1C22] font-bold text-lg leading-none font-manrope">AI HR</div>
             <div className="text-[10px] uppercase tracking-[0.16em] text-slate-400 font-semibold mt-0.5">Verification Cloud</div>
           </div>
         </div>
@@ -314,7 +314,7 @@ function JourneyCard({
 
 function Features({ t }: { t: (key: string, values?: Record<string, string | number>) => string }) {
   const features = [
-    { icon: "AD", title: t("features.items.ai.title"), desc: t("features.items.ai.desc") },
+    { icon: "AI", title: t("features.items.ai.title"), desc: t("features.items.ai.desc") },
     { icon: "SC", title: t("features.items.science.title"), desc: t("features.items.science.desc") },
     { icon: "HM", title: t("features.items.heatmap.title"), desc: t("features.items.heatmap.desc") },
     { icon: "VX", title: t("features.items.voice.title"), desc: t("features.items.voice.desc") },
@@ -393,7 +393,7 @@ function CTA({ t }: { t: (key: string, values?: Record<string, string | number>)
         <div className="pointer-events-none absolute bottom-[-45%] right-[-8%] h-[280px] w-[280px] rounded-full bg-sky-300/20 blur-[90px]" />
         <div className="relative z-1">
           <span className="mb-5 inline-flex rounded-full border border-[#2F5BEA]/20 bg-white/70 px-3.5 py-1.5 text-[11px] font-bold uppercase tracking-[0.18em] text-[#2F5BEA]">
-            AI Recruit
+            AI HR
           </span>
           <h2 className="text-3xl sm:text-4xl font-bold font-manrope tracking-tight text-[#1A1C22] mb-4">{t("cta.title")}</h2>
           <p className="text-[#56596a] text-base sm:text-lg mb-10 max-w-2xl mx-auto leading-relaxed">{t("cta.subtitle")}</p>
@@ -417,10 +417,10 @@ function Footer({ t }: { t: (key: string, values?: Record<string, string | numbe
       <div className="max-w-6xl mx-auto flex flex-col items-center justify-between gap-6 sm:flex-row">
         <div className="flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#14161B] text-sm font-bold tracking-[0.16em] text-[#7E9BFF]">
-            AR
+            AI
           </div>
           <div>
-            <div className="text-[#1A1C22] font-bold font-manrope">AI Recruit</div>
+            <div className="text-[#1A1C22] font-bold font-manrope">AI HR</div>
             <div className="text-slate-400 text-[10px] uppercase tracking-[0.16em] font-semibold mt-0.5">Verification Cloud</div>
           </div>
         </div>

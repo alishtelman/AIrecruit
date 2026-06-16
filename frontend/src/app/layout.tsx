@@ -21,7 +21,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations({ locale, namespace: "home.hero" });
 
   return {
-    title: "AI Recruit",
+    title: "AI HR",
     description: t("description"),
   };
 }

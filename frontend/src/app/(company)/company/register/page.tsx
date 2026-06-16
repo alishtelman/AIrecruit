@@ -13,7 +13,16 @@ export default function CompanyRegisterPage() {
   const [form, setForm] = useState({ email: "", password: "", company_name: "" });
 
   useEffect(() => {
-    authApi.me().then((user) => router.replace(getDefaultRouteForRole(user.role))).catch(() => null);
+    authApi
+      .me()
+      .then(async (user) => {
+        if (user.role === "company_admin" || user.role === "company_member") {
+          router.replace(getDefaultRouteForRole(user.role));
+          return;
+        }
+        await authApi.logout().catch(() => null);
+      })
+      .catch(() => null);
   }, [router]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -26,6 +35,11 @@ export default function CompanyRegisterPage() {
       await companyAuthApi.register(form);
       await authApi.login({ email: form.email, password: form.password, account_type: "company" });
       const user = await authApi.me();
+      if (user.role !== "company_admin" && user.role !== "company_member") {
+        await authApi.logout().catch(() => null);
+        setError(t("failed"));
+        return;
+      }
       router.push(getDefaultRouteForRole(user.role));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t("failed"));

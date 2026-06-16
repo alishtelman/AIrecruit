@@ -82,7 +82,7 @@ export default function ReportsPage() {
 
         {!authLoading && !loading && !error && interviews.length === 0 && (
           <div className="candidate-card p-12 text-center bg-white">
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-xs font-bold tracking-[0.2em] text-[#56596a]">AR</div>
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-xs font-bold tracking-[0.2em] text-[#56596a]">AI</div>
             <h2 className="text-[#1A1C22] font-bold text-lg mb-2">{t("emptyTitle")}</h2>
             <p className="text-[#56596a] text-sm max-w-sm mx-auto mb-6">
               {t("emptyDescription")}

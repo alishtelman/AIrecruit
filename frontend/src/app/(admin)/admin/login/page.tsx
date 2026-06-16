@@ -15,7 +15,16 @@ export default function AdminLoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    authApi.me().then((user) => router.replace(getDefaultRouteForRole(user.role))).catch(() => null);
+    authApi
+      .me()
+      .then(async (user) => {
+        if (user.role === "platform_admin") {
+          router.replace(getDefaultRouteForRole(user.role));
+          return;
+        }
+        await authApi.logout().catch(() => null);
+      })
+      .catch(() => null);
   }, [router]);
 
   async function handleSubmit(e: React.FormEvent) {

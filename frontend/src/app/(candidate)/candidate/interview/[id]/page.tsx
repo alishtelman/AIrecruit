@@ -1184,7 +1184,7 @@ export default function InterviewPage() {
                 onClick={() => setCameraPanelOpen((prev) => !prev)}
                 className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-900 transition-all flex items-center gap-1.5"
               >
-                <span>📷</span>
+                <span className="h-2 w-2 rounded-full bg-slate-400" aria-hidden="true" />
                 <span className="hidden sm:inline">
                   {cameraPanelOpen
                     ? (interviewLanguage === "ru" ? "Скрыть камеру" : "Hide Camera")
@@ -1200,7 +1200,7 @@ export default function InterviewPage() {
           <div className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-slate-905">
             {/* Timer */}
             <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-0.5 text-xs font-medium text-blue-200">
-              ⏱ {elapsedLabel}
+              <span className="h-1.5 w-1.5 rounded-full bg-[#2F5BEA]" aria-hidden="true" />{elapsedLabel}
             </span>
 
             {/* Voice Status Chip */}
@@ -1213,38 +1213,38 @@ export default function InterviewPage() {
                   : "border-slate-800 bg-slate-900/40 text-slate-400 hover:text-slate-200 hover:bg-slate-900/60"
               }`}
             >
-              <span>🎙️</span>
+              <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
               <span>{ttsEnabled ? (interviewLanguage === "ru" ? "Голос включён" : "Voice enabled") : (interviewLanguage === "ru" ? "Голос выключен" : "Voice disabled")}</span>
             </button>
 
             {/* Stage Progress */}
             {structuredInterviewStage ? (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-200">
-                📌 {stageDisplayTitle} ({structuredPhaseProgressCurrent}/{structuredPhaseProgressTotal})
+                <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />{stageDisplayTitle} ({structuredPhaseProgressCurrent}/{structuredPhaseProgressTotal})
               </span>
             ) : (overviewModuleSession || taskWorkspaceSession) ? (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-0.5 text-xs font-medium text-blue-200">
-                📌 {stageDisplayTitle} ({((overviewModuleSession || taskWorkspaceSession)?.stage_index ?? 0) + 1}/{Math.max((overviewModuleSession || taskWorkspaceSession)?.stage_count ?? 0, 1)})
+                <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />{stageDisplayTitle} ({((overviewModuleSession || taskWorkspaceSession)?.stage_index ?? 0) + 1}/{Math.max((overviewModuleSession || taskWorkspaceSession)?.stage_count ?? 0, 1)})
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-900/80 px-2.5 py-0.5 text-xs font-medium text-slate-300">
-                📌 {stageDisplayTitle}
+                <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />{stageDisplayTitle}
               </span>
             )}
 
             {/* Question Progress */}
             <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-900/80 px-2.5 py-0.5 text-xs font-medium text-slate-300">
-              ❓ {currentQuestionLabel}
+              <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />{currentQuestionLabel}
             </span>
 
             {/* Answer count */}
             <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-900/80 px-2.5 py-0.5 text-xs font-medium text-slate-300">
-              💬 {answeredInChatLabel}
+              <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />{answeredInChatLabel}
             </span>
 
             {/* Estimate */}
             <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-800 bg-slate-900/80 px-2.5 py-0.5 text-xs font-medium text-slate-300">
-              ⏳ {t("structureEstimatedDuration", estimatedDuration)}
+              <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />{t("structureEstimatedDuration", estimatedDuration)}
             </span>
 
             {/* Status */}
@@ -1280,7 +1280,7 @@ export default function InterviewPage() {
                     : "border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700 hover:text-slate-200"
                 }`}
               >
-                <span>📄</span>
+                <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
                 <span>{resumeOpen ? (interviewLanguage === "ru" ? "Скрыть резюме" : "Hide Resume") : t("resume")}</span>
               </button>
             )}
@@ -1335,25 +1335,24 @@ export default function InterviewPage() {
             </div>
           ) : null}
 
-          {/* Actions */}
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
-            <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
-              {interviewLanguage === "ru" ? "Управление" : "Controls"}
-            </div>
+          {(localizedRecordingError || (voiceError && !isVoiceError) || (!isRecording && interview.status === "in_progress")) && (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 space-y-3">
+              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
+                {interviewLanguage === "ru" ? "Управление" : "Controls"}
+              </div>
 
-            <div className="flex flex-col gap-2">
-              {!isRecording && interview.status === "in_progress" && (
-                <button
-                  onClick={() => void startRecording()}
-                  className="w-full rounded-xl border border-yellow-500/30 bg-yellow-500/10 px-3 py-2.5 text-xs font-semibold text-yellow-200 hover:bg-yellow-500/20 transition-all flex items-center justify-center gap-2"
-                >
-                  <span>🔴</span>
-                  <span>{t("enableRecording")}</span>
-                </button>
-              )}
-            </div>
+              <div className="flex flex-col gap-2">
+                {!isRecording && interview.status === "in_progress" && (
+                  <button
+                    onClick={() => void startRecording()}
+                    className="w-full rounded-xl border border-yellow-500/30 bg-yellow-500/10 px-3 py-2.5 text-xs font-semibold text-yellow-200 hover:bg-yellow-500/20 transition-all flex items-center justify-center gap-2"
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-red-500" aria-hidden="true" />
+                    <span>{t("enableRecording")}</span>
+                  </button>
+                )}
+              </div>
 
-            {(localizedRecordingError || (voiceError && !isVoiceError) || (!isRecording && interview.status === "in_progress")) && (
               <div className="space-y-2 pt-2 border-t border-slate-900">
                 {!isRecording && interview.status === "in_progress" && (
                   <div className="rounded-xl border border-yellow-500/25 bg-yellow-500/5 px-3 py-2 text-xs text-yellow-200">
@@ -1371,8 +1370,8 @@ export default function InterviewPage() {
                   </div>
                 )}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
           {resumeOpen && resumeText && (
             <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 shadow-lg">
@@ -1646,30 +1645,12 @@ export default function InterviewPage() {
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 shadow-xl text-center space-y-4">
                 <div className="text-xs text-slate-400 leading-relaxed">
                   {voiceMode
-                    ? (interviewLanguage === "ru" ? "Вы находитесь в голосовом режиме. Нажмите кнопку ниже и произнесите «Готов» или нажмите кнопку, чтобы начать интервью." : "You are in voice-first mode. Click the button below and say 'Ready', or click to start.")
+                    ? (interviewLanguage === "ru" ? "Голосовой режим включён. AI будет задавать вопросы голосом, а после распознавания вы сможете подтвердить текст ответа." : "Voice-first mode is enabled. The AI will speak questions, and you will review the transcript before submitting.")
                     : (interviewLanguage === "ru" ? "Вы находитесь в текстовом режиме. Нажмите кнопку ниже, чтобы начать интервью." : "You are in text mode. Click the button below to start.")
                   }
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-                  {/* If in voice mode, let them also start with Voice input */}
-                  {voiceMode && (
-                    <button
-                      type="button"
-                      onMouseDown={() => { setInput(""); setTranscriptPending(false); void startVoice(); }}
-                      onMouseUp={stopVoice}
-                      onTouchStart={() => { setInput(""); setTranscriptPending(false); void startVoice(); }}
-                      onTouchEnd={stopVoice}
-                      className={`rounded-xl border px-5 py-3 text-sm font-semibold transition-all ${
-                        voiceState === "listening"
-                          ? "animate-pulse border-red-500 bg-red-500/20 text-red-300 shadow-[0_0_20px_rgba(239,68,68,0.3)]"
-                          : "border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700"
-                      }`}
-                    >
-                      {voiceState === "listening" ? "🎤 Слушаю..." : "🎙 Сказать «Готов»"}
-                    </button>
-                  )}
-
                   <button
                     type="button"
                     onClick={() => {
@@ -1725,7 +1706,7 @@ export default function InterviewPage() {
                           : "bg-slate-800"
                         }`}>
                           <span className="text-base">
-                            {voiceStatus === "ai_speaking" ? "🔊" : voiceStatus === "listening" ? "🎤" : voiceStatus === "processing" ? "⏳" : "🎙"}
+                            {voiceStatus === "ai_speaking" ? "▶" : voiceStatus === "listening" ? "●" : voiceStatus === "processing" ? "…" : "●"}
                           </span>
                         </div>
                         <div className="text-left">
@@ -1834,7 +1815,7 @@ export default function InterviewPage() {
                             }}
                             className="rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:text-white transition-all flex items-center gap-1"
                           >
-                            📢 {interviewLanguage === "ru" ? "Сообщить организатору" : "Report to Organizer"}
+                            {interviewLanguage === "ru" ? "Сообщить организатору" : "Report to Organizer"}
                           </button>
                           {ALLOW_TEXT_FALLBACK && (
                             <button
@@ -1845,7 +1826,7 @@ export default function InterviewPage() {
                               }}
                               className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 hover:bg-yellow-500/20 px-4 py-2 text-xs font-semibold text-yellow-300 transition-all flex items-center gap-1"
                             >
-                              ⌨ {interviewLanguage === "ru" ? "Текстовый режим" : "Text Mode"}
+                              {interviewLanguage === "ru" ? "Текстовый режим" : "Text Mode"}
                             </button>
                           )}
                         </div>
@@ -1859,7 +1840,7 @@ export default function InterviewPage() {
                         onClick={() => setShowTranscript(true)}
                         className="text-[11px] font-semibold text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-1"
                       >
-                        <span>💬</span>
+                        <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
                         <span>{interviewLanguage === "ru" ? "Показать историю чата" : "Show Chat History"}</span>
                       </button>
                     </div>
@@ -2062,7 +2043,7 @@ export default function InterviewPage() {
                 <div className="text-xs font-semibold uppercase tracking-[0.22em] text-amber-300">Практическое задание</div>
                 <div className="mt-1 text-lg font-semibold text-white">{practicalTask.title}</div>
                 {practicalTask.time_limit_minutes && (
-                  <div className="mt-1 text-xs text-slate-400">⏱ {practicalTask.time_limit_minutes} минут</div>
+                  <div className="mt-1 text-xs text-slate-400">{practicalTask.time_limit_minutes} минут</div>
                 )}
               </div>
               <div className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs uppercase tracking-[0.16em] text-amber-300">

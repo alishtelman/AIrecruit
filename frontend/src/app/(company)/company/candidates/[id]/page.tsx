@@ -185,7 +185,10 @@ function ReportCard({ report }: { report: ReportWithRole }) {
           <div className="space-y-2">
             {report.red_flags.map((rf: RedFlag, i) => (
               <div key={i} className={`border rounded-lg px-3 py-2 text-sm ${SEVERITY_COLORS[rf.severity] ?? SEVERITY_COLORS.low}`}>
-                <span className="font-medium">⚠ {rf.flag}</span>
+                <span className="inline-flex items-center gap-2 font-medium">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
+                  {rf.flag}
+                </span>
                 {rf.evidence && <span className="ml-2 opacity-70 text-xs">{rf.evidence}</span>}
               </div>
             ))}

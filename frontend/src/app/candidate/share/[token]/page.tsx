@@ -103,8 +103,8 @@ export default function SharedCandidatePage() {
     <div className="min-h-screen bg-[#F4F5F7] text-[#1A1C22]">
       <div className="mx-auto max-w-5xl px-4 py-12">
         <Link href="/" className="mb-6 inline-flex items-center gap-3 text-sm font-bold text-[#56596a] hover:text-[#1A1C22]">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#14161B] font-manrope text-xs tracking-[0.16em] text-[#7E9BFF]">AR</span>
-          AI Recruit
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#14161B] font-manrope text-xs tracking-[0.16em] text-[#7E9BFF]">AI</span>
+          AI HR
         </Link>
 
         <div className="mb-8 overflow-hidden rounded-[2rem] border border-[#D6E0FD] bg-[linear-gradient(135deg,#FFFFFF_0%,#EEF2FF_62%,#EAF8FF_100%)] p-8 shadow-[0_24px_60px_rgba(47,91,234,0.12)]">

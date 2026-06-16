@@ -5,7 +5,6 @@ import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Link, useRouter } from "@/i18n/navigation";
 import { authApi } from "@/lib/api";
-import { getDefaultRouteForRole } from "@/lib/roleRedirect";
 import { getSafeRedirect } from "@/lib/safeRedirect";
 import { AuthError, AuthPanel, authButtonClass, authInputClass, authLabelClass } from "@/components/auth-panel";
 
@@ -19,7 +18,13 @@ function RegisterPageInner() {
   useEffect(() => {
     authApi
       .me()
-      .then((user) => router.replace(user.role === "candidate" ? redirect : getDefaultRouteForRole(user.role)))
+      .then(async (user) => {
+        if (user.role === "candidate") {
+          router.replace(redirect);
+          return;
+        }
+        await authApi.logout().catch(() => null);
+      })
       .catch(() => null);
   }, [router, redirect]);
   const [error, setError] = useState("");
@@ -38,7 +43,12 @@ function RegisterPageInner() {
         account_type: "candidate",
       });
       const user = await authApi.me();
-      router.push(user.role === "candidate" ? redirect : getDefaultRouteForRole(user.role));
+      if (user.role !== "candidate") {
+        await authApi.logout().catch(() => null);
+        setError(t("failed"));
+        return;
+      }
+      router.push(redirect);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t("failed"));
     } finally {

@@ -16,7 +16,13 @@ export default function CompanyLoginPage() {
   useEffect(() => {
     authApi
       .me()
-      .then((user) => router.replace(getDefaultRouteForRole(user.role)))
+      .then(async (user) => {
+        if (user.role === "company_admin" || user.role === "company_member") {
+          router.replace(getDefaultRouteForRole(user.role));
+          return;
+        }
+        await authApi.logout().catch(() => null);
+      })
       .catch(() => null);
   }, [router]);
   const [error, setError] = useState("");

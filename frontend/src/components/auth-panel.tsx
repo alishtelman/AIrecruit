@@ -21,10 +21,10 @@ export function AuthPanel({
             <div className="relative z-10 flex h-full flex-col justify-between">
               <Link href="/" className="flex items-center gap-3">
                 <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10 font-manrope text-sm font-bold tracking-[0.16em] text-[#9BB2FF]">
-                  AR
+                  AI
                 </div>
                 <div>
-                  <div className="font-manrope text-lg font-bold">AI Recruit</div>
+                  <div className="font-manrope text-lg font-bold">AI HR</div>
                   <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8f96a7]">
                     Verification Cloud
                   </div>
@@ -46,7 +46,7 @@ export function AuthPanel({
 
           <section className="p-6 sm:p-10">
             <Link href="/" className="mb-8 inline-flex items-center gap-2 text-sm font-bold text-[#56596a] transition hover:text-[#1A1C22] lg:hidden">
-              ← AI Recruit
+              ← AI HR
             </Link>
             <div className="mb-8 text-center sm:text-left">
               <h1 className="font-manrope text-3xl font-bold tracking-tight text-[#1A1C22]">{title}</h1>
